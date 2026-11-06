@@ -12,8 +12,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
 **Next:**
 
 1. **Integration breadth** — more game-scene mappings worth shipping as
-   examples beside `drv/sgdk/example`, and a hardware-verified reference
-   build — heavy DMA workloads on hardware first (driver.md §11).
+   examples beside `drv/sgdk/example`, and heavy DMA workloads run on
+   hardware (driver.md §11).
 2. **Mid-song voice changes with no silence before them** — VOICE_SET
    bodies in the sample-bank ROM, so a voice change is one pair instead of
    the ~30 register writes a channel costs today. A change after a rest or a
@@ -53,8 +53,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
   needs it). `:pcm-voices 2` keeps the 10.1 kHz rate; pcm1–pcm3 written
   beside it would flatten by the `:prio` rule the layers already use, so
   where three overlap the lowest drops, and the compiler counts the drops.
-  Opt-in by writing more tracks than voices; a merged bake of the overlaps
-  was the alternative, rejected for growing the bank unseen.
+  Opt-in by writing more tracks than voices.
 - **Dynamic performance branches** — `|` alternation, random part switching,
   random label jump.
 - **Wave generators** — a wave written as its harmonics (`(harmonics 1 0.5
@@ -62,13 +61,7 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## Importers
 
-- **The target an import is for.** A voice or sample import joins the open
-  score, whatever its `:target`. A song import is a conversion, written as a
-  new document for the machine chosen in its dialog: MIDI for any target;
-  VGM, NSF and DefleMask / Furnace for their chips' own machine (the
-  default) or any machine whose defaults keep half the notes
-  (`import-song.js` holdsSong); mucom for pc88 (the default) or md; MDX for
-  x68k and MGS for msx, their songs' own machines.
+- **Famicom: ppmck's MML**, if a composer's files call for it.
 - **mucom**: part G's per-sound pan `p$xy` is not read.
 - **MGS**: an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
@@ -123,36 +116,3 @@ played by a small Z80 player with a little added on top — per-channel level
 offsets on the carrier TL writes, part swapping between layered variant
 streams, and `(trig N)` markers so the game can sync to bars.
 
-**Other machines, as VGM.** The IR is chip-agnostic; only the backend is
-chip-specific. The Mega Drive keeps its driver and its integrated environment.
-Every other machine gets a *target profile*, a register encoder, a browser
-emulator for the preview and a VGM chip block — and no driver of its own: the
-score is composed in Live and delivered as a VGM, which existing players run.
-Live's preview and the VGM come from the same register log, so they match by
-construction, as the driver's A/B gate does today. What this gives up is
-hardware playback and game integration, deliberately (VGMPlay-MSX plays the
-MSX VGMs on hardware regardless).
-
-A target profile is a first-class part of the language: the channel table,
-which parameters exist and their ranges (language.md §7.0's "target's base",
-`E_UNSUPPORTED_TARGET`), the pitch table for the chip's clock, the voice
-classes it can play, its PCM voices and their constraints, and its kit.
-A *portable core* — notes, lengths, flow, the vel/pitch/pan curves, 4-op FM
-voices on the OPN/OPM family, square + noise — compiles for every target; a
-target's own features (FM3 special mode, SSG-EG, duty, waves) are a diagnostic
-on any other, and its own settings a warning.
-
-Built: the PC-8801 (`pc88`), the X68000 (`x68k`), the MSX with the SCC
-and the FM-PAC (`msx`), the PC Engine (`pce`: its waves, noise, `:pan`,
-LFO and DDA, DefleMask / Furnace PCE modules and HuC6280 VGMs as `pce`
-scores), the Famicom (`fc`: the 2A03's pulses with `:duty`, the
-triangle with no level, the noise's rates and two modes, the DMC's
-samples, and the six expansion chips — VRC6, FDS, MMC5, 5B, VRC7, N163;
-VGMs, NSFs and DefleMask / Furnace NES modules as `fc` scores) and the
-Game Boy (`gb`: its pulses, wave and noise, a level free under a note, VGMs
-and DefleMask / Furnace modules as `gb` scores) — language.md §19. Next:
-
-1. **Famicom: ppmck's MML** in, if a composer's files call for it.
-
-Emulators for the preview: ymfm (BSD) covers the YM2608, YM2151, YM2413,
-Y8950 and the SSG in one library, built to WASM beside the Nuked cores.

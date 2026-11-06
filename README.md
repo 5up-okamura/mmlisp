@@ -99,7 +99,8 @@ or the Disk System added, named by chip (`vrc6-saw`, `fds-wave` with its
 modulation as the song's LFO, `n163-wave1`–`8` taking turns as the chip
 does). The YM2608's rhythm ROM is
 Yamaha's and not included: Live plays your own, or stands the score's kit in
-for it. Other machines are on the [roadmap](docs/roadmap.md).
+for it. Each machine's channels and words are
+[language.md §19](docs/language.md#19-targets--target).
 
 ## What it looks like
 
@@ -260,7 +261,8 @@ cd tools && npm run check:snapshot   # the toolchain's output against its baseli
 **Publishing.** The deployed site serves `live/` as its document root, while
 `npm run serve` serves the repository root and reaches the app at `/live/`. The
 data the app fetches by absolute path lives outside `live/`, so it reaches the
-published site through the tracked symlinks `live/examples` and `live/presets`.
+published site through the tracked symlinks `live/examples`, `live/presets`, `live/snippets`
+and `live/tutorial`.
 A new directory the app fetches from needs one too, or it resolves in
 development and 404s in production.
 

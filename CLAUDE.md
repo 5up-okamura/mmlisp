@@ -79,7 +79,7 @@ preview and the engine gates all run them.
 
 The driver lives in `drv/`, with a first-party node toolchain in `drv/tools/`
 (Z80 assembler, Z80 CPU emulator, machine model, gates — no external binaries).
-The shipped Z80 engine (since 2026-09-11) is the pair-transport engine
+The shipped Z80 engine is the pair-transport engine
 generated from `drv/engine/` by `drv/tools/build-engine.mjs` (`docs/driver.md`
 §5); `drv/68k/` is the C sequencer and the slot → pair converter, `drv/sgdk/`
 the SGDK host. Its gate: `cd drv && npm run verify:all` must be green (C ≡

@@ -57,7 +57,7 @@ const USAGE = `usage: node tools/install-sgdk.mjs [<project-dir>] [options]
   <project-dir>          SGDK project root (default: $MMLISP_SGDK_PROJECT)
 
   --pal                 compile the score or bundle for PAL (50 Hz)
-  --multibank           use banked PCM even when samples fit in 32 KiB (1–2 voices)
+  --multibank           use banked PCM even when samples fit in 32 KiB (1–3 voices)
   --song <file.mmlisp>   compile the score into <project>/res/song.mmb
                          (plus song.smp when the score uses PCM samples)
   --se <file.mmlisp>     with --song: the game's effects (def-se) — the score

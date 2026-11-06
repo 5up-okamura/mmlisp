@@ -111,6 +111,7 @@ intro intro                             ; at the top level: each form appends to
 (import "presets/tr808/set.mmlisp" :over) ; replaces earlier imports' same names
 (def-mod :ch fm2 :keyon off)            ; score-wide: fm2's notes become rests (§9.4)
 (def-mod :voice [hat hat-open] :vel+ -3) ; every note on these, quieter (clamped 0–15)
+(def-se jump :prio 3 (fm1 bell :oct 5 :len 16 c e g > c)) ; a sound effect: its parts take the song's channels while it plays (§9.3)
 ```
 
 Naming a voice or sample in a track body switches to it. On `md` an FM voice
@@ -206,8 +207,9 @@ range (`:pcm-*`) once; `:mode loop` plays from `:pcm-start`, repeats the loop
 after its note-off; `:mode gate` plays the range once and is cut at the gate.
 `…-len` keeps the length when its start moves.
 
-A note's pitch picks a resampled copy, baked into the 32 KB bank — only what
-the score plays is baked. No pitch moves on PCM (`:pitch`, `(glide)`; pc88's
+A note's pitch picks a resampled copy, baked into the sample bank — only what
+the score plays is baked; a bank past 32 KB goes multi-bank on its own
+(each sample at most 32,512 bytes). No pitch moves on PCM (`:pitch`, `(glide)`; pc88's
 pcm1 and x68k's PCM8 take them); levels
 step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 `normalize` `comp` `limit` `crush` `hpf` `lpf` `drive` `fade` `reverb`.
@@ -227,6 +229,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - A channel takes its own chip's words: FM operator keys and `:pan` on a
   `sqr`/`noise`/`pcm` track, or `:mode white0` on an FM track, are
   `E_UNSUPPORTED_TARGET`.
+## Targets (§19)
+
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):
   sqr `:mode tone|noise|both|env`, song-wide `:noise-rate`, `noise` is sqr3,
   a drum's steps as macros (`(macro :mode [both noise] :noise-rate [2 4 6])`),

@@ -186,19 +186,20 @@ only thing that watches this rule.
 
 ### 5.1 NOTE_ON_EX (0x13)
 
-`{flags u8, note u8, dur, then one field per set flag bit, in bit order}`:
+`{flags u8, note u8, [vel u8], dur, [gate dur]}` — vel (bit 0) comes before the
+duration, gate (bit 1) after it:
 
 | Bit | Field     | Size    | Meaning                                        |
 | --- | --------- | ------- | ---------------------------------------------- |
 | 0   | vel       | u8      | velocity for this note only (state untouched), in eighths 0..120 |
 | 1   | gate      | dur enc | absolute gate in ticks **from note-on** for this note only (covers `:gate-` and irregular gates). Counted down across TIE segments — a gate resolved over a tied whole may exceed this NOTE_ON_EX's own `dur`, keying off mid-tie; it is **not** clamped to the first segment. A following REST cancels a still-counting gate |
-| 2   | macro_ref | u8      | per-note one-shot: trigger MACRO_TABLE[macro_ref] for this note only, without touching the sticky active set (mmb.md §15, opcodes.md §6) |
-| 3   | legato    | —       | slur: write the F-number / recompose levels / re-snapshot macros but **do not re-key** (leave `$28`, the FM EG or PSG tone carries over). No field. `X ~ Y` different-pitch (language.md §3.1). FM/PSG only |
-| 4–7 | —         | —       | reserved; **must be 0** — a decoder seeing a set reserved bit must fail-safe (sizes unknown → not skippable) |
+| 3   | legato    | —       | slur: write the F-number / recompose levels / re-snapshot macros but **do not re-key** (leave `$28`, the FM EG or PSG tone carries over). No field. `X ~ Y` different-pitch (language.md §3, Tie and slur). FM/PSG only |
+| 2, 4–7 | —      | —       | reserved; the exporter writes 0, and the decoders read no field for them |
 
 Every field has a fixed size, so the instruction is walkable without
-interpreting it: read flags/note/dur, then step over each present field by its
-size (gate uses the duration-operand length rules).
+interpreting it: read flags and note, the vel byte if bit 0 is set, the
+duration, then the gate if bit 1 is set (it uses the duration-operand length
+rules).
 
 ### 5.2 CALL / RET / LOOP_BREAK
 
@@ -317,7 +318,7 @@ Notes:
   MACRO_TABLE[macro_id] as the active macro for its target (replacing any
   active macro on that target); `MACRO_CLEAR {target}` clears one target
   (`0xFF` = clear all). `NOTE_ON` (0x10) then triggers whatever is active — no
-  change to NOTE_ON. `NOTE_ON_EX` `macro_ref` (§5.1) is the per-note one-shot.
+  change to NOTE_ON.
   The exporter diffs each note's snapshotted macros into these sticky opcodes.
   The descriptor `flags` byte
   (mmb.md §15) carries bit0 = i16 values and bit1 = additive: an additive

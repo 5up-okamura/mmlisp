@@ -58,7 +58,7 @@ Header flags:
 
 | Bit  | Name         | Meaning                                              |
 | ---- | ------------ | ---------------------------------------------------- |
-| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0; loaders reject it (see §12). |
+| 0    | WIDE_OFFSETS | **Reserved.** When set, track-table `event_offset` widens to u32 and the file may exceed 32 KB. Must be 0: the encoder never sets it (§12). |
 | 1    | PAL_TIMEBASE | The score's frame-counted numbers — the tempo increment and every macro, sweep and delay length — were baked for a **50 Hz** frame clock (driver.md §3.3). The driver reads no frame rate, so this is what tells a host which machine the score belongs on. |
 | 2–3  | PCM_VOICES   | The score's PCM voice count, 0–3: which engine image plays it (driver.md §5) and so the rate its sample bank is baked at (§10). |
 | 4 | MULTIBANK_PCM | Selects multi-bank PCM for up to three voices on NTSC or PAL; PAL_TIMEBASE selects the region-specific engine (§10.3). |
@@ -82,7 +82,7 @@ Section ids:
 | 0x0001 | TRACK_TABLE | required (§6)                       |
 | 0x0002 | EVENT_STREAM| required (§7)                       |
 | 0x0003 | METADATA    | required (§9); driver ignores it    |
-| 0x0004 | —           | unused (the sample bank is its own ROM bank, §10) |
+| 0x0004 | SAMPLE_BANK | unused: no MMB carries it — the sample bank is its own ROM bank (§10) |
 | 0x0005 | VAL_TABLE   | optional (§8)                       |
 | 0x0006 | VOICE_TABLE | optional (§11)                      |
 | 0x0007 | MACRO_TABLE | optional (§15)                      |
@@ -118,8 +118,8 @@ Track flags:
 | 4–7 | —       | Reserved, must be 0                                |
 
 `event_offset` is u16, and the encoder limits the whole MMB to 32 KB (§12).
-Larger songs are deferred behind the reserved WIDE_OFFSETS header flag (§4);
-the encoder rejects output that would overflow u16 offsets.
+The encoder rejects output that would overflow u16 offsets; the reserved
+WIDE_OFFSETS header flag (§4) is where a larger file would be signalled.
 
 ### 6.1 Channel id map
 
@@ -209,7 +209,7 @@ BPM lives in METADATA. Error analysis is in driver.md §3.
 
 ### 7.6 Opcode set
 
-The full opcode table, payload layouts, and freeze status live in
+The full opcode table and payload layouts live in
 `docs/opcodes.md`. This section only defines the stream *framing* (delta
 model, duration operands, terminator).
 
@@ -323,8 +323,8 @@ slice's length after its effects (a fade shortens it), carried for tooling; noth
 Samples are mono 8-bit signed PCM (stereo is downmixed at compile time).
 In the default format, the **bank image (entry table + blobs) must fit one 32 KB window, below its
 silent top page**: the engine addresses a sample by its 16-bit window address.
-`encodeMmb` automatically selects §10.3 for a larger eligible bank (up to three voices on NTSC or PAL), unless multi-bank output is explicitly disabled. Other profiles
-retain the single-bank limit.
+`encodeMmb` automatically selects §10.3 for a larger eligible bank (up to three voices on NTSC or PAL), unless multi-bank output is explicitly disabled. Every other profile is
+single-bank.
 
 ### 10.2 One bank for several scores
 
@@ -337,11 +337,11 @@ range), and hands each score the ids it ends up with. Two conditions,
 both enforced by the bundle: every score uses the **same PCM voice count
 and engine profile**, and the combined library fits that profile's capacity.
 Single-bank bundles must fit one window; eligible bundles can expand to
-§10.3. Standalone single-bank exports that fit remain byte-identical.
+§10.3.
 
 ### 10.3 Multi-bank sample resources
 
-Header flags bit 4 (`MULTIBANK_PCM`) selects the block-rendering engine for NTSC and PAL scores with up to three PCM voices. Bit 15 of the SMP rate stamp identifies the multi-bank format; the lower 15 bits contain the selected engine's rounded rate: 10112 (NTSC, one/two voices), 10019 (PAL, one/two voices), 6653 (NTSC, three voices), or 6593 (PAL, three voices). The directory occupies the first 32 KiB, and offsets in its 24-byte entries are relative to the following 32 KiB boundary. Files contain whole 32 KiB banks, each with a final 256-byte silence page. Blobs are aligned to 16 bytes and cannot cross banks. The loader rejects mismatched score/sample formats and rates. The first two voices stage bank words at STORE ops `0x1c/0x1d` and `0x1e/0x1f`; the third stages its bank byte at `0x21`. The third bank has no high byte because the supported 4 MiB aperture needs only seven bank bits. Protocol version 14 includes this assignment. See [Multi-bank PCM](pcm-multibank.md) for details.
+Header flags bit 4 (`MULTIBANK_PCM`) selects the block-rendering engine for NTSC and PAL scores with up to three PCM voices. Bit 15 of the SMP rate stamp identifies the multi-bank format; the lower 15 bits contain the selected engine's rounded rate: 10112 (NTSC, one/two voices), 10019 (PAL, one/two voices), 6653 (NTSC, three voices), or 6593 (PAL, three voices). The directory occupies the first 32 KiB, and offsets in its 24-byte entries are relative to the following 32 KiB boundary. Files contain whole 32 KiB banks, each with a final 256-byte silence page. Blobs are aligned to 16 bytes and cannot cross banks. The loader rejects mismatched score/sample formats and rates. The first two voices stage bank words at STORE ops `0x1c/0x1d` and `0x1e/0x1f`; the third stages its bank byte at `0x21`. The third bank has no high byte because the supported 4 MiB aperture needs only seven bank bits. See [Multi-bank PCM](pcm-multibank.md) for details.
 
 ## 11. VOICE_TABLE Section (0x0006)
 
@@ -372,8 +372,7 @@ a block into the operator shadow and queues the writes with no per-field logic:
 `$B4` (pan / AMS / FMS) is **not** part of a voice — it is performance state
 set separately. Neither are the operators' velocity sensitivities
 (`FM_VEL1`–`FM_VEL4`): a voice that carries them is followed by their
-PARAM_SETs, so a score that never writes one has entries and streams as
-before. Voice ids are assigned in the coalescing pass's discovery
+PARAM_SETs, so a score that never writes one carries none. Voice ids are assigned in the coalescing pass's discovery
 order; identical voices dedup to one entry.
 
 Detection rule (exporter): a same-tick PARAM_SET group covering the full voice
@@ -384,7 +383,7 @@ A `VOICE_SET` that sits immediately after a backward-JUMP target is emitted
 **before** it when the loop body cannot disturb the voiced registers, so looping
 does not re-apply it every iteration (driver.md §10.1). The JUMP target is the
 offset the label resolved to — labels emit no bytes of their own (opcodes.md
-§0x42) — so the hoist simply moves the `VOICE_SET` ahead of that offset.
+§3.1) — so the hoist simply moves the `VOICE_SET` ahead of that offset.
 
 A `VOICE_SET` that repeats the voice its channel already holds — same track,
 same entry, nothing between that moves a voiced register — is not emitted at
@@ -399,8 +398,8 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 - **One MMB file ≤ 32 KB**, enforced by the encoder.
 - The u16 `event_offset` in the track table encodes this limit structurally.
 - Escape hatch (reserved, not implemented): header flag
-  WIDE_OFFSETS widens `event_offset` to u32 and permits a larger file. Any loader seeing this flag set must reject the file until a
-  future version defines the mechanism.
+  WIDE_OFFSETS would widen `event_offset` to u32 and permit a larger file;
+  the encoder never sets it.
 
 ## 13. Compatibility Policy
 
@@ -409,9 +408,10 @@ limits, not hardware ones; relaxing them needs no driver change beyond
    `version_major`.`version_minor`; the 68000 sequencer does not check it,
    since a game's MMB files and its driver are built from the same tree.
 2. There is no compatibility path between versions.
-3. Unknown section id: skip, unless its REQUIRED flag is set → reject.
-4. Unknown header flag set → reject.
-5. Unknown opcode inside a track stream → fail-safe: stop decoding that
+3. Unknown section id: skipped. The loaders do not check the REQUIRED bit
+   or header flags past the ones they read (PCM voices, multi-bank, PAL):
+   validation is the toolchain's, which writes every reserved bit 0.
+4. Unknown opcode inside a track stream → fail-safe: stop decoding that
    track, report error.
 
 ## 14. Validation Rules
@@ -449,14 +449,14 @@ The obligations:
 9. Duration byte 0x00 only on NOTE_ON / PCM_NOTE_ON.
 10. Deterministic output: recompiling the same IR yields identical bytes.
 11. Every `voice_id` (VOICE_SET) < VOICE_TABLE `entry_count`; every `macro_id`
-    (MACRO_SET / NOTE_ON_EX macro_ref) < MACRO_TABLE `entry_count`; every macro
+    (MACRO_SET) < MACRO_TABLE `entry_count`; every macro
     descriptor's `blob_offset + count × width` is in bounds and
     `loop_start`/`release` are `0xFF` or ≤ `count`.
 
 ## 15. MACRO_TABLE Section (0x0007)
 
 Deduplicated macro definitions (docs/language.md §10), referenced by index from
-`MACRO_SET` / `NOTE_ON_EX` `macro_ref` (opcodes.md §5, §6). The exporter lowers
+`MACRO_SET` (opcodes.md §6). The exporter lowers
 **every** macro form — step vector, curve, multi-stage — to one uniform shape
 at compile time (driver.md §13): a per-`:step` value array in three regions
 (attack / sustain-loop / release). The driver never evaluates a curve or easing

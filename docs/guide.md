@@ -816,15 +816,22 @@ operation is chosen by the keyword so the argument is never ambiguous:
 > This matters on FM, where the key-off → key-on transition *is* the attack: a
 > note that ran into the next without one would swallow it. PSG re-asserts its
 > attenuation and PCM restarts its sample on every note, so those attack either
-> way; `~` is what holds them over.
+> way; `~` is what holds them over. The one exception is a hold, `:gate 0`
+> (below): the channel stays keyed, so on FM the next note moves the pitch
+> without a new attack.
 
 ### `:gate 0` — hold, timeline advances
 
-`:gate 0` fires KEY-ON and holds indefinitely, but the timeline still advances by `:len`. Use this when the channel needs to stay in sync with others while holding a note.
+`:gate 0` fires KEY-ON and holds until the runtime keys it off (a host
+call, or Tools ▸ Release Holds in Live), while the timeline still advances by
+`:len`. Use this when the channel needs to stay in sync with others while
+holding a note. A rest or the track's end still ends the hold, and on FM the
+notes after it move the pitch without a new attack (`:gate 0 c e g` sounds like
+`c ~ e ~ g`).
 
 ```lisp
 (fm1 :len 4 :gate 0
-  c _ _ _)   ; KEY-ON on beat 1, timeline moves 4 beats, KEY-OFF via runtime
+  c ~ c ~ c ~ c)   ; KEY-ON on beat 1, held across 4 beats, KEY-OFF via runtime
 ```
 
 ### `:len 0` — hold, the track waits
@@ -1447,6 +1454,31 @@ MIDI, and the menu is not shown there). The choice is remembered.
 
 ---
 
+### New scores, exports and the Mega Drive's own items
+
+**File ▸ New…** lists the machines, the Mega Drive first, each with what it
+has (`OPN FM ×6 · SN76489 tone ×3 · SN76489 noise · DAC ×3`, the cartridges
+after a `+`); the machine clicked is the new score. **Tour** beside a machine
+opens its tour in the Guide (below), and **Tutorial** under the list the
+tutorial, from the first step not done. The app's first launch, with no score
+to come back to, opens here. A new score has a looping track for each
+channel that machine plays at once, a rhythm track on a sound of its own, and
+names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6`,
+`pcm2` and `pcm3`, a name that shares a track's channel. It imports the preset sets those
+tracks can play — `gm`, `fm-roles` and `waveforms`, `wavetable`, the `rx5` kit — without
+assigning any of them, so every preset name completes from the first keystroke.
+Only what a track plays reaches the song. A comment lists the names built into the machine, which need no import.
+
+**File ▸ Export** writes the score out: **VGM…** and **WAV…** on every
+machine, **Video…** (§26), **Imported…** a song import's samples, and, on the
+Mega Drive, **MMB…** — the score and its sample bank for MMLispDRV
+(`docs/mmb.md`). The Mega Drive's other items are **MMLisp ▸ Analog LPF**,
+the Model 1's ~3 kHz output filter on the preview, and **Tools ▸ MMLispDRV
+Backend** (plays the preview through the driver's reference, which cannot
+seek: Pause stops, and the time bar is off while it plays) and **Tools ▸ Release
+Holds** (keys off what `:gate 0` / `:len 0` holds). On another machine they
+are not in the menus. **MMLisp ▸ Theme** picks the app's colors.
+
 ### Reopening scores
 
 The score being edited is kept in the browser as you type, and comes back
@@ -1855,7 +1887,7 @@ module plays its order list as the tracker does
 — `0Bxx` jumps, `0Dxx` breaks, looping where it jumps back to (or to the
 start) — with a row a fixed number of ticks and the speed as `:tempo`
 (speeds that take turns a row each — a swing, a Furnace groove `09xx`
-picks — at their average, for now; the log names them). By
+picks — at their average; the log names them). By
 default each pattern of each channel becomes a phrase `(def fm1-p03 …)` that
 restates its voice, octave and velocity, and each track names its phrases in
 order (`(x 2 …)` for a run); a note held into the next pattern starts that
@@ -1915,7 +1947,7 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   `11xx`) goes to `noise5` / `noise6`, each note at the rate the tracker
   plays it (Furnace's: the note; a DefleMask module's: its table by the
   note's name); one that plays both kinds goes to both names, the noise
-  over the wave where they meet (§19's `:prio` across a channel's names).
+  over the wave where they meet (language.md §19's `:prio` across a channel's names).
   The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
 - A **Game Boy** module starts at `gb`. Each channel keeps its place. An
@@ -2613,19 +2645,6 @@ the player beside the song (§19). Imported names are read when the score
 compiles, so a set of your own imported by hand joins the list after the next
 Play or Build; a preset set's names are there all along.
 
-**File ▸ New…** lists the machines, the Mega Drive first, each with what it
-has (`OPN FM ×6 · SN76489 tone ×3 · SN76489 noise · DAC ×3`, the cartridges
-after a `+`); the machine clicked is the new score. **Tour** beside a machine
-opens its tour in the Guide (below), and **Tutorial** under the list the
-tutorial, from the first step not done. The app's first launch, with no score
-to come back to, opens here. A new score has a looping track for each
-channel that machine plays at once, a rhythm track on a sound of its own, and
-names the rest in a comment: a Famicom cartridge's channels, `md`'s `fm6`,
-`pcm2` and `pcm3`, a name that shares a track's channel. It imports the preset sets those
-tracks can play — `gm`, `fm-roles` and `waveforms`, `wavetable`, the `rx5` kit — without
-assigning any of them, so every preset name completes from the first keystroke.
-Only what a track plays reaches the song. A comment lists the names built into the machine, which need no import.
-
 ---
 
 ## 25. The Library: what the app ships
@@ -2761,13 +2780,14 @@ compiles every example.
 The audition is one note: enough to tell a sound, and a drum has only the one.
 To hear a voice or a sample across its range, play the keyboard: while Library
 shows, the keys (on screen, the computer's, a MIDI keyboard) play the
-highlighted FM voice or sample, and the keyboard is shown only then — a macro,
-a snippet or a score has nothing for the keys to play. Back on Params, the keys
+highlighted FM voice, sample or wave (a wave under its role's macro, above),
+and the keyboard is shown only then — any other macro, a snippet or a score
+has nothing for the keys to play. Back on Params, the keys
 play the channel or the def at the cursor.
 
 The list is driven from the keyboard, from the search box as from the list:
 **↑↓** moves through it, **Enter** is the row's action (the first button —
-insert the def or the snippet, import the sample's set, open the score) or
+insert the def or the snippet, open the score) or
 opens and folds a group, and **Esc** empties the search, then goes back to the
 score. In the list itself **Space** auditions the highlighted row (and stops a
 score that is playing) and **←→** fold and open the groups. Everything is
@@ -2792,9 +2812,9 @@ A `(trig N)` cue has no sound, so the log shows it as it passes — `trig 2 —
 fm1` — whether the score is playing from the editor or from the panel.
 
 **Import set** adds `(import "presets/…/set.mmlisp")` to the top of the score.
-A sample def has no **Insert def**: its `:file` is relative to the set's own
-folder (language.md §16), so importing is the only way to reach it from a score
-somewhere else. Importing a whole kit costs nothing in the sample bank —
+A sample def's **Insert** writes its `:file` from the score's folder, so the
+pasted def finds the set's wav (its `:file` in the set is relative to the set's
+own folder, language.md §16). Importing a whole kit costs nothing in the sample bank —
 only the samples you actually play are baked (language.md §16).
 
 A sample preview replaces the loaded PCM bank, so it waits for playback to
@@ -2812,7 +2832,7 @@ machine with no OPLL the ROM voices are read as 4-op, a thin stand-in, and
 `presets/fm-roles`, which a new score there imports, fills the roles with `gm`'s
 voices instead. A
 prefix names one set's own sound: `gm-piano` is that voice everywhere. The
-melodic roles are the ROM voices' names (§19 `msx`), and a voice, a wave and a
+melodic roles are the ROM voices' names (language.md §19 `msx`), and a voice, a wave and a
 sample can all have one, as the channel says which it plays. A score keeps its
 names when it moves between an FM channel and a wave channel.
 

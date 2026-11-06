@@ -113,6 +113,10 @@ Run from tools directory:
     id, files are stored and served, the same files get the same id however
     they were packed, a bundle the app would not write is refused, and a wav
     travels mono, 16-bit, at most 22.05 kHz unless a def counts its frames
+33. `npm run gen:snippet-targets` / `npm run check:snippet-targets` —
+    `snippets/targets.json`, the machines each snippet plays on (every
+    snippet ported to every target and compiled; the Library marks by it);
+    the check fails if the file is not what the snippets and compiler give
 
 ## i18n
 

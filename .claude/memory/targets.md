@@ -5,6 +5,12 @@ pc88, x68k, msx, pce, fc and gb sit on the part / chip / target layering
 does. This file holds the rulings, what the docs do not say, and what is
 open, per machine; delete each item once the repo records it.
 
+Why the other machines have no driver: a score there is composed in Live
+and delivered as a VGM that existing players run; the preview and the VGM
+come from one register log, so they match by construction. Hardware
+playback and game integration are given up deliberately (VGMPlay-MSX
+plays the MSX VGMs on hardware regardless).
+
 ## Rulings (2026-10-25)
 
 - **`def-fm` stays the one FM voice form**, OPLL's 2 ops included — no

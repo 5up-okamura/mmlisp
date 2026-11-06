@@ -17,7 +17,7 @@ source file is a sequence of top-level forms, in source order:
 
 | Form              | Role                                             |
 | ----------------- | ------------------------------------------------ |
-| `(def name …)`    | Named definition (snippet, voice, sample, macro) |
+| `(def name …)`, `(def-fm …)`, `(def-pcm …)`, `(def-wave …)`, `(def-se …)` | Named definitions: a snippet or macro, a voice, a sample, a wave, a sound effect (§9) |
 | `(def-val name …)`| Runtime value slot declaration                   |
 | `(def-score …)`   | The score's settings: title, composer, author, PCM voices, target |
 | `(def-mod …)`     | Score-wide note modifier (§9.4)                  |
@@ -452,7 +452,7 @@ would take more passes than the cycle has steps (it ends off a step of the
 cycle), a counted `(go label N)`, or a label in another form — plays as
 written and is flagged `W_SHUFFLE_LOOP`. A note the warp leaves no time (a
 fine note in a very short step) plays one tick, taken from what follows
-(`W_SHUFFLE_SQUEEZED`); a value outside 0–99, an empty list, a weight that is
+(`W_SHUFFLE_SQUEEZED`); `:shuffle 0` reads as `none`; a value outside 0–99, an empty list, a weight that is
 not above 0 or a `:shuffle-base` of no length is `E_SHUFFLE_INVALID`.
 
 ```lisp
@@ -1252,7 +1252,7 @@ A game's sound effects are written once, as defs, and every song carries them.
   ```
 - **Not the song's.** A part is compiled like any track, but it is never played
   with the song. The game plays an effect by its **number** — its place among
-  the def-se forms, imports first. `tools/install-sgdk.mjs` writes the numbers
+  the def-se forms, imports first. `drv/tools/install-sgdk.mjs` writes the numbers
   to `inc/mmlisp_se.h` as `SE_<NAME>` (`jump` → `SE_JUMP`), and
   `MMLisp_playSe(SE_JUMP)` plays it (drv/sgdk/README.md).
 - **`:prio`** (0-255, default 0) is the effect's priority against another
@@ -2735,6 +2735,7 @@ it does a voice:
 (def-wave saw :wave (saw -128..127))            ; one cycle of a curve
 (def-wave hollow :wave [0 90 127 90 0 -90 -127 -90 0 90 127 90 0 -90 -127 -90
                         0 40 60 40 0 -40 -60 -40 0 40 60 40 0 -40 -60 -40])
+(def-wave soft :wave (sin -128..127))
 (wave1 saw :len 8 c e g > c < hollow g e c e)
 ```
 
@@ -2943,6 +2944,7 @@ and a deep sway on a high note wraps round to a low one, as on the chip.
 ```lisp
 (def-score :target pce)
 (def-wave tri :wave (triangle -128..127))
+(def-wave lead :wave (saw -128..127))
 (wave2 tri :vol 0 :oct 5 :len 1 c ~ c)            ; the LFO: its shape, its speed
 (wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)  ; channel 1 swayed by it
 ```

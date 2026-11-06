@@ -58,6 +58,8 @@ suffix combines with the target's base (language.md §7.0).
   centre that follows the game every frame — then as an offset slot on the
   scaled-macro mechanism (`offset + (shape × scale) >> 8`), not as live
   endpoints.
+- **More PCM tracks than voices, if built, drops by `:prio`** (roadmap):
+  a merged bake of the overlaps was rejected for growing the bank unseen.
 - **No effect (def-se) on CH3** stays (2026-10-21). An effect over the
   independent-operator or CSM mode would have to save and restore what the
   frequency registers mean, not just their values; a "normal mode only"

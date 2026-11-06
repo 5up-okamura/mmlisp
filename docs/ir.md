@@ -12,7 +12,7 @@ asymmetries matter for the Z80 driver.
 `compileMMLisp(src, filename)` returns:
 
 ```json
-{ "ir": { ... }, "diagnostics": [ ... ], "sourceMap": [ {"line": 12, "tick": 96}, ... ], "openingBpm": 120 }
+{ "ir": { ... }, "diagnostics": [ ... ], "sourceMap": [ {"line": 12, "tick": 96}, ... ] }
 ```
 
 | Field         | Description                                                                  |
@@ -20,7 +20,6 @@ asymmetries matter for the Z80 driver.
 | `ir`          | The song object (below). All object keys recursively sorted (`sortObject`).  |
 | `diagnostics` | `{ severity, code, message, line, column, file?, track }` — not part of the IR; `file` names the imported file a position is in. One per place and message: a def expanded many times reports once, with the first `track` that met it. |
 | `sourceMap`   | Sorted `{ line, tick }` pairs (earliest tick per source line). Sits **beside** the IR, not inside it. |
-| `openingBpm`  | The tempo at tick 0 (a tick-0 tempo sweep's `from`; 120 when none). Beside the IR. |
 
 ## 2. Song object
 
@@ -275,7 +274,7 @@ the flattened runtime schedule.
 | -------- | -------------------------- | --------------------------------------------------------------------------- |
 | `MARKER` | `{ id }`                   | Label from `#name`, or the anchor of an uncounted `(x …)` (`"(x N)"`) — a `JUMP` target; emits no stream bytes. |
 | `JUMP`   | `{ to }`                   | `to`: marker id. A **backward** `JUMP` is the track's structural loop point. A counted `(go label N)` never reaches the IR as a `JUMP`: it becomes `LOOP_BEGIN`/`LOOP_END` (a forward one is `E_GO_FORWARD_COUNT` and dropped). |
-| `TRIG`   | `{ code }`                 | `(trig N)`: id 0..63 — a music→game sync point written to the track's status byte (opcodes.md §0x42). Never a jump target. |
+| `TRIG`   | `{ code }`                 | `(trig N)`: id 0..63 — a music→game sync point written to the track's status byte (opcodes.md §3.1). Never a jump target. |
 
 ```json
 { "tick": 0,   "cmd": "MARKER", "args": { "id": "loop" } }
@@ -314,7 +313,7 @@ Runtime read-modify-write against the player's shadow register file.
 | `delta`  | number \| `{ "src": s }`| yes (`PARAM_ADD`) | Added to the current shadow value.    |
 | `factor` | number \| `{ "src": s }`| yes (`PARAM_MUL`) | Multiplies the current shadow value, unsigned 8.8: a number is the factor (×256, rounded); a slot's value is the 8.8 factor itself (256 = ×1). The product is floored. |
 
-`src` is `"$time"` (elapsed 60 Hz frames since play start) or a `def-val`
+`src` is `"$time"` (elapsed frames of the score's clock, `metadata.frameHz`, since play start) or a `def-val`
 slot name, resolved at dispatch time.
 
 ```json
@@ -349,7 +348,7 @@ curves, and glide portamento). Args = `target` + the curve-spec fields (§6.2):
 | `curve`      | string  | —     | yes | Curve name (§6.4).                                                |
 | `from`       | number  | target| no  | Start value. Absent ⇒ the parameter's current value when the sweep starts (MMB `flags` bit3). |
 | `to`         | number  | target| yes | End value (0 if unspecified).                                     |
-| `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → 60 Hz frames at dispatch). |
+| `frames`     | int     | ticks | no  | Sweep length. **In ticks** despite the name (the player converts ticks → frames at dispatch). |
 | `lenFrames`  | bool    | —     | no  | True when `:len` was written as `Nf` or `Nms` (absolute frames); `frames` is then a frame count (language.md §4). |
 | `loop`       | bool    | —     | yes | True for loop waveforms (`sin`/`triangle`/`square`/`saw`/`ramp`/`noise`/`pink`/`perlin`/`brown`) or `:mode loop`; `:mode shot` clears it. |
 | `waitTicks` / `waitFrames` / `waitKeyOff` | int / int / bool | ticks / frames | no | Pre-delay before the curve. **Ignored on PARAM_SWEEP** (macro-only) — see §11. |
@@ -467,7 +466,7 @@ Gate (a rest on the rate source, and the note after it with an inline rate):
 ```
 
 Notes: the player converts Hz → Timer A value
-(`TA = 1024 − clock/(144·hz)`) and, for the swept form, writes per 60 Hz
+(`TA = 1024 − clock/(144·hz)`) and, for the swept form, writes per
 frame over `len` ticks, linear in that value, as the driver sweeps it. The
 track's next CSM_RATE (const or swept) ends a running sweep.
 
@@ -548,7 +547,7 @@ All spec kinds may carry:
 | Field  | Type                                   | Semantics                                                       |
 | ------ | -------------------------------------- | ---------------------------------------------------------------- |
 | `type` | `"steps"` \| `"curve"` \| `"stages"`   | Discriminator.                                                    |
-| `step` | `{ "unit": "frame"\|"tick", "value": n }` | Per-macro sampling clock (`:step`). Absent ⇒ 1 frame = 60 Hz. For step vectors: time per step. For curves/stages: sample-and-hold interval. |
+| `step` | `{ "unit": "frame"\|"tick", "value": n }` | Per-macro sampling clock (`:step`). Absent ⇒ 1 frame (of `metadata.frameHz`). For step vectors: time per step. For curves/stages: sample-and-hold interval. |
 | `scale` | string | **Scaled macro** (`(* <signal> $slot)`, language.md §7). A value-slot name (no `$`, or `"$time"`). The player/driver reads the slot **live every frame** and writes `(sample × (slot & 0xFF)) >> 8` (0..255 depth, magnitude multiply, re-signed toward zero). Applies to any target, before the target write. MMB → MACRO_TABLE flags bit2 + an appended slot byte (mmb.md §15). |
 
 ### 6.1 Step vector — `type: "steps"`
@@ -613,8 +612,9 @@ either a curve spec (§6.2 fields, no `type`) or a wait:
 | ------------- | ------------------------------------------------------------------------------|
 | `waitKeyOff: true` | Snap the cursor to the gate boundary.                                     |
 | `waitTicks: N`     | Advance the cursor N ticks (tempo-scaled).                                 |
-| `waitFrames: N`    | Advance the cursor N 60 Hz frames (wall-clock). Emitted for `(wait Nf)` / `(wait Nms)` and for `_`, under a frame `:step`. |
+| `waitFrames: N`    | Advance the cursor N frames (wall-clock, at `metadata.frameHz`). Emitted for `(wait Nf)` / `(wait Nms)` and for `_`, under a frame `:step`. |
 | curve stage        | Plays for its `frames`; a `loop: true` stage cycles until the gate.       |
+| `fromNow: N`       | On a release stage written without `:from`: the stage starts from the last value the macro wrote before the key-off; N is the share's full scale (128, or 32768 on `NOTE_PITCH`) — the MMB's MACRO_TABLE flags bit 4 (mmb.md §15). |
 
 A `:wait` **inside** a curve stage acts as that stage's pre-delay.
 
@@ -658,6 +658,7 @@ write.
 | `VEL`             | 0–15           | Velocity ladder (2 dB/step) folded into carrier TL / PSG att. **Macro / `:vel` note-scoped only** — rejected as a PARAM target. |
 | `VOL`             | 0–31           | Channel fader → carrier TL offset (FM) / attenuator (PSG). 0 = hard mute. |
 | `MASTER`          | 0–31           | Global fader → all FM carrier TLs + all sounding PSG channels. Song-wide: inline only, not a macro target. |
+| `RANGE_START` / `RANGE_END` / `RANGE_LEN`, `LOOP_START` / `LOOP_END` / `LOOP_LEN` | ≥ 0 seconds | A PCM note's range and loop (§2); the MMB exporter turns seconds into byte offsets at the image's rate. `pcmN` tracks only. |
 | `LFO_RATE`        | 0–8            | Reg 0x22 (0 = off, 1–8 = `0x08 \| rate−1`). Song-wide, as `MASTER`. On `x68k`: 0 both depths 0, 1–8 the nearest LFRQ at depth 127. |
 | `LFO_FREQ`        | 0–255          | `x68k`: the YM2151's LFRQ (reg 0x18). `pce`: the HuC6280's LFO speed. `fc`: the FDS's modulation rate, 0–4095 ($4086/$4087). Song-wide, as `MASTER`. |
 | `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). `fc`: `LFO_PMD` the FDS's modulation depth, 0–63 ($4084). Song-wide. |
@@ -759,13 +760,13 @@ the SSG's).
   the slot's own, and a read sees the value the frame before wrote, as on
   the driver. `PARAM_FROM_VAL`
   and slot-ref operands resolve at event dispatch; macro `dyn` fields resolve
-  once per note at note-on (constant for that note). `$time` = elapsed 60 Hz
+  once per note at note-on (constant for that note). `$time` = elapsed
   frames since playback start.
 - **Loops.** `LOOP_*` are expanded structurally at load; the backward `JUMP`
   defines the per-track structural loop, and tracks loop independently
   (re-anchored each iteration). Events after the backward `JUMP` are trimmed
   from linear playback.
-- Macro and sweep sampling is 60 Hz (per `:step` for step vectors /
+- Macro and sweep sampling is once a frame (per `:step` for step vectors /
   sample-and-hold); level moves write one TL byte per carrier operator of the
   current algorithm.
 
@@ -775,7 +776,7 @@ the SSG's).
 {
   "version": 1,
   "ppqn": 96,
-  "metadata": { "title": "demo", "composer": "", "author": "", "source": "demo.mmlisp", "vals": [], "samples": [] },
+  "metadata": { "title": "demo", "composer": "", "author": "", "source": "demo.mmlisp", "frameHz": 60, "pcmVoices": 0, "vals": [], "samples": [] },
   "tracks": [ {
     "id": 0, "scoreChannel": "fm1", "channel": "fm1",
     "events": [
@@ -788,11 +789,9 @@ the SSG's).
 }
 ```
 
-## 11. Known compiler/player asymmetries
+## 11. Sweeps take no pre-delay
 
-Fields the compiler emits that the player ignores (or vice versa). These are
-the open items to settle for the MMB/Z80 encoding.
-
-1. **`waitTicks` / `waitKeyOff` on inline PARAM_SWEEP.** Honored in NOTE_ON
-   macro curves; `_applyParamSweep` starts immediately and ignores a
-   pre-delay. (An `Nf` `:len` and a slot-fed `:len` *are* honored.)
+An inline PARAM_SWEEP starts at its event: `waitTicks` / `waitKeyOff` are
+honored on a NOTE_ON's macro curves only, and a `:wait` written on an inline
+sweep is flagged `W_SWEEP_WAIT` and ignored by both players (language.md
+§11). An `Nf` `:len` and a slot-fed `:len` are honored on both.

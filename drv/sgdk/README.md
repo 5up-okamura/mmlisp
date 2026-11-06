@@ -8,7 +8,7 @@ an [SGDK](https://github.com/Stephane-Dallongeville/SGDK) program.
 > converter against its JS twin (`npm run pairs-gate`, the banked converter in
 > `npm run banked:gate`); the three single-bank engine images with the
 > converter in the JS instruction model (`npm run engine:gate`,
-> `npm run engine:score`) and the six banked ones (`npm run multibank:gate`). `npm run sgdk:lint` type-checks the glue against a
+> `npm run engine:score`) and the NTSC banked ones — one, two and three voices (`npm run multibank:gate`). `npm run sgdk:lint` type-checks the glue against a
 > shim. The glue built with SGDK 2.x + m68k-elf-gcc 13.2.0 runs headless in a
 > patched BlastEm on the image the score itself boots (`npm run sgdk:gate`),
 > graded write by write and DAC byte by DAC byte — driver.md §12.7 carries the
@@ -341,10 +341,12 @@ load during a screen transition, as the header says.
 **The score needs no alignment.** The 68000 reads the MMB out of its own address
 space.
 
-**The PCM sample bank rides the Z80's window.** `song.smp` is a full 32 KB,
+**The PCM sample bank rides the Z80's window.** A single-bank `song.smp` is a full 32 KB,
 32 KB aligned (`BIN song_smp "song.smp" 32768`): the samples, then zeros up to
 the top page (`$7F00..$7FFF` of the bank), which is the silence the voice parks
 in between notes. The exporter refuses a bank whose samples reach that page.
+A multi-bank one is a 32 KB directory and then whole 32 KB banks, each ending
+in its silence page (Multi-bank PCM, below).
 
 ### PCM sample banks
 
@@ -553,4 +555,4 @@ The design is `docs/driver.md`; building and the gates are `drv/README.md`.
 
 ## Multi-bank PCM
 
-Export and bundle builds automatically expand NTSC and PAL scores with up to three PCM voices when samples exceed 32 KiB. To select the new engine for smaller songs, add `--multibank` to the installer. Use MMB/SMP files generated together, loading them with `MMLisp_setSampleBank` and `MMLisp_loadScore`. The installer also updates `mmlispdrv_banked_bin.h`. One and two voices run at about 10.1 kHz on NTSC or 10.0 kHz on PAL, three at about 6.65 kHz or 6.59 kHz, with at most 256 entries and 32,512 bytes per individual blob. Use `--pal` when compiling for PAL. See [usage and validation](../../docs/pcm-multibank.md).
+Export and bundle builds automatically expand NTSC and PAL scores with up to three PCM voices when samples exceed 32 KiB. To use the multi-bank engine for a song that fits one bank, add `--multibank` to the installer. Use MMB/SMP files generated together, loading them with `MMLisp_setSampleBank` and `MMLisp_loadScore`. The installer also updates `mmlispdrv_banked_bin.h`. One and two voices run at about 10.1 kHz on NTSC or 10.0 kHz on PAL, three at about 6.65 kHz or 6.59 kHz, with at most 256 entries and 32,512 bytes per individual blob. Use `--pal` when compiling for PAL. See [usage and validation](../../docs/pcm-multibank.md).

@@ -18,9 +18,9 @@ Two processors:
   PSG itself. The MMB lives in 68k ROM and is read as a plain byte array.
 - **Z80 — the engine.** Plays one to three PCM voices through the fm6 DAC on a
   fixed clock taken from its own instruction stream, and consumes the pairs:
-  YM2612 register writes and the PCM voices' state (§5). There is one engine
-  image per PCM voice count, each at its own rate; the score names the one it
-  plays on. It evaluates nothing: every value arrives register-ready.
+  YM2612 register writes and the PCM voices' state (§5). There is an engine
+  image per PCM voice count, single-bank or multi-bank and NTSC or PAL, each
+  at its own rate; the score's header names the one it plays on. It evaluates nothing: every value arrives register-ready.
 
 **Who keeps which clock.** The DAC's sample clock is the Z80's instruction
 stream — no interrupt and no timer. The music's frame clock is the 68000's
@@ -59,8 +59,8 @@ bus stop, and no stop is repaid (§5.1). The PSG is on the VDP's bus, so the
 
 ### 1.2 Fixed limits
 
-**8-bit DAC output** (YM2612), **one to three PCM voices** (one engine image
-per count, §5), **no runtime pitch** (PCM is baked per note at the image's
+**8-bit DAC output** (YM2612), **one to three PCM voices** (an engine image
+per count and bank model, §5), **no runtime pitch** (PCM is baked per note at the image's
 rate by the exporter, §14.2), **single-bank or multi-bank samples** (§5.4), and
 **bus stops**: the 68000's grabs and SGDK's own halts around joypad reads and
 VBlank DMA stop the Z80, and the DAC runs slow by the time the bus was held
@@ -137,7 +137,7 @@ every load. `drv/tools/bundle.mjs` builds a set of scores against one bank —
 every sample any song plays numbered once, deduplicated by content — and
 encodes every song for one engine image, so the load never reboots the Z80
 (§5). A score's sound effects are tracks of that score (§2.5), so a bundled
-song carries its effect tracks itself; the bank is what it no longer carries.
+song carries its effect tracks itself, and only the bank is shared.
 
 ### 2.4 `len=0` — indefinite hold
 
@@ -318,7 +318,7 @@ sweep, and the rounding happens on each standard independently.
 
 **PCM pitch follows the same split.** The engine is the same image on both
 standards — free-running and cycle-paced, so its period is the same count of
-Z80 cycles — but the PAL Z80 runs 0.92% slower, so its DAC rate is lower
+Z80 cycles — but the PAL Z80 runs 0.91% slower, so its DAC rate is lower
 (10,019 Hz against 10,112 at two voices). A PAL score's bank is baked at its
 image's PAL rate and stamped with it (mmb.md §10), so a sample plays at its
 pitch on the machine it was baked for. A PAL frame gives the engine 19.5%
@@ -353,13 +353,13 @@ Note onsets fall on the 60 Hz frame. The slot format keeps a sub-tick count,
 What moves an onset off its frame is the pair wire: the Z80 sends a frame's
 writes one by one, so a key-on waits behind the writes queued before it (16
 pairs a frame on the single-bank host, §6.6). The largest burst is a voice
-change, ~36 writes a channel, so the compiler sends a voice ahead of its note,
+change, ~30 writes a channel, so the compiler sends a voice ahead of its note,
 in the silence before it (`live/src/voice-hoist.js`, language.md §9), on the
 first frame of its window that has no other channel's voice and no FM key-on:
 the note's frame keeps its pitch, key-on and level writes, and several
 channels changing voice before one beat cost the 68000 one voice a frame, not
-all of them in one render (§5.4's host measured a 33 ms late key-on on such a
-frame, 14 ms spread). Within a frame, the
+all of them in one render (a key-on behind such a burst was measured 33 ms
+late). Within a frame, the
 single-bank converter sends the key-ons last (`mmlpairs.c` keyons_last), so a
 chord keys within a few pairs (~3 ms) instead of behind every pitch and level
 write of the frame; each channel's own writes still precede its key-on, a
@@ -498,7 +498,7 @@ PCM voices have their own state (§14).
 | note | MIDI |
 | fnum / PSG period | current, including bend |
 | block | FM |
-| vel (0–120, eighths of a step), vol (0–31), master (0–31) | level model, §7 |
+| vel (0–120, eighths of a step), vol (0–31) | level model, §7 |
 | gate (0–8) | |
 | pan (i8 −1/0/1) | |
 | key-off countdown | ticks; sentinel = none/held |
@@ -766,7 +766,7 @@ sequencer only stores and applies (docs/language.md §8).
 | `MMLisp_loadScore(mmb)` | load a score (resets the sequencer; one score at a time) and prime it (§4.1); `MMLisp_isSettled()` says when the load has gone out |
 | `MMLisp_attachInterrupts()` | install the pump (§6.6) as the VBlank callback; a game with its own calls `MMLisp_pump()` once a frame instead. The horizontal interrupt is not touched |
 | `MMLisp_frame()` | once per frame in the main loop, after the control calls: render ahead (§3.1); takes no bus |
-| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), and reset the channel's level state (vel 15, vol 31, master 31, gate 8); val slots are left as they are (§6.4). Restarting an active track restarts it from the top. The track sounds from the frame the call is drained in (§4.2) |
+| `MMLisp_startTrack(track)` | initialize the track (stream pointer, accumulator 0, the stream's first TEMPO_SET), apply the channel-ownership rule (§2.2), and reset the channel's level state (vel 15, vol 31, gate 8; the song's master is left as it is); val slots are left as they are (§6.4). Restarting an active track restarts it from the top. The track sounds from the frame the call is drained in (§4.2) |
 | `MMLisp_stopTrack(track)` | key-off (the release tail runs out naturally), free the channel, idle the track. On an `fm3-csm` track this clears the CSM bit in `$27` (§9). Stopping an SE restores the BGM it displaced (§2.5) |
 | `MMLisp_startSong()` | start every track of the song — all but the effects' parts — in one frame |
 | `MMLisp_playSe(se)` / `MMLisp_playSePrio(se, priority)` | play a def-se by number (`SE_<NAME>` in `inc/mmlisp_se.h`): each part takes its channel as below, at the def-se's priority or `priority`. `MMLisp_stopSe(se)` ends every part, `MMLisp_sePlaying(se)` says whether one runs, `MMLisp_seCount()` how many the score has |
@@ -800,7 +800,7 @@ Every control call takes effect on the next frame rendered (§3.4).
   were cued with. A command for a voice the booted image does not have is a
   fault (`MMLispStats.faults`).
 - **The image** is booted by `MMLisp_loadScore` from the MMB header's PCM voice
-  count (`MMLisp_init` boots `pcm1`); booting another resets the Z80 and
+  count, its multi-bank flag and its frame clock (`MMLisp_init` boots `pcm1`); booting another resets the Z80 and
   rewrites the bank register.
 - **One pump a frame, from the vertical interrupt.** The horizontal interrupt
   is never touched — it stays the game's. A pump is two short bus stops: one
@@ -1149,7 +1149,8 @@ including under an effect.
 ## 12. Verification Strategy
 
 There is no automated test suite for audio; verification is comparative, and
-every gate runs on the host. `cd drv && npm run verify:all` runs §12.2–§12.8,
+every gate runs on the host. `cd drv && npm run verify:all` runs §12.2–§12.8 but §12.7 (which needs SGDK
+and BlastEm),
 the claim, voice-hoist and glide gates, and the banked gates (`drv/README.md`
 lists each).
 
@@ -1157,8 +1158,8 @@ lists each).
 
 Executes MMB v0.4 with the §4 loop order and **integer-only math** (8.8
 accumulators, the §7/§8 integer tables — no floats), in the live environment as
-an alternate backend, and emits real frames through the real cap/spill queue
-(§4) so it specifies the interface too, not just the music.
+an alternate backend, and emits real frames in the §4 frame model
+so it specifies the interface too, not just the music.
 
 ### 12.2 68k C ≡ `drv-player.js` — the hard gate
 
@@ -1205,7 +1206,8 @@ byte for byte, which holds the write ORDER the converter depends on (the slot
 cannot: it buckets by port). Then the C converter and `tools/pairs-model.mjs`
 turn the same records into pairs and PSG bytes, byte for byte, over the same
 corpus — each with its own image's configuration — with late grabs injected,
-with render leads 0, 1 and 2 (which must give the same wire), with one and two
+with frames released as soon as rendered and at render leads 1 and 2
+(which must give the same wire), with one and two
 grabs a frame, and through the frame-view path the SGDK host uses.
 
 ### 12.4 The engine
@@ -1445,8 +1447,7 @@ its target** on the track (sticky, replacing any active macro on that target);
 holds up to **8** binds (`MML_MACRO_BINDS`, §4.3); a `MACRO_SET` for a ninth
 target is ignored (deterministically, in both players). On **any** `NOTE_ON`
 the sequencer instantiates each active macro into a **running slot** (one per
-bind: {descriptor, step clock, cursor, state}); `NOTE_ON_EX` `macro_ref` adds
-a per-note one-shot.
+bind: {descriptor, step clock, cursor, state}).
 
 A bind belongs to the **channel**, not to the track that wrote it, so claiming
 the channel clears it (§2.2). A sound effect's claim keeps the displaced
@@ -1603,8 +1604,8 @@ modulator. Gate: `m4-fm3op-level`.
 
 `pcm1`–`pcm3` are the language's PCM voices, played through the fm6 DAC.
 Samples are declared with `(def-pcm name …)` and exported as a sample bank beside
-the MMB (mmb.md §10). A score's PCM voice count is the highest `pcmN` it uses;
-it is written in the MMB header and picks the engine image (§5).
+the MMB (mmb.md §10). A score's PCM voice count is its `:pcm-voices`, else the highest `pcmN` it
+uses; it is written in the MMB header and picks the engine image (§5).
 
 A `PCM_NOTE_ON` becomes a `PCM_START`, or `PCM_START_BANKED` for multi-bank
 playback, in the frame (§6.3): where the note
