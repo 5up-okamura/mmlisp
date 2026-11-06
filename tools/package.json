@@ -35,6 +35,7 @@
     "check:import-nsf": "node scripts/check-import-nsf.mjs",
     "check:import-midi": "node scripts/check-import-midi.mjs",
     "check:export-midi": "node scripts/check-export-midi.mjs",
+    "check:stems": "node scripts/check-stems.mjs",
     "check:import-tracker": "node scripts/check-import-tracker.mjs",
     "snapshot:imports": "node scripts/import-snapshot.mjs",
     "check:archive": "node scripts/check-archive.mjs",

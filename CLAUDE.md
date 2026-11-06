@@ -45,6 +45,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
 | `export-midi.js`                | File > Export > MIDI: the score's portable core as a Standard MIDI File, on every target (`tools npm run check:export-midi`) |
+| `stems.js`                      | The mixer's strips (`mixerStrips`, the panel's model without its look), and File > Export > Stems: a WAV a strip, soloed and rendered as the WAV export, the chip's floor taken out (`tools npm run check:stems`) |
 | `ab-snapshots.js`               | Edit > A/B Compare: two working copies of the score, each with its own undo history (`tools npm run check:ab-snapshots`) |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
 | `new-score.js`                 | File > New: an empty score for a target, read off its channel table (`tools npm run check:new-score`) |

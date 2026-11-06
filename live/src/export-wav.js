@@ -270,6 +270,18 @@ export function encodeWav(L, R, sampleRate) {
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
+  const { L, R, sampleRate, pcmCount, durationSec } = await renderWavSamples(player, opts);
+  return { bytes: encodeWav(L, R, sampleRate), pcmCount, durationSec };
+}
+
+/**
+ * renderWav before its encoding: the stereo float buffers, for a caller that
+ * lines several renders up first (stems.js). Same options.
+ *
+ * @returns {Promise<{ L:Float32Array, R:Float32Array, sampleRate:number,
+ *                     pcmCount:number, durationSec:number }>}
+ */
+export async function renderWavSamples(player, opts = {}) {
   const why = notYet(player._target, "play"); // a register log with no core to play it
   if (why) throw new Error(why);
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
@@ -319,6 +331,5 @@ export async function renderWav(player, opts = {}) {
   if (tl.fadeStartFrame != null) {
     applyFade(L, R, tl.fadeStartFrame, tl.totalFrames);
   }
-  const bytes = encodeWav(L, R, sampleRate);
-  return { bytes, pcmCount: dac ? 0 : capture.pcmCount, durationSec: tl.totalFrames / sampleRate };
+  return { L, R, sampleRate, pcmCount: dac ? 0 : capture.pcmCount, durationSec: tl.totalFrames / sampleRate };
 }

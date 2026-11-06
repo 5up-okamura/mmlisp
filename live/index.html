@@ -301,6 +301,7 @@
             <div class="menu-label">Recording</div>
             <button class="menu-item" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
             <button class="menu-item" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
+            <button class="menu-item" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
             <button class="menu-item" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
@@ -1133,6 +1134,7 @@
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
+    import { mixerStrips, renderStems, stemName } from './src/stems.js';
     import { newScoreSource, machineSummary } from './src/new-score.js';
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
@@ -7195,6 +7197,59 @@
       }
     }
 
+    // File > Export > Stems…: a WAV a mixer strip, each soloed and rendered as
+    // the WAV export renders the score (stems.js), in one ZIP.
+    async function exportStems() {
+      const src = editorView.state.doc.toString();
+      let ir;
+      try {
+        await refreshImportSources(src);
+        const compiled = compileMMLisp(src, _lastFileName, { imports: _importSources });
+        const errors = (compiled.diagnostics || []).filter(d => d.severity === 'error');
+        if (errors.length > 0) {
+          log('Cannot export stems: source has compile errors', 'err');
+          return;
+        }
+        ir = compiled.ir;
+      } catch (e) {
+        log('Stems export failed to compile: ' + e.message, 'err');
+        return;
+      }
+
+      const baseName = (_sourceFileName || 'untitled.mmlisp').replace(/\.[^.]*$/, '');
+      const suggestedName = baseName + '-stems.zip';
+      const target = await pickExportTarget(suggestedName, 'Stems', 'application/zip', '.zip');
+      if (!target) return;
+
+      const pcm = await exportPcmBank(ir, 'Stems');
+      let set;
+      try {
+        const line = log('Rendering stems…', 'info');
+        const stamp = line.textContent.slice(0, line.textContent.indexOf(']') + 1);
+        const machine = targetProfile(ir.metadata?.target);
+        const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
+        set = await renderStems(ir, () => new IRPlayer(() => {}).loadJSON(ir), {
+          lpfOn: analogLpfOn, pcm, rhythmRom,
+          onProgress: (f) => { line.textContent = `${stamp} Rendering stems… ${Math.floor(f * 100)}%`; },
+        });
+      } catch (e) {
+        log('Stems export failed: ' + e.message, 'err');
+        return;
+      }
+      if (set.pcmCount > 0) log(`Stems export: skipped ${set.pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
+
+      const files = set.stems.map((s, i) => ({ path: stemName(i, s.head), bytes: s.bytes }));
+      const blob = new Blob([await writeZip(files)], { type: 'application/zip' });
+      try {
+        if (await writeExport(target, blob, suggestedName)) {
+          log(`Exported ${suggestedName}: ${files.length} stems, ${set.durationSec.toFixed(1)}s each`, 'info');
+          logPreviewOnly('Stems');
+        }
+      } catch (e) {
+        if (e?.name !== 'AbortError') log('Stems save failed: ' + e.message, 'err');
+      }
+    }
+
     // -----------------------------------------------------------------------
     // Video export (File > Export > Video…, Share > Make video): plays the
     // score and records the editor in real time — what the screen shows,
@@ -8237,53 +8292,22 @@
     // it — so one sound mutes, solos or fades alone. Each carries `voice`
     // (IRPlayer muteVoice / soloVoice / setVoiceVol) and its scope lane.
     function buildChStripModel(ir) {
-      const tracks = ir?.tracks ?? [];
       const target = targetProfile(ir?.metadata?.target);
-      const order = target.channelNames.filter((h) => h !== 'fm3-csm-rate');
-      const headToTrack = new Map();
-      tracks.forEach((t, ti) => {
-        const head = t.scoreChannel ?? t.channel;
-        if (head != null && !headToTrack.has(head)) headToTrack.set(head, ti);
-      });
-      // The ROM rhythm (a part with a kit: the YM2608's, the OPLL's).
-      const kitPart = target.parts.find((p) => p.kit);
-      const rhythmHeads = new Set(kitPart ? target.headsOf(kitPart.name) : []);
-      const soundOf = new Map((ir?.metadata?.samples ?? []).filter((d) => d.rhythm).map((d) => [d.name, d.rhythm]));
-      const sounds = new Set();
-      const rhythmTracks = [];
-      tracks.forEach((t, ti) => {
-        if (!rhythmHeads.has(t.scoreChannel ?? t.channel)) return;
-        rhythmTracks.push(ti);
-        for (const e of t.events ?? []) if (e.cmd === 'PCM_NOTE_ON' && soundOf.has(e.args?.sample)) sounds.add(soundOf.get(e.args.sample));
-      });
-      const model = [];
-      let rhythmDone = false;
-      for (const head of order) {
-        if (!headToTrack.has(head)) continue;
-        if (rhythmHeads.has(head)) {
-          if (rhythmDone) continue;
-          rhythmDone = true;
-          // The part's sounds in its order, from the head's lane (targets.js
-          // scopeLane) — or where the part puts each (`kitLane`: the OPLL's
-          // pairs share a channel's).
+      return mixerStrips(ir).map((strip) => {
+        if (strip.rhythm) {
+          // The part's sounds from the head's lane (targets.js scopeLane) — or
+          // where the part puts each (`kitLane`: the OPLL's pairs share a
+          // channel's); the roll's row is this sound's hits from every track.
+          const { sound, role, k, head, rhythmTracks, samples } = strip.rhythm;
           const kitLane = target.partOf(head).kitLane;
-          Object.entries(target.partOf(head).kit).forEach(([role, sound], k) => {
-            if (!sounds.has(sound)) return;
-            // The roll's row: this sound's hits, from every rhythm track.
-            const samples = new Set([...soundOf].filter(([, r]) => r === sound).map(([n]) => n));
-            model.push({ head: `rhythm-${sound}`, label: sound.toUpperCase(), role, voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
-              volKind: 'voice', volIndex: null, slot: null, trackIndex: rhythmTracks[0], rhythmTracks, samples });
-          });
-          continue;
+          return { head: strip.head, label: sound.toUpperCase(), role, voice: sound, scope: target.scopeLane(head) + (kitLane?.[sound] ?? k),
+            volKind: 'voice', volIndex: null, slot: null, trackIndex: rhythmTracks[0], rhythmTracks, samples };
         }
-        const entry = { head, label: channelLabelOf(head), trackIndex: headToTrack.get(head), ...channelRouting(head) };
-        // A chip's own sample voice is the IR player's voice to mute or fade
-        // (muteVoice, setVoiceVol), as its part names it (`mixVoice`).
-        const cv = channelVoice(head);
-        if (cv?.part.mixVoice) Object.assign(entry, { voice: cv.part.mixVoice(cv.voice), volKind: 'voice' });
-        model.push(entry);
-      }
-      return model;
+        const entry = { head: strip.head, label: channelLabelOf(strip.head), trackIndex: strip.trackIndex, ...channelRouting(strip.head) };
+        // A chip's own sample voice is the IR player's voice to mute or fade.
+        if (strip.voice) Object.assign(entry, { voice: strip.voice, volKind: 'voice' });
+        return entry;
+      });
     }
 
     function buildChStrips(ir) {
@@ -11401,6 +11425,7 @@
     window.saveFileAs   = saveFileAs;
     window.exportVgm    = exportVgm;
     window.exportMidiFile = exportMidiFile;
+    window.exportStems = exportStems;
     window.exportMmb    = exportMmb;
     window.exportWav    = exportWav;
 
