@@ -71,58 +71,74 @@ function crc32(u8) {
  * what a share link's files travel as. readArchive reads it back.
  */
 export async function writeZip(files) {
+  const zip = zipWriter();
+  for (const { path, bytes } of files) await zip.add(path, bytes);
+  const pieces = zip.parts();
+  const out = new Uint8Array(pieces.reduce((n, b) => n + b.length, 0));
+  let p = 0;
+  for (const b of pieces) { out.set(b, p); p += b.length; }
+  return out;
+}
+
+/**
+ * writeZip a file at a time, for files made one after another (the stems):
+ * `add(path, bytes)` each, which deflates it and lets the caller drop it,
+ * then `parts()`, the archive's pieces in order — a Blob of them is the ZIP.
+ */
+export function zipWriter() {
   const enc = new TextEncoder();
   const parts = [], central = [];
   let at = 0;
-  for (const { path, bytes } of files) {
-    const name = enc.encode(path);
-    const crc = crc32(bytes);
-    const packed = await deflateRaw(bytes);
-    const method = packed.length < bytes.length ? 8 : 0;
-    const data = method ? packed : bytes;
-    const head = (sig, extra) => {
-      const b = new Uint8Array(extra);
-      const v = new DataView(b.buffer);
-      v.setUint32(0, sig, true);
-      return { b, v };
-    };
-    // Version 20, UTF-8 names (bit 11), no time: the content is the point.
-    const local = head(0x04034b50, 30 + name.length);
-    local.v.setUint16(4, 20, true);
-    local.v.setUint16(6, 0x0800, true);
-    local.v.setUint16(8, method, true);
-    local.v.setUint32(14, crc, true);
-    local.v.setUint32(18, data.length, true);
-    local.v.setUint32(22, bytes.length, true);
-    local.v.setUint16(26, name.length, true);
-    local.b.set(name, 30);
-    const cd = head(0x02014b50, 46 + name.length);
-    cd.v.setUint16(4, 20, true);
-    cd.v.setUint16(6, 20, true);
-    cd.v.setUint16(8, 0x0800, true);
-    cd.v.setUint16(10, method, true);
-    cd.v.setUint32(16, crc, true);
-    cd.v.setUint32(20, data.length, true);
-    cd.v.setUint32(24, bytes.length, true);
-    cd.v.setUint16(28, name.length, true);
-    cd.v.setUint32(42, at, true);
-    cd.b.set(name, 46);
-    parts.push(local.b, data);
-    central.push(cd.b);
-    at += local.b.length + data.length;
-  }
-  const cdSize = central.reduce((n, b) => n + b.length, 0);
-  const end = new Uint8Array(22);
-  const ev = new DataView(end.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(8, files.length, true);
-  ev.setUint16(10, files.length, true);
-  ev.setUint32(12, cdSize, true);
-  ev.setUint32(16, at, true);
-  const out = new Uint8Array(at + cdSize + 22);
-  let p = 0;
-  for (const b of [...parts, ...central, end]) { out.set(b, p); p += b.length; }
-  return out;
+  return {
+    async add(path, bytes) {
+      const name = enc.encode(path);
+      const crc = crc32(bytes);
+      const packed = await deflateRaw(bytes);
+      const method = packed.length < bytes.length ? 8 : 0;
+      const data = method ? packed : bytes;
+      const head = (sig, extra) => {
+        const b = new Uint8Array(extra);
+        const v = new DataView(b.buffer);
+        v.setUint32(0, sig, true);
+        return { b, v };
+      };
+      // Version 20, UTF-8 names (bit 11), no time: the content is the point.
+      const local = head(0x04034b50, 30 + name.length);
+      local.v.setUint16(4, 20, true);
+      local.v.setUint16(6, 0x0800, true);
+      local.v.setUint16(8, method, true);
+      local.v.setUint32(14, crc, true);
+      local.v.setUint32(18, data.length, true);
+      local.v.setUint32(22, bytes.length, true);
+      local.v.setUint16(26, name.length, true);
+      local.b.set(name, 30);
+      const cd = head(0x02014b50, 46 + name.length);
+      cd.v.setUint16(4, 20, true);
+      cd.v.setUint16(6, 20, true);
+      cd.v.setUint16(8, 0x0800, true);
+      cd.v.setUint16(10, method, true);
+      cd.v.setUint32(16, crc, true);
+      cd.v.setUint32(20, data.length, true);
+      cd.v.setUint32(24, bytes.length, true);
+      cd.v.setUint16(28, name.length, true);
+      cd.v.setUint32(42, at, true);
+      cd.b.set(name, 46);
+      parts.push(local.b, data);
+      central.push(cd.b);
+      at += local.b.length + data.length;
+    },
+    parts() {
+      const cdSize = central.reduce((n, b) => n + b.length, 0);
+      const end = new Uint8Array(22);
+      const ev = new DataView(end.buffer);
+      ev.setUint32(0, 0x06054b50, true);
+      ev.setUint16(8, central.length, true);
+      ev.setUint16(10, central.length, true);
+      ev.setUint32(12, cdSize, true);
+      ev.setUint32(16, at, true);
+      return [...parts, ...central, end];
+    },
+  };
 }
 
 async function deflateRaw(u8) {

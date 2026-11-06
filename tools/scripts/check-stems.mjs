@@ -4,9 +4,10 @@
 //
 //   every machine  a test score of each: one stem a strip the song plays (a
 //                  ROM rhythm sound its own, the chip's sample voices theirs),
-//                  all the same length, each sounding, and none standing off
-//                  zero (the Mega Drive's DAC offset is the floor's, taken
-//                  out of each)
+//                  handed over in order, none longer than the WAV, each
+//                  sounding, none standing off zero (the Mega Drive's DAC
+//                  offset is the floor's, taken out of each), a DAC stem
+//                  resting at zero, and no PCM said skipped
 //   the sum        where the chips mix their channels on their own — the
 //                  SSG, the AY-3-8910, the Game Boy's APU, the HuC6280's
 //                  waves — the stems and the floor add up to the WAV export
@@ -53,13 +54,18 @@ async function stemsOf(file) {
     pcm = adpcm ? { adpcm } : frames ? { [kind]: frames } : null;
   }
   const make = () => new IRPlayer(() => {}).loadJSON(ir);
-  const set = await renderStems(ir, make, { pcm });
-  return { ir, pcm, make, ...set };
+  const stems = [];
+  const set = await renderStems(ir, make, { pcm }, (stem) => { stems.push(stem); });
+  assert.equal(stems.length, set.count);
+  assert.deepEqual(stems.map((s) => s.index), stems.map((_, i) => i), `${file}: in order`);
+  return { ir, pcm, make, stems, ...set };
 }
 
 // ── Every machine ─────────────────────────────────────────────────────────
 const EVERY = [
-  "drv/tests/m3-pcm-softmix.mmlisp", // md: FM and the DAC's soft mix
+  "drv/tests/m3-pcm-softmix.mmlisp", // md: the DAC's soft mix
+  "drv/tests/m3-pcm-sync.mmlisp", // md: FM beside the DAC
+  "drv/tests/m4-pcm-hold.mmlisp", // md: a held PCM note, FM beside it
   "examples/daisy-bell.mmlisp", // md: CSM, the PSG and its noise
   "tools/tests/pc88/rhythm.mmlisp", // pc88: the ROM rhythm's sounds
   "tools/tests/pc88/ssg.mmlisp",
@@ -70,17 +76,21 @@ const EVERY = [
   "tools/tests/fc/apu.mmlisp",
 ];
 // The strips a test score plays that make no sound, in the WAV as in their
-// stem: a rhythm sound with no ROM and no :file (pc88's kit), and gb's noise
-// at c2-d+2, whose LFSR the APU clocks 4.6-6 times a second.
+// stem: a track of rests, a rhythm sound with no ROM and no :file (pc88's
+// kit), and gb's noise at c2-d+2, whose LFSR the APU clocks 4.6-6 times a
+// second.
 const QUIET = (file, head, ir) =>
-  (head.startsWith("rhythm-") && !ir.metadata.samples.some((d) => d.rhythm === head.slice(7) && d.file))
+  !ir.tracks.some((t) => (t.scoreChannel ?? t.channel) === head && t.events.some((e) => /NOTE_ON$/.test(e.cmd)) || head.startsWith("rhythm-"))
+  || (head.startsWith("rhythm-") && !ir.metadata.samples.some((d) => d.rhythm === head.slice(7) && d.file))
   || (file === "tools/tests/gb/apu.mmlisp" && head === "noise");
 for (const file of EVERY) {
-  const { ir, stems, durationSec, floor } = await stemsOf(file);
+  const { ir, stems, durationSec, pcmCount, pcm, make } = await stemsOf(file);
   const strips = mixerStrips(ir).filter((s) => !ir.tracks[s.trackIndex]?.se);
   assert.deepEqual(stems.map((s) => s.head), strips.map((s) => s.head), `${file}: a stem a strip`);
-  const lengths = new Set(stems.map((s) => s.bytes.length));
-  assert.equal(lengths.size, 1, `${file}: one length`);
+  // The samples loaded: no PCM event skipped (a muted track's offs are none).
+  assert.equal(pcmCount, 0, `${file}: no PCM skipped`);
+  // A looping score's stems are one length, the WAV's.
+  if ((await renderWavSamples(make(), { pcm })).durationSec > durationSec + 1e-6) assert.fail(`${file}: a stem as long as the WAV`);
   for (const s of stems) {
     const x = samples(s.bytes);
     let energy = 0, mean = 0;
@@ -91,16 +101,27 @@ for (const file of EVERY) {
     // Its sound, not an offset: the YM2612's floor left in a stem is most
     // of a quiet one's level.
     assert.ok(Math.abs(mean) < 0.25 * rms + 1e-4, `${file} ${s.head}: no offset (mean ${mean.toFixed(4)}, rms ${rms.toFixed(4)})`);
+    // A DAC stem rests at zero after its last sound (m3-pcm-softmix's notes
+    // all end): the DAC at rest is channel 6 at rest, the floor's.
+    if (file === "drv/tests/m3-pcm-softmix.mmlisp") {
+      let tail = 0;
+      for (let i = x.length - 1920; i < x.length; i++) tail += x[i];
+      tail /= 1920;
+      assert.ok(Math.abs(tail) < 1e-4, `${file} ${s.head}: rests at zero (${(tail * 32767).toFixed(1)} LSB)`);
+    }
   }
-  assert.ok(floor.L.length > 0 && durationSec > 0);
+  assert.ok(durationSec > 0);
   console.log(`  ${file}: ${stems.map((s, i) => stemName(i, s.head)).join(" ")}`);
 }
 
 // ── The sum ───────────────────────────────────────────────────────────────
 const ADDS_UP = ["tools/tests/pc88/ssg.mmlisp", "tools/tests/msx/psg.mmlisp", "tools/tests/gb/apu.mmlisp", "tools/tests/pce/wave.mmlisp"];
 for (const file of ADDS_UP) {
-  const { stems, floor, pcm, make } = await stemsOf(file);
+  const { stems, pcm, make } = await stemsOf(file);
   const mix = await renderWavSamples(make(), { pcm });
+  const off = make();
+  off.soloTrack(-1, true);
+  const floor = await renderWavSamples(off, { pcm });
   const xs = stems.map((s) => samples(s.bytes));
   let em = 0, er = 0;
   for (let i = 0; i < mix.L.length; i++) {

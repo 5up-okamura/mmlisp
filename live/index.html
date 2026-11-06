@@ -1134,7 +1134,7 @@
     import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/mp4-mux.js';
     import { renderWav } from './src/export-wav.js';
-    import { mixerStrips, renderStems, stemName } from './src/stems.js';
+    import { mixerStrips, renderStems, stemName, soloStrip, muteStrip } from './src/stems.js';
     import { newScoreSource, machineSummary } from './src/new-score.js';
     import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
@@ -1157,7 +1157,7 @@
     import { parse } from './src/mmlisp-parser.js';
     import { SAMPLE_EFFECTS, applySampleEffects } from './src/sample-fx.js';
     import { decodeWav } from './src/wav-decode.js';
-    import { ARCHIVE_EXT, readArchive, writeZip } from './src/archive.js';
+    import { ARCHIVE_EXT, readArchive, writeZip, zipWriter } from './src/archive.js';
     import { shareBundle, carriedWav, wavBytes } from './src/share-files.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
@@ -7222,6 +7222,9 @@
       if (!target) return;
 
       const pcm = await exportPcmBank(ir, 'Stems');
+      // Each stem goes into the ZIP as it is made: a long score's set would not
+      // fit in the tab's memory at once.
+      const zip = zipWriter();
       let set;
       try {
         const line = log('Rendering stems…', 'info');
@@ -7231,18 +7234,17 @@
         set = await renderStems(ir, () => new IRPlayer(() => {}).loadJSON(ir), {
           lpfOn: analogLpfOn, pcm, rhythmRom,
           onProgress: (f) => { line.textContent = `${stamp} Rendering stems… ${Math.floor(f * 100)}%`; },
-        });
+        }, ({ index, head, bytes }) => zip.add(stemName(index, head), bytes));
       } catch (e) {
         log('Stems export failed: ' + e.message, 'err');
         return;
       }
       if (set.pcmCount > 0) log(`Stems export: skipped ${set.pcmCount} DAC/PCM event(s) — the samples did not load`, 'err');
 
-      const files = set.stems.map((s, i) => ({ path: stemName(i, s.head), bytes: s.bytes }));
-      const blob = new Blob([await writeZip(files)], { type: 'application/zip' });
+      const blob = new Blob(zip.parts(), { type: 'application/zip' });
       try {
         if (await writeExport(target, blob, suggestedName)) {
-          log(`Exported ${suggestedName}: ${files.length} stems, ${set.durationSec.toFixed(1)}s each`, 'info');
+          log(`Exported ${suggestedName}: ${set.count} stems, ${set.durationSec.toFixed(1)}s`, 'info');
           logPreviewOnly('Stems');
         }
       } catch (e) {
@@ -8604,13 +8606,12 @@
 
     // A strip's mute / solo onto the player: a voice strip's (the YM2608's
     // sample voices) by voice, the rest by track.
+    // (stems.js: the stems solo a strip by the same rule.)
     function applyMute(p, entry, on) {
-      if (entry?.voice) p?.muteVoice?.(entry.voice, on);
-      else if (entry?.trackIndex != null) p?.muteTrack(entry.trackIndex, on);
+      if (p && entry) muteStrip(p, entry, on);
     }
     function applySolo(p, entry, on) {
-      if (entry?.voice) p?.soloVoice?.(entry.voice, on);
-      else if (entry?.trackIndex != null) p?.soloTrack(entry.trackIndex, on);
+      if (p && entry) soloStrip(p, entry, on);
     }
 
     function toggleMute(head) {

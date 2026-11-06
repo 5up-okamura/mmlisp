@@ -10,9 +10,9 @@
 // mixer's model without its look (index.html buildChStripModel adds it).
 //
 // A stem is a strip soloed and rendered as the WAV export renders the score
-// (export-wav.js): every stem starts at 0 and runs as long as the longest,
-// so the files line up in a DAW, and a looping score plays its loop twice and
-// fades as the WAV does. A chip sounds with nothing keyed — the YM2612's DAC
+// (export-wav.js): every stem starts at 0, so the files line up in a DAW, a
+// looping score's all one length (its loop twice and the WAV's fade), a
+// one-shot's each to its own last sound. A chip sounds with nothing keyed — the YM2612's DAC
 // stands off zero, every channel's share — so the score rendered with every
 // strip off is taken from each stem: a stem is its strip's own sound, and
 // the stems summed with that floor are the WAV, but where the mix clips.
@@ -70,58 +70,56 @@ export function mixerStrips(ir) {
   return strips;
 }
 
-/** A strip soloed on `player`, as the mixer's S does: by voice, else by track. */
-export function soloStrip(player, strip) {
-  if (strip.voice) player.soloVoice(strip.voice, true);
-  else player.soloTrack(strip.trackIndex, true);
+/** A strip soloed (or not) on `player`, as the mixer's S does: by voice, else by track. */
+export function soloStrip(player, strip, on = true) {
+  if (strip.voice) player.soloVoice(strip.voice, on);
+  else if (strip.trackIndex != null) player.soloTrack(strip.trackIndex, on);
+}
+
+/** A strip muted (or not) on `player`, as the mixer's M does. */
+export function muteStrip(player, strip, on = true) {
+  if (strip.voice) player.muteVoice(strip.voice, on);
+  else if (strip.trackIndex != null) player.muteTrack(strip.trackIndex, on);
 }
 
 /**
  * The score's stems: each strip the song plays (a def-se's alone are not),
- * soloed and rendered, all as long as the longest.
+ * soloed and rendered, handed to `onStem` one at a time as it is made, so a
+ * caller writes it away (a ZIP) and holds no more than one.
  *
  * @param {object} ir
  * @param {() => IRPlayer} makePlayer  a fresh player with `ir` loaded
  * @param {object} [opts]  renderWav's (pcm, rhythmRom, lpfOn …); onProgress
  *                         follows the whole set, 0..1
- * @returns {Promise<{ stems: Array<{ head, bytes }>, durationSec, pcmCount,
- *                     floor: { L, R } }>}  `floor` the render with every strip off
+ * @param {(stem: { index, head, bytes }) => Promise|void} onStem
+ * @returns {Promise<{ count, durationSec, pcmCount }>}  durationSec the longest
  */
-export async function renderStems(ir, makePlayer, opts = {}) {
+export async function renderStems(ir, makePlayer, opts, onStem) {
   const strips = mixerStrips(ir).filter((s) => !ir.tracks[s.trackIndex]?.se);
   const renders = strips.length + 1;
-  const render = (solo, k) => {
+  let done = 0;
+  const render = (solo) => {
     const player = makePlayer();
     solo(player);
-    return renderWavSamples(player, { ...opts, onProgress: opts.onProgress && ((f) => opts.onProgress((k + f) / renders)) });
+    const k = done++;
+    return renderWavSamples(player, {
+      ...opts,
+      onProgress: opts.onProgress && ((f) => opts.onProgress(Math.min(1, (k + f) / renders))),
+    });
   };
-  // The floor: every strip off (a solo of no track).
-  const floor = await render((p) => p.soloTrack(-1, true), 0);
-  const rendered = [];
-  let pcmCount = 0;
-  for (const [i, strip] of strips.entries()) {
-    const r = await render((p) => soloStrip(p, strip), i + 1);
+  // The floor: every strip off (a solo of no track). The Mega Drive's DAC
+  // at rest (0x80) is channel 6 at rest, so a DAC stem's floor is the same.
+  const floor = await render((p) => p.soloTrack(-1, true));
+  let pcmCount = 0, longest = 0;
+  for (const [index, strip] of strips.entries()) {
+    const r = await render((p) => soloStrip(p, strip));
     pcmCount = Math.max(pcmCount, r.pcmCount);
     for (const [x, f] of [[r.L, floor.L], [r.R, floor.R]])
       for (let k = 0, last = f.length - 1; k < x.length; k++) x[k] -= f[Math.min(k, last)] ?? 0;
-    rendered.push({ strip, ...r });
+    longest = Math.max(longest, r.durationSec);
+    await onStem({ index, head: strip.head, bytes: encodeWav(r.L, r.R, r.sampleRate) });
   }
-  // One length: a one-shot stem ends with its own last sound.
-  const frames = rendered.reduce((m, r) => Math.max(m, r.L.length), 0);
-  const pad = (x) => {
-    if (x.length === frames) return x;
-    const out = new Float32Array(frames);
-    out.set(x);
-    return out;
-  };
-  const sampleRate = rendered[0]?.sampleRate ?? 48000;
-  return {
-    stems: rendered.map(({ strip, L, R }) => ({ head: strip.head, bytes: encodeWav(pad(L), pad(R), sampleRate) })),
-    durationSec: frames / sampleRate,
-    pcmCount,
-    floor: { L: floor.L, R: floor.R },
-  };
+  return { count: strips.length, durationSec: longest, pcmCount };
 }
-
 /** A stem's file name in the set: its place, then its strip (`03-sqr1.wav`). */
 export const stemName = (i, head) => `${String(i + 1).padStart(2, "0")}-${head}.wav`;

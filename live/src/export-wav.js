@@ -276,7 +276,7 @@ export async function renderWav(player, opts = {}) {
 
 /**
  * renderWav before its encoding: the stereo float buffers, for a caller that
- * lines several renders up first (stems.js). Same options.
+ * works on several renders (stems.js). Same options.
  *
  * @returns {Promise<{ L:Float32Array, R:Float32Array, sampleRate:number,
  *                     pcmCount:number, durationSec:number }>}
@@ -331,5 +331,8 @@ export async function renderWavSamples(player, opts = {}) {
   if (tl.fadeStartFrame != null) {
     applyFade(L, R, tl.fadeStartFrame, tl.totalFrames);
   }
-  return { L, R, sampleRate, pcmCount: dac ? 0 : capture.pcmCount, durationSec: tl.totalFrames / sampleRate };
+  // Skipped: the PCM events of a score whose samples did not load (with the
+  // bank, a muted track's are its notes' offs, which play nothing anyway).
+  const pcmCount = dac || opts.pcm?.bank ? 0 : capture.pcmCount;
+  return { L, R, sampleRate, pcmCount, durationSec: tl.totalFrames / sampleRate };
 }

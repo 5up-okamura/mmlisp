@@ -1475,8 +1475,8 @@ bends and tempo as a Standard MIDI File for a DAW or a sound module, a
 `gm-*` voice, a role (`piano` …) or a ROM voice as its GM program and a
 kit role's sample on channel 10
 (`docs/language.md` §19) — **Stems…** on every machine, a WAV a mixer strip
-in one ZIP (each strip soloed and rendered as WAV… renders the score, all the
-same length, so they line up in a DAW beside the MIDI), **Video…** (§26),
+in one ZIP (each strip soloed and rendered as WAV… renders the score, each
+from the start, so they line up in a DAW beside the MIDI), **Video…** (§26),
 **Imported…** a song import's samples, and, on the Mega Drive, **MMB…** — the score and its sample bank
 for MMLispDRV (`docs/mmb.md`). The Mega Drive's other items are **MMLisp ▸ Analog LPF**,
 the Model 1's ~3 kHz output filter on the preview, and **Tools ▸ MMLispDRV
