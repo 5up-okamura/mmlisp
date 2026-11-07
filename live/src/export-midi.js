@@ -111,7 +111,7 @@ export const GM_KIT_ROLES = {
 export const GM_DRUM_NOTE = Object.fromEntries(Object.entries(GM_KIT_ROLES).map(([note, role]) => [role, Number(note)]));
 
 // The words this export reads; any other write is a machine's own.
-const READ_TARGETS = new Set(["VOL", "MASTER", "PAN", "NOTE_PITCH", "SNAP", "PROGRAM", "BANK", "BEND_RANGE", "PRESSURE"]);
+const READ_TARGETS = new Set(["VOL", "MASTER", "PAN", "NOTE_PITCH", "SNAP", "PROG", "BANK", "BEND_RANGE", "PRESSURE"]);
 const isCC = (t) => /^CC\d+$/.test(t);
 const READ_NOTE_ARGS = new Set([
   "pitch", "length", "gate", "vel", "legato", "fm3Op", "opMask", "sample", "rate", "mode", "baseRate",
@@ -558,7 +558,7 @@ function trackEvents(events, ctx, chan, drums, notes) {
     // it is written; a write at the loop point again (forced).
     for (const [t, v, f] of line("BANK", -1).filter(([, v]) => v >= 0)) { ctrl(t, 0, v >> 7, f); ctrl(t, 32, v & 127, f); }
     let last = null;
-    for (const [t, v, f] of line("PROGRAM", -1).filter(([, v]) => v >= 0)) if (v !== last || f) push(t, [st(0xc0), (last = v)], f);
+    for (const [t, v, f] of line("PROG", -1).filter(([, v]) => v >= 0)) if (v !== last || f) push(t, [st(0xc0), (last = v)], f);
   }
   // Its controllers (`:cc74`) and pressure: a write, a sweep, a note's macro,
   // which holds until the next note as a pan macro does.
@@ -637,7 +637,7 @@ function trackEvents(events, ctx, chan, drums, notes) {
     if (!drums) {
       // The voice: a gm-* one, a role or a ROM voice is its program; at the
       // loop's first note again when a voice change starts the loop.
-      const prog = own ? null : programOf(n.voice); // a MIDI channel writes its PROGRAM
+      const prog = own ? null : programOf(n.voice); // a MIDI channel writes its PROG
       const anew = again && n.voiceAt >= ctx.loopStart;
       if (prog != null && (prog !== program || anew)) push(on, [st(0xc0), (program = prog)], anew);
       // CC11: the note's vel macro, below its peak (the note's velocity).
@@ -827,7 +827,7 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     const pcm = events.filter((e) => e.cmd === "PCM_NOTE_ON");
     return pcm.length > 0 && !events.some((e) => e.cmd === "NOTE_ON") && pcm.some((e) => GM_DRUM_NOTE[e.args?.sample] != null);
   };
-  // On `:target midi` a track is the channel it names (ch1 → 1, drums → 10).
+  // On `:target midi` a track is the channel it names (ch1 → 1, drum1–drum8 → 10).
   const midiTarget = ir.metadata?.target === "midi";
   let melodic = 0;
   const assigned = played.map((events, i) => {
@@ -835,7 +835,7 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     if (!hasNotes) return null;
     if (midiTarget) {
       const head = songTracks[i].scoreChannel ?? songTracks[i].channel;
-      const drums = /^drums\d?$/.test(head);
+      const drums = /^drum\d$/.test(head);
       return { i, events, drums, port: 0, channel: drums ? DRUM_CH : Number(/^ch(\d+)$/.exec(head)?.[1] ?? 1) - 1 };
     }
     const drums = kit(events);

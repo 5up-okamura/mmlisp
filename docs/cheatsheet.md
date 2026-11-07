@@ -325,13 +325,13 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   leaves them out.
 - `(def-score :target midi)` is a General MIDI instrument (§19): `ch1`–`ch16`
   but `ch10`, each the channel it names, one note at a time (a chord is
-  several channels); `drums`, `drums2`–`drums4` channel 10, so hits sound
+  several channels); `drum1`–`drum8` channel 10, so hits sound
   together, playing the kit's roles (`kick snare hat ride crash …`, built in,
-  each its GM key). `:program 0–127` and `:bank 0–16383` the instrument (a
+  each its GM key). `:prog 0–127` and `:bank 0–16383` the instrument (a
   voice named for one writes it: `gm-piano`, `flute` …, built in);
   `:cc0`–`:cc127` and `:pressure` 0–127 — written, swept, or a note's macro;
   `:bend-range 1–24`; `:vol` / `:pan` are CC7 / CC10. A patch is a `def`:
-  `(def lead :program 81 :cc74 40)`. No sound of its own: File ▸ Export ▸
+  `(def lead :prog 81 :cc74 40)`. No sound of its own: File ▸ Export ▸
   MIDI… writes it, MMLisp ▸ MIDI ▸ Output plays it; no WAV or VGM.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks

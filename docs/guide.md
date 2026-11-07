@@ -1453,8 +1453,8 @@ MIDI, and the menu is not shown there). The choice is remembered.
   all. Assignments belong to this browser, not to the score.
 
 A score for a MIDI instrument rather than a chip is `(def-score :target midi)`
-(`docs/language.md` §19): its channels are `ch1`–`ch16` and the drums, its
-instruments `:program` or a voice's name, its controllers `:cc74` …, and it
+(`docs/language.md` §19): its channels are `ch1`–`ch16` and the drums
+`drum1`–`drum8`, its instruments `:prog` or a voice's name, its controllers `:cc74` …, and it
 sounds only through the output below.
 
 `MMLisp > MIDI > Output` plays the preview to a MIDI output as well — a

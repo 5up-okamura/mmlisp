@@ -1,8 +1,8 @@
 // MIDI (`:target midi`, language.md §19): fifteen melodic channels and the
-// drums, a General MIDI instrument's. A chip with no sound of its own: the
-// score goes out as a Standard MIDI File (export-midi.js) and, while Live
-// plays, to a MIDI output (midi-output.js). The IR player runs its clock and
-// writes nothing (its `none` core).
+// drums (eight tracks of channel 10), a General MIDI instrument's. A chip
+// with no sound of its own: the score goes out as a Standard MIDI File
+// (export-midi.js) and, while Live plays, to a MIDI output (midi-output.js).
+// The IR player runs its clock and writes nothing (its `none` core).
 import { words } from "./parts.js";
 import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "../export-midi.js";
 
@@ -17,11 +17,11 @@ export const midiChannel = {
   kind: "midi",
   // Velocity is the language's :vel, its 2 dB steps read as a GM level.
   level: { scale: "linear", steps: 128 },
-  words: words(CC, "PRESSURE", "PROGRAM", "BANK", "BEND_RANGE", "PAN"),
+  words: words(CC, "PRESSURE", "PROG", "BANK", "BEND_RANGE", "PAN"),
   modes: {},
-  modeError: { code: "E_PARAM_VALUE", message: "a MIDI channel has no :mode; its sound is its :program" },
+  modeError: { code: "E_PARAM_VALUE", message: "a MIDI channel has no :mode; its sound is its :prog" },
   // A voice named for an instrument (gm-*, a role, a ROM voice's name) is a
-  // program here: a channel naming it writes its PROGRAM (mmlisp2ir emitVoice),
+  // program here: a channel naming it writes its PROG (mmlisp2ir emitVoice),
   // and the names are built in, as the OPLL's ROM voices are.
   programOf,
   programNames: [...GM_PROGRAMS, ...Object.keys(NAMED_VOICES)],
@@ -38,13 +38,13 @@ export const midiDrums = {
   // The GM kit's roles, built in: `kick` plays key 36. A sample that is no
   // role plays its written note as the key (export-midi.js says so). The
   // kit's order is the drum tracks' first sounds in a new score.
-  kit: Object.fromEntries([...new Set(["kick", "snare", "hat", "crash", ...Object.values(GM_KIT_ROLES)])].map((role) => [role, role])),
+  kit: Object.fromEntries([...new Set(["kick", "snare", "hat", "hat-open", "crash", "ride", "tom4", "tom2", ...Object.values(GM_KIT_ROLES)])].map((role) => [role, role])),
   // The mixer's strips are its tracks, not its sounds: the MIDI output keys
   // a track or not (stems.js mixerStrips).
   soundStrips: false,
   checkNote({ sample, sampleName, once }) {
     if (!sample.rhythm)
-      once(`key:${sampleName}`, `${sampleName} is no GM kit role (kick, snare, hat …): on drums it plays its written note as the key`, "warning");
+      once(`key:${sampleName}`, `${sampleName} is no GM kit role (kick, snare, hat …): on drum1–drum8 it plays its written note as the key`, "warning");
   },
 };
 

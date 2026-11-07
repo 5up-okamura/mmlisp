@@ -670,7 +670,7 @@ write.
 | `FM_NOISE`        | 0–1            | `x68k` fm8's `:mode`: 1 noise (reg 0x0F bit 7, NE: its fourth operator the noise), 0 tone. |
 | `CC0`–`CC127`     | 0–127          | `midi`: the channel's controller n (`:cc74`): a write, a sweep, a note's macro (`cc74` in NOTE_ON's args). |
 | `PRESSURE`        | 0–127          | `midi`: the channel's pressure (aftertouch); a write, a sweep, a note's macro. |
-| `PROGRAM` / `BANK` | 0–127 / 0–16383 | `midi`: the channel's program and the bank it reads from (CC0 / CC32). Inline only; a voice named for an instrument emits its PROGRAM (`chips/midi.js`). |
+| `PROG` / `BANK` | 0–127 / 0–16383 | `midi`: the channel's program (`:prog`) and the bank it reads from (CC0 / CC32). Inline only; a voice named for an instrument emits its PROG (`chips/midi.js`). |
 | `BEND_RANGE`      | 1–24           | `midi`: the channel's pitch bend reach in semitones (RPN 0). Inline only. |
 | `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |

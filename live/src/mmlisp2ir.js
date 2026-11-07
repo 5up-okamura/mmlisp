@@ -87,9 +87,9 @@ const MACRO_TARGETS = new Set([...SUPPORTED_TARGETS, "SSG_MIX", "WAVE"]);
 // SSG_ENV (`:env`, language.md §19) is the SSG channel's envelope shape, or
 // none: a channel's setting, no level; ENV_SEMI and ENV_DETUNE (`:env-semi`,
 // `:env-detune`) move the period the channel's notes or rates give it.
-// PROGRAM, BANK and BEND_RANGE (`:program`, `:bank`, `:bend-range`) are a
+// PROG, BANK and BEND_RANGE (`:prog`, `:bank`, `:bend-range`) are a
 // MIDI channel's settings: an instrument, its bank, its bend's reach.
-const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE", "PROGRAM", "BANK", "BEND_RANGE", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
+const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE", "PROG", "BANK", "BEND_RANGE", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
 
 // An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
 // ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
@@ -3815,7 +3815,7 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
     const dropped = emitVoiceFromKwMap(td.kwMap, tick, events, src, trackState?.part, trackState?.target);
     // On a MIDI channel a voice is its program, by its name (chips/midi.js).
     const program = trackState?.part?.programOf ? trackState.part.programOf(name) : undefined;
-    if (program != null) events.push({ tick, cmd: "PARAM_SET", args: { target: "PROGRAM", value: program }, src });
+    if (program != null) events.push({ tick, cmd: "PARAM_SET", args: { target: "PROG", value: program }, src });
     // The burst names its voice, as a note does (`_voice`): for an export
     // that follows the channel's voice as it plays (voiceStamps).
     if (name) for (let i = from; i < events.length; i++) events[i]._voiceSet = name;
@@ -3824,7 +3824,7 @@ function emitVoice(td, tick, events, src, trackState = null, name = null, diagno
     if (trackState?.part?.programOf && program == null && said && diagnostics && !said.has(name)) {
       said.add(name);
       pushDiag(diagnostics, "warning", "W_TARGET",
-        `'${name}' names no GM instrument; ${trackState.head} (${trackState.part.label}) plays it as the output's sound — write :program N`,
+        `'${name}' names no GM instrument; ${trackState.head} (${trackState.part.label}) plays it as the output's sound — write :prog N`,
         src, trackName);
     } else if (dropped && program == null && said && diagnostics && !said.has(name)) {
       said.add(name);

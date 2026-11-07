@@ -85,11 +85,11 @@ export const MACRO_TARGET_RANGE = {
   LOOP_LEN: { min: 0, max: 8 },
 
   // A MIDI channel's (chips/midi.js): a controller CC0–CC127 (the suffix
-  // stripped), its pressure, its program, its bank (14 bits: MSB and LSB) and
+  // stripped), its pressure, its program (PROG), its bank (14 bits: MSB and LSB) and
   // its bend's range in semitones.
   CC: { min: 0, max: 127 },
   PRESSURE: { min: 0, max: 127 },
-  PROGRAM: { min: 0, max: 127 },
+  PROG: { min: 0, max: 127 },
   BANK: { min: 0, max: 16383 },
   BEND_RANGE: { min: 1, max: 24 },
 

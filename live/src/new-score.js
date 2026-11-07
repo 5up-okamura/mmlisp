@@ -110,7 +110,7 @@ export function newScoreSource(name) {
     tracks.map((head, i) => track(head, [...soundOf(target, head), ...(i === 0 ? [`:tempo ${TEMPO}`] : [])])).join("\n"),
     ...(dac.length || others.length || carts.size || builtin.length ? [""] : []),
     ...(builtin.length ? [`; Built in, no import: ${builtin.join(" ")}`] : []),
-    ...(builtinNames(target).some((d) => d.from === "GM") ? ["; Built in too: the GM programs by name (gm-piano … gm-gunshot) and the roles (piano, flute …); :program N for any"] : []),
+    ...(builtinNames(target).some((d) => d.from === "GM") ? ["; Built in too: the GM programs by name (gm-piano … gm-gunshot) and the roles (piano, flute …); :prog N for any"] : []),
     ...(dac.length ? [`; ${dac.join(", ")} is the DAC while the score plays PCM${voices.length ? `; more voices: ${voices.join(" ")}` : ""}`] : []),
     ...(others.length ? [`; Sharing a channel with a track above: ${others.join(" ")}`] : []),
     ...[...carts.values()].map((heads) => `; Cartridge, on when a track is named: ${heads.join(" ")}`),

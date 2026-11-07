@@ -2114,13 +2114,13 @@
  },
  "tools/tests/midi/channels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "cbedaec142c81f52",
+  "ir": "92ca810833bb1238",
   "mid": "b708e990610c7dec"
  },
  "tools/tests/midi/drums.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "01d50c129219be1f",
-  "mid": "d9e5fb34fc343fd5"
+  "ir": "51adb80f91a14524",
+  "mid": "7222e0f122eaee90"
  },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",

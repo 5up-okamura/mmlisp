@@ -1,7 +1,8 @@
-; :target midi — the drums: channel 10 as four tracks, so hits sound together;
+; :target midi — the drums: channel 10 as eight tracks, so hits sound together;
 ; the kit's roles built in, at their GM keys.
 (def-score :target midi :title "midi drums")
-(drums :tempo 132 :len 4 #top kick c snare c kick c snare :vel 12 c (go top))
-(drums2 :len 8 #top hat c c c c c c hat-open c hat c (go top))
-(drums3 :len 1 #top crash c (go top))
+(drum1 :tempo 132 :len 4 #top kick c snare c kick c snare :vel 12 c (go top))
+(drum2 :len 8 #top hat c c c c c c hat-open c hat c (go top))
+(drum3 :len 1 #top crash c (go top))
 (ch1 gm-bass-finger :oct 2 :len 8 #top c c g g a a g g (go top))
+(drum8 :len 2 #top _ ride c ride c _ (go top))

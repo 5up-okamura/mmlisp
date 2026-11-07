@@ -56,9 +56,11 @@ The names themselves are guide.md §25; the reasons:
 - **No chords, by ruling** (the user, 2026-11-07): a channel plays one note
   at a time, as every machine's; a chord is several channels. Notes that
   start and stop together could be written, others could not, so none are.
-- **The drums are four tracks** (`drums`, `drums2`–`drums4`, all channel 10),
-  as a ROM rhythm's are: GM drums need hits that sound together.
-- **No `def-midi`**: an instrument is `:program` (and `:bank`), a patch a
+- **The drums are eight tracks** (`drum1`–`drum8`, all channel 10; the user,
+  2026-11-07: numbered from 1 and singular, as `sqr1` and `rhythm1` are, and
+  eight, above the YM2608 rhythm's six), so hits sound together.
+- **No `def-midi`**: an instrument is `:prog` (and `:bank`; abbreviated as
+  `:cc` is, the user's ruling), a patch a
   `def` of words; a voice named for an instrument (gm-*, the roles, the
   VRC7's ROM names) writes its program — built in, as the OPLL's ROM is.
 - **No sound of its own**: Live's Play runs the clock silent (synth-midi.js)

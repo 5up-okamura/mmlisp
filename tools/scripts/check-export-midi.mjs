@@ -254,17 +254,17 @@ const exported = (src) => {
   assert.deepEqual(p.tracks.map((t) => [t.name, t.channel]), [["ch1", 0], ["ch2", 1], ["ch3", 2], ["ch16", 15]], "a track is the channel it names");
   assert.deepEqual(p.notes, [], "nothing left out: every word is MIDI's");
   assert.deepEqual(ctl(tr.ch1, 0xc0), [[0, 0], [384, 73]], "gm-piano, then flute, by name");
-  assert.deepEqual(ctl(tr.ch2, 0xc0), [[0, 81]], ":program 81 in a def");
+  assert.deepEqual(ctl(tr.ch2, 0xc0), [[0, 81]], ":prog 81 in a def");
   assert.ok(ctl(tr.ch2, 0xb0).filter(([, c]) => c === 74).length > 8, "a :cc74 macro, a value a step");
   assert.deepEqual(ctl(tr.ch2, 0xd0).map(([, v]) => v), [64], ":pressure 64");
   const ch3 = tr.ch3.events.filter((e) => e.tick === 0 && e.bytes[0] < 0xf0).map((e) => [e.bytes[0] & 0xf0, ...e.bytes.slice(1)].join(","));
-  assert.ok(ch3.indexOf("176,0,1") >= 0 && ch3.indexOf("176,0,1") < ch3.indexOf("192,48"), ":bank 128 (CC0 1, CC32 0) ahead of :program 48");
+  assert.ok(ch3.indexOf("176,0,1") >= 0 && ch3.indexOf("176,0,1") < ch3.indexOf("192,48"), ":bank 128 (CC0 1, CC32 0) ahead of :prog 48");
   assert.ok(ch3.includes("176,6,12"), ":bend-range 12 is RPN 0");
   assert.deepEqual(ctl(tr.ch16, 0xc0), [[0, 38]], "a role: synth-bass is the gm bass-syn1");
   const d = planOf("tools/tests/midi/drums.mmlisp");
   const keys = (n) => [...new Set(d.tracks.find((t) => t.name === n).notes.map((x) => x.key))].sort((a, b) => a - b);
-  assert.deepEqual(d.tracks.filter((t) => /^drums/.test(t.name)).map((t) => [t.name, t.channel]), [["drums", 9], ["drums2", 9], ["drums3", 9]], "the drums' tracks, all channel 10");
-  assert.deepEqual([keys("drums"), keys("drums2"), keys("drums3")], [[36, 38], [42, 46], [49]], "kick snare / hat hat-open / crash at their GM keys");
+  assert.deepEqual(d.tracks.filter((t) => /^drum\d$/.test(t.name)).map((t) => [t.name, t.channel]), [["drum1", 9], ["drum2", 9], ["drum3", 9], ["drum8", 9]], "the drums' tracks, all channel 10");
+  assert.deepEqual([keys("drum1"), keys("drum2"), keys("drum3"), keys("drum8")], [[36, 38], [42, 46], [49], [51]], "kick snare / hat hat-open / crash / ride at their GM keys");
 }
 
 // ── The import reads it back ──────────────────────────────────────────────
