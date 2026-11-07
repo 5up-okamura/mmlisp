@@ -42,10 +42,10 @@
        play button pressed again) as a double-tap and zooms the page. Pan and
        pinch-zoom still work; touch-action is not inherited, hence the list. */
     button, input, select, label, summary, [role=button], .cm-gutters { touch-action: manipulation; }
-    /* Only the score and the console are text to select: line numbers, menus,
-       labels and panels are not, so a drag or long-press never grabs them.
-       Fields stay selectable — Safari will not type into one that is not. */
-    body { -webkit-user-select: none; user-select: none; }
+    /* Only the score and the console are text to select (body, below):
+       line numbers, menus, labels and panels are not, so a drag or long-press
+       never grabs them. Fields stay selectable — Safari will not type into
+       one that is not. */
     .cm-content, #log, input, textarea {
       -webkit-user-select: text;
       user-select: text;
@@ -67,6 +67,10 @@
       background: var(--background);
       color: var(--foreground);
       font-family: 'Open Sans', sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+      /* Japanese kinsoku: no line starts with ー, a small kana or 。 */
+      line-break: strict;
       display: flex;
       flex-direction: column;
       /* Standalone PWA: with viewport-fit=cover the layout fills the screen,
@@ -519,7 +523,6 @@
     .logical-tool .import-field { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
     .logical-tool select { min-width: 0; max-width: 100%; }
     .logical-tool .le-pair > * { min-width: 0; flex: 1; }
-    .logical-tool .le-status { overflow-wrap: anywhere; }
     .logical-overlay .logical-tool { pointer-events: auto; margin: 3.2rem 1rem 1rem;
       width: min(330px, 92vw); max-height: calc(var(--tool-viewport-height, 100dvh) - 4.2rem); overflow-y: auto;
       background: var(--background); border: 1px solid var(--mid); border-radius: 4px;
@@ -532,7 +535,7 @@
     }
     .logical-tool .le-ops { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); }
     .logical-tool input:disabled, .logical-tool select:disabled { opacity: var(--off); }
-    .logical-tool .le-status { margin-top: 0.6rem; color: var(--foreground); font-size: var(--text); min-height: 1em; }
+    .logical-tool .le-status { margin-top: 0.6rem; color: var(--foreground); font-size: var(--text); min-height: 1em; overflow-wrap: anywhere; }
     .import-field[hidden] { display: none; }
     .cm-valHover {
       border-radius: 2px;
@@ -1663,7 +1666,6 @@
       padding: 0;
       cursor: pointer;
     }
-    .lesson-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     #keyboardDock[hidden] { display: none; }
     #rightPanel .lib-search {
       -webkit-user-select: text;
@@ -1710,7 +1712,12 @@
       background: color-mix(in srgb, var(--foreground) var(--sel), var(--background));
       font-weight: bold;
     }
+    /* A chip is as wide as its bold label, picked or not, so picking one does
+       not shift the row: a hidden bold copy of the label holds the width. */
     .lib-chip {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
       background: none;
       border: 1px solid var(--mid);
       border-radius: 3px;
@@ -1720,9 +1727,6 @@
       padding: 0.15rem 0.5rem;
       cursor: pointer;
     }
-    /* A chip is as wide as its bold label, picked or not, so picking one does
-       not shift the row: a hidden bold copy of the label holds the width. */
-    .lib-chip { display: inline-flex; flex-direction: column; align-items: center; }
     .lib-chip::after {
       content: attr(data-label);
       font-weight: bold;
