@@ -11025,18 +11025,33 @@
         heading.textContent = l.group;
         return [heading, group];
       }));
-      // A group's columns fit its longest name, so each name is one line
-      // (white-space: nowrap). In em, so they follow the type size; drawn
-      // while the list is shown.
+      // A group's column is as wide as its longest name, so each name is
+      // one line (white-space: nowrap): in em, so it follows the type size;
+      // drawn while the list is shown.
       for (const group of list.querySelectorAll('.lesson-group')) {
-        const col = Math.max(0, ...[...group.querySelectorAll('.lesson-row')].map((row) => {
+        group.dataset.col = Math.max(8, ...[...group.querySelectorAll('.lesson-row')].map((row) => {
           const cs = getComputedStyle(row);
           const width = row.lastChild.getBoundingClientRect().right - row.getBoundingClientRect().left + parseFloat(cs.paddingRight);
           return (width + 1) / parseFloat(cs.fontSize);
         }));
-        group.style.setProperty('--lesson-col', `${col.toFixed(2)}em`);
+      }
+      layLessonColumns();
+    }
+    // As many columns as fit, then as few as keep that many rows, so the rows
+    // come out even (2 + 2, not 3 + 1); again as the panel's width or the
+    // type size changes.
+    function layLessonColumns() {
+      for (const group of document.querySelectorAll('#lessonList .lesson-group')) {
+        const n = group.querySelectorAll('.lesson-row').length;
+        const width = group.clientWidth;
+        if (!n || !width || !group.dataset.col) continue;
+        const cs = getComputedStyle(group);
+        const gap = parseFloat(cs.columnGap) || 0;
+        const fit = Math.max(1, Math.min(n, Math.floor((width + gap) / (group.dataset.col * parseFloat(cs.fontSize) + gap))));
+        group.style.setProperty('--lesson-cols', Math.ceil(n / Math.ceil(n / fit)));
       }
     }
+    new ResizeObserver(layLessonColumns).observe(document.getElementById('lessonList'));
 
     // -----------------------------------------------------------------------
     // Share (File > Share…): the score travels in the link's fragment,
