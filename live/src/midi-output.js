@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// MIDI output (MMLisp > MIDI > Output): the preview played to a MIDI port as
-// it plays — a sound module, a DAW, a synth beside the chips.
+// MIDI output (MMLisp > MIDI > Output): a `:target midi` score played to a
+// MIDI port as it plays — a sound module, a DAW, a synth.
 //
 // What goes out is the MIDI export's (export-midi.js midiPlan): the same
 // channels, notes, programs, levels, pans and bends a .mid of the score

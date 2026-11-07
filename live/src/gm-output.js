@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // The GM output (MMLisp > MIDI > Output): a SoundFont played in the page, for
-// a score with no sound of its own (`:target midi`) or beside the chips.
+// a score with no sound of its own (`:target midi`).
 //
 // It is an output as a MIDI port is: MidiOutRun (midi-output.js) sends it the
 // MIDI export's bytes, stamped with the audio time each is due instead of the

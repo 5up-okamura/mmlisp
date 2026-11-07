@@ -41,16 +41,15 @@ goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
   channels and words, auditioned in Live and exported as VGM — see
   [Machines](#machines).
 - **Out as MIDI, too.** Every score, on every machine, exports a Standard
-  MIDI File — its notes, voices as GM programs, levels, pans, bends and loop
-  — and Live plays the same to a MIDI port (Web MIDI) in time with the
-  chips, following tempo, loops, seeks, mute / solo and the mixer's faders:
-  a sound module, a DAW or a synth beside the emulation — or on a General
-  MIDI SoundFont it plays itself (FluidR3Mono, or your own), a phone's
-  browser included. `(def-score :target
+  MIDI File — its notes, voices as GM programs, levels, pans, bends and loop.
+  `(def-score :target
   midi)` writes for a GM instrument itself — `ch1`–`ch16`, the drums as
   `drum1`–`drum8` on channel 10, `:prog` / `:bank`, any controller as
   `:cc74`, `:pressure`, `:bend-range` — swept and stepped by the same curves
-  and macros as a chip's registers. File > Export > Stems renders each mixer
+  and macros as a chip's registers — and Live plays it to a MIDI port (Web
+  MIDI) or on a General MIDI SoundFont of its own (FluidR3Mono, or yours), a
+  phone's browser included, following tempo, loops, seeks, mute / solo and
+  the mixer's faders. File > Export > Stems renders each mixer
   strip as a WAV of its own for a DAW.
 - **Interactive by design.** Tracks start, stop, layer and fade at runtime,
   sound effects take channels from the song and give them back, and `def-val`
@@ -98,11 +97,12 @@ goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
 | `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
 | `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a GM SoundFont (FluidR3Mono, or your own), or a MIDI output | MIDI, WAV (on the SoundFont) |
 
-Every machine also exports MIDI (File > Export > MIDI…) and plays to a MIDI
-output (MMLisp > MIDI > Output) beside its chips — a MIDI port, or a GM
-SoundFont the page plays itself (FluidR3Mono, or an `.sf2` / `.sf3` of your
-own), in any browser; `midi` has no sound of its own, so it plays only there,
-and its WAV and stems are rendered on that SoundFont (no VGM).
+Every machine also exports MIDI (File > Export > MIDI…). `midi` has no sound
+of its own: it plays to a MIDI output (MMLisp > MIDI > Output) — a MIDI port,
+or a GM SoundFont the page plays itself (FluidR3Mono, or an `.sf2` / `.sf3`
+of your own), in any browser — and its WAV and stems are rendered on that
+SoundFont (no VGM). A chip's score sounds on its chips, which nothing turns
+down, so the output is a `midi` score's alone.
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each

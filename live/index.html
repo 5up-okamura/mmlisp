@@ -9165,8 +9165,11 @@
     }
     function applyTargetUi(ir) {
       const target = targetProfile(ir?.metadata?.target);
-      // A score whose sound is a MIDI output's scopes the GM output's channels.
+      // A score whose sound is a MIDI output's scopes the GM output's
+      // channels, and takes the output (its bank loaded the first time).
       _gm?.output.scope(target.sound === 'midi');
+      if (target.sound === 'midi') startGmOutput();
+      renderMidiOutMenu();
       for (const el of document.querySelectorAll('[data-needs]')) {
         const has = targetHas(target, el.dataset.needs);
         if (el.classList.contains('menu-item')) el.disabled = !has;
@@ -13298,6 +13301,9 @@
     }
 
     // ── MIDI output (src/midi-output.js) ────────────────────────────────────
+    // A `:target midi` score's sound (midiSound): a chip's score has its own,
+    // which nothing turns down, so there the output is idle and its menu
+    // items disabled (File > Export > MIDI is every machine's).
     // The preview played to a MIDI port as it plays: the MIDI export's plan of
     // the score the player runs, compiled off the page's thread (the compile
     // worker's 'midi'), sent ahead on the player's clock every 25 ms. The
@@ -13347,9 +13353,12 @@
         b.children[1].textContent = label;
         b.children[2].textContent = on ? '✓' : '';
         b.addEventListener('click', () => { action(); closeMenus(); });
+        b.disabled = idle;
         return b;
       };
       el.replaceChildren();
+      const idle = !midiSound(_lastGoodIR);
+      el.previousElementSibling.title = idle ? "A :target midi score's sound" : '';
       // The page's own: the GM output on the bundled bank, and on the user's.
       const sfName = loadPref('soundFont', '');
       el.append(item('Off', !_midiOutName, () => selectMidiOut('')),
@@ -13448,7 +13457,7 @@
     const GM_READY_MS = 8000;
     async function gmReadyFor(ir) {
       const gm = _gm;
-      if (!gm || gm.failed || !ir) return;
+      if (!gm || gm.failed || !midiSound(ir)) return;
       startGmOutput();
       if (!gm.ready) return;
       const ready = (async () => {
@@ -13464,7 +13473,7 @@
     // mid-run does. Its bytes go stamped with their audio time.
     function startGmOutput() {
       const gm = _gm;
-      if (!gm || !audioCtx || gm.attaching) return;
+      if (!gm || !audioCtx || gm.attaching || !midiSound(_lastGoodIR)) return;
       gm.attaching = true;
       const what = gm.source === GM_OUT ? 'GM (FluidR3Mono)' : `SoundFont ${loadPref('soundFont', '')}`;
       log(`MIDI output: ${what}, loading…`, 'info');
@@ -13549,7 +13558,7 @@
       // No player (Stop drops it), or the MMLispDRV backend's, which has no
       // IR clock to follow: the run sees a stop and lets everything go.
       // An effect's run (its tracks the def-se's) plays nothing on MIDI.
-      if (!audioCtx || typeof player?.loadedIr !== 'function' || _runSe != null) { _midiOutRun.pass(null, audioCtx?.currentTime ?? 0); return; }
+      if (!audioCtx || typeof player?.loadedIr !== 'function' || _runSe != null || !midiSound(player.loadedIr())) { _midiOutRun.pass(null, audioCtx?.currentTime ?? 0); return; }
       // Context time → the page's performance clock, where the audio is heard.
       const ts = audioCtx.getOutputTimestamp?.();
       if (ts?.performanceTime > 0) _perfAt = (t) => ts.performanceTime + (t - ts.contextTime) * 1000;
@@ -13571,7 +13580,7 @@
     // decoded); `reuse` takes a request already on its way for that IR.
     const _midiPlanPending = new WeakMap(); // IR → its latest request
     function requestMidiPlan(ir, { reuse = false } = {}) {
-      if (!_midiOutRun) return Promise.resolve();
+      if (!_midiOutRun || !midiSound(ir)) return Promise.resolve();
       if (reuse && _midiPlanPending.has(ir)) return _midiPlanPending.get(ir);
       _midiOutAsked.add(ir);
       // Only an IR the editor compiled has a plan: its own source, never

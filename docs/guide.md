@@ -1458,8 +1458,10 @@ A score for a MIDI instrument rather than a chip is `(def-score :target midi)`
 `drum1`–`drum8`, its instruments `:prog` or a voice's name, its controllers `:cc74` …, and it
 sounds only through the output below.
 
-`MMLisp > MIDI > Output` plays the preview to a MIDI output as well — a
-sound module, a DAW, a synthesizer beside the chips. Two are the page's own,
+`MMLisp > MIDI > Output` plays a `:target midi` score to a MIDI output — a
+sound module, a DAW, a synthesizer. (A chip's score sounds on its chips,
+which nothing turns down, so on one the output's items are disabled; its
+**File ▸ Export ▸ MIDI…** is there on every machine.) Two are the page's own,
 in every browser (an iPhone's too, which has no Web MIDI): **GM
 (FluidR3Mono)**, a General MIDI SoundFont fetched the first time it is chosen
 (22.5 MB), and **SoundFont: …**, an `.sf2` or `.sf3` of your own that **Load
