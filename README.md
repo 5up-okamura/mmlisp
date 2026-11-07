@@ -8,7 +8,7 @@ with a design built around *interactive* music: tracks that start, stop, layer,
 and respond to game state at runtime. The same language writes for the
 PC-8801, the X68000, the MSX, the PC Engine, the Famicom and the Game Boy, auditioned in the
 browser and exported as VGM — and for a General MIDI instrument: every score
-goes out as a MIDI file, and Live plays it to a MIDI port as it plays.
+goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
 
 - **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK

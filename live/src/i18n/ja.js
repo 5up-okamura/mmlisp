@@ -314,7 +314,7 @@ export default {
     "gb/01-wave.mmlisp#try": ["13b56aa2", "後半を半分の音量で鳴らす。:vel 8。"],
     "midi": ["fa92afe0", "MIDI"],
     "midi/01-programs": ["ab14d0a7", "プログラム"],
-    "midi/01-programs.mmlisp": ["e2249394", "MIDI は自前の音を持たない。聴くには MMLisp > MIDI > Output でシンセ、音源モジュール、DAW などを選ぶ。GM の楽器の名前の音色はそのプログラムになる（gm-flute、gm-strings、piano のような役）。:prog 0–127 なら何でも選べる。"],
+    "midi/01-programs.mmlisp": ["f28a6a93", "MIDI は自前の音を持たない。聴くには MMLisp > MIDI > Output でシンセ、音源モジュール、DAW などを選ぶ。GM の楽器の名前の音色はそのプログラムになる（gm-flute、gm-strings1、piano のような役）。:prog 0–127 なら何でも選べる。"],
     "midi/01-programs.mmlisp#try": ["ef1bcae6", "ch2 にベースを付ける。gm-bass-finger（または :prog 33）。"],
     "midi/02-controllers": ["fd281615", "コントローラー"],
     "midi/02-controllers.mmlisp": ["f4e8f763", "どのコントローラーも :cc と番号 0–127 で、チップのレジスタと同じく書き込み、スイープ、音符のマクロで動かせる。:cc1 はモジュレーションホイール、:cc74 はブライトネス、:cc64 はサステインペダル。:vol は CC7、:pan は CC10。"],

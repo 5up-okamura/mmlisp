@@ -1,6 +1,6 @@
 ; MIDI has no sound of its own: choose MMLisp > MIDI > Output (a synth, a
 ; sound module, a DAW) to hear it. A voice named for a GM instrument is its
-; program — gm-flute, gm-strings, or a role such as piano — and :prog 0–127
+; program — gm-flute, gm-strings1, or a role such as piano — and :prog 0–127
 ; picks any.
 ; Try: give ch2 a bass, gm-bass-finger (or :prog 33).
 (def-score :target midi)

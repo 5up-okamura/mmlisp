@@ -314,7 +314,7 @@ export default {
     "gb/01-wave.mmlisp#try": ["13b56aa2", "toca la segunda mitad a medio nivel, :vel 8."],
     "midi": ["fa92afe0", "MIDI"],
     "midi/01-programs": ["ab14d0a7", "Programas"],
-    "midi/01-programs.mmlisp": ["e2249394", "MIDI no tiene sonido propio: para oírlo, elige MMLisp > MIDI > Output (un sintetizador, un módulo de sonido, un DAW). Una voz con nombre de instrumento GM es su program —gm-flute, gm-strings o un papel como piano— y :prog 0–127 elige cualquiera."],
+    "midi/01-programs.mmlisp": ["f28a6a93", "MIDI no tiene sonido propio: para oírlo, elige MMLisp > MIDI > Output (un sintetizador, un módulo de sonido, un DAW). Una voz con nombre de instrumento GM es su program —gm-flute, gm-strings1 o un papel como piano— y :prog 0–127 elige cualquiera."],
     "midi/01-programs.mmlisp#try": ["ef1bcae6", "dale a ch2 un bajo, gm-bass-finger (o :prog 33)."],
     "midi/02-controllers": ["fd281615", "Controladores"],
     "midi/02-controllers.mmlisp": ["f4e8f763", "Cualquier controlador es :cc y su número, 0–127: se escribe, se barre o lo mueve la macro de una nota, como los registros de un chip. :cc1 es la rueda de modulación, :cc74 el brillo, :cc64 el pedal de sustain. :vol es CC7 y :pan CC10."],
