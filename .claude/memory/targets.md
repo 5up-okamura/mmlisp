@@ -82,7 +82,7 @@ Open:
 - A program a hot-swap brings mid-play decodes on the audio thread (decode
   off it and `setAudioData` if it is heard).
 
-## Machine conversion (planned 2026-11-07; not yet built)
+## Machine conversion (planned 2026-11-07; score-port.js built, the UI not yet)
 
 A score of one 4-op FM machine on another — x68k, md, pc88 — at the words'
 level, not through its VGM (the user: what the composer wrote — `:gate`, a
@@ -128,9 +128,32 @@ keys, as check-import-to-midi compares); tools/tests' md, pc88 and x68k
 scores each onto the other two compile clean, notes kept where a channel
 takes them; the dropped-words list is what the rules say.
 
-Order: score-port.js + check → the MDX dialog's rows → Edit > Convert to
-Machine… (the import dialog reused, `showImportDialog`) → guide.md (§ Song
-imports, § Edit) and the CLAUDE.md map. ~1–2 days.
+Order: score-port.js + check (done) → the MDX dialog's rows → Edit > Convert
+to Machine… (the import dialog reused, `showImportDialog`) → guide.md (§ Song
+imports, § Edit).
+
+Built (score-port.js, `check:score-port`): `portRows(text, to)` gives the
+dialog its rows ({key, head, kind, notes, to, choices}; x68k fm8's noise
+notes are the row `fm8/noise`), `portScore(text, to, {rows, imports})` the
+text and `said`. Every md score (drv/tests) and the pc88 / x68k test scores
+onto the other two compile clean with each kept track's notes (midiPlan on,
+key) the same. Where it went past the table above, or off it:
+- md noise → x68k is the `noise` channel (fm8's fourth operator alone), not
+  fm8 `:mode noise` under a voice: the same words (a noise track, its PSG
+  level), fm8 kept free all the same (the rows share by voiceKey).
+- OPN `:lfo-rate` → x68k stays `:lfo-rate`: the OPM reads it at full depth,
+  which `:lfo-freq` alone would not (its pmd/amd at 0).
+- pc88 sqr `:mode env` notes play as tone (the mode dropped and said), not
+  dropped.
+- fm3-N → x68k: the patch form `(fm3 v)` goes, its `:tempo` onto the first
+  operator track; another operator's word on an fm3-N track is dropped; the
+  patch's later voices are not followed (said).
+- def-se is dropped off md; onto md `:pcm-voices` is set from the pcm rows;
+  fm6 is taken while a row goes to pcm.
+- The ADPCM-B: a def-pcm's loop becomes its range (`:loop-start` →
+  `:pcm-start` …), the head before the loop cut (said).
+- A song word in a macro is dropped where the part has no `songMacros`
+  (the SSG's `:noise-rate` steps; the OPM's does not).
 
 ## The PC Engine (pce; built 2026-10-27)
 

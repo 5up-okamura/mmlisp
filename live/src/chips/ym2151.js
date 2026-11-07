@@ -52,10 +52,10 @@ export const opmNoise = {
 
 // The OPN's LFO rates 1-8 (Hz, the YM2612's at its clock), which :lfo-rate
 // names: on the OPM the nearest LFRQ.
-const OPN_LFO_HZ = [3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2];
+export const OPN_LFO_HZ = [3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2];
 // The LFO's frequency for an LFRQ: a 4.4 float step, (16 + low) << high, added
 // once a sample (clock / 64) to a counter whose top 8 of 30 bits are its phase.
-const lfoHz = (lfrq) => ((CLOCK / 64) * ((16 + (lfrq & 15)) << (lfrq >> 4))) / 2 ** 30;
+export const lfoHz = (lfrq) => ((CLOCK / 64) * ((16 + (lfrq & 15)) << (lfrq >> 4))) / 2 ** 30;
 const nearestLfrq = (hz) => {
   let best = 0;
   for (let l = 1; l < 256; l++)

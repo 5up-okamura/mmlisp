@@ -35,6 +35,7 @@
     "check:import-nsf": "node scripts/check-import-nsf.mjs",
     "check:import-midi": "node scripts/check-import-midi.mjs",
     "check:import-to-midi": "node scripts/check-import-to-midi.mjs",
+    "check:score-port": "node scripts/check-score-port.mjs",
     "check:export-midi": "node scripts/check-export-midi.mjs",
     "check:stems": "node scripts/check-stems.mjs",
     "check:midi-out": "node scripts/check-midi-out.mjs",
