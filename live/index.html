@@ -13350,7 +13350,8 @@
       const port = out ? _midiOuts.output(out.id) : null;
       _midiOutPortId = out?.id ?? null;
       // The GM output chosen again keeps its run; another output closes it.
-      if (isGmOut(_midiOutName) && _gm?.source === _midiOutName && !reload) { renderMidiOutMenu(); return; }
+      // (Chosen again after it failed, it tries again.)
+      if (isGmOut(_midiOutName) && _gm?.source === _midiOutName && !_gm.failed && !reload) { renderMidiOutMenu(); return; }
       stopMidiOutRun();
       _gm?.output.close();
       _gm = null;
@@ -13416,12 +13417,16 @@
         log(`MIDI output: ${what}, ${r.presets} presets, ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`, 'info');
       }).catch((e) => {
         if (_gm !== gm) return;
+        gm.failed = true;
         log(`MIDI output: ${what} failed: ${e?.message ?? e}`, 'err');
       });
     }
 
+    // The bank as the service worker keeps it, else the network's (which the
+    // worker then keeps): its network-first fetch would store 22.5 MB again
+    // on every launch. The file is never changed in place, only renamed.
     async function fetchGmBank() {
-      const res = await fetch(GM_BANK_URL);
+      const res = (await globalThis.caches?.match(GM_BANK_URL).catch(() => null)) ?? await fetch(GM_BANK_URL);
       if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);
       return res.arrayBuffer();
     }
@@ -13444,7 +13449,7 @@
         const kept = await saveRom('soundfont', bytes);
         if (!kept) { log('SoundFont: this browser keeps nothing (a private window?); it plays until the page closes', 'warn'); }
         savePref('soundFont', file.name);
-        if (!kept) _keptSoundFont = bytes;
+        _keptSoundFont = kept ? null : bytes;
         selectMidiOut(SF_OUT, false, true);
       };
       input.click();

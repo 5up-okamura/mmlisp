@@ -10,14 +10,16 @@
 //                globals: the bank loads, a message sounds from the quantum
 //                its audio time falls in and not before, a clear drops what
 //                is not yet due, an off leaves no voice, a preload
-//                decodes a plan's voices
+//                decodes a plan's voices, a close ends the processor
+//   preload      a plan preloaded again sends nothing; a key past what was
+//                decoded sends that voice alone, its range widened
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { midiPlan } from "../../live/src/export-midi.js";
-import { planVoices } from "../../live/src/gm-output.js";
+import { planVoices, GmOutput } from "../../live/src/gm-output.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const bankBytes = () => { const b = readFileSync("live/soundfonts/FluidR3Mono_GM.sf3"); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
@@ -96,5 +98,25 @@ peaks = render(0.3);
 // No voice is left; what is heard is the reverb's tail, near −60 dB.
 assert.equal(gm.synth.voiceCount, 0, "an off leaves no voice");
 assert.ok(Math.max(...peaks.slice(at(0.05))) < 5e-3, `an off silences them: ${Math.max(...peaks.slice(at(0.05))).toFixed(4)}`);
+
+// A close lets the bank go and ends the processor (process() false), so a
+// node switched away from is collected, not kept playing silence.
+tell({ type: "close" });
+assert.equal(gm.process([], [[L, R]]), false, "a closed processor ends");
+assert.equal(gm.bank, null, "and holds no bank");
+
+// ── GmOutput.preload: only what no plan before asked for ───────────────
+{
+  const sent = [];
+  const out = new GmOutput({ loadBank: null });
+  out.node = { port: { postMessage: (m) => { sent.push(m); queueMicrotask(() => out.pending.get("preloaded")?.({ ms: 0 })); } } };
+  await out.preload(plan);
+  await out.preload(plan); // a slider's replan: nothing again
+  assert.equal(sent.length, 1, "a plan preloaded again sends nothing");
+  const wider = midiPlan(compileMMLisp(SRC.replace("(ch1 gm-piano :tempo 120 :len 4 c e g > c)", "(ch1 gm-piano :tempo 120 :len 4 c e g > c > c)"), "gm.mmlisp", { voiceStamps: true, voiceHoist: false }).ir);
+  await out.preload(wider);
+  assert.equal(sent.length, 2, "a key past the range preloads again");
+  assert.deepEqual(sent[1].voices.map((x) => [x.program, x.lo, x.hi]), [[0, 60, 84]], "only that voice, its range widened");
+}
 
 console.log(`check:gm-output ok — ${voices.length} voices from the plan, ${ready.presets} presets, timing, clear and off in the worklet (preload ${pre.ms} ms)`);

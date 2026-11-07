@@ -65,11 +65,12 @@ export class GmOutput {
     this.batch = [];
     this.pending = new Map(); // a reply's type → its resolver
     this.closed = false;
+    this.preloaded = new Map(); // a voice's key → the keys decoded, [lo, hi]
   }
 
   attach(ctx, destination) {
     this.attaching ??= (async () => {
-      if (!added.has(ctx)) added.set(ctx, ctx.audioWorklet.addModule(WORKLET_URL));
+      if (!added.has(ctx)) added.set(ctx, ctx.audioWorklet.addModule(WORKLET_URL).catch((e) => { added.delete(ctx); throw e; }));
       await added.get(ctx);
       const bytes = await this.loadBank();
       const node = new AudioWorkletNode(ctx, "mmlisp-gm", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
@@ -82,7 +83,7 @@ export class GmOutput {
       node.port.postMessage({ type: "bank", bytes }, [bytes]);
       const r = await reply;
       if (r.type === "error") throw new Error(r.message);
-      if (this.closed) { node.port.postMessage({ type: "off" }); throw new Error("closed"); } // another output chosen meanwhile
+      if (this.closed) { node.port.postMessage({ type: "close" }); throw new Error("closed"); } // another output chosen meanwhile
       node.connect(destination);
       this.node = node;
       return r;
@@ -112,10 +113,23 @@ export class GmOutput {
     this.node?.port.postMessage({ type: "clear" });
   }
 
-  /** The plan's programs and keys decoded now; resolves the time it took (ms). */
+  /**
+   * The plan's programs and keys decoded now; resolves the time it took (ms).
+   * Only what no plan before asked for: a preload runs on the audio thread,
+   * and one of a preset already decoded still takes ~20 ms (a slider's
+   * replan would stall the sound each time).
+   */
   async preload(plan) {
     if (!this.node) return null;
-    const voices = planVoices(plan);
+    const voices = [];
+    for (const v of planVoices(plan)) {
+      const key = `${v.drums}:${v.bankMSB}:${v.bankLSB}:${v.program}`;
+      const had = this.preloaded.get(key);
+      if (had && had[0] <= v.lo && had[1] >= v.hi) continue;
+      const lo = Math.min(v.lo, had?.[0] ?? v.lo), hi = Math.max(v.hi, had?.[1] ?? v.hi);
+      this.preloaded.set(key, [lo, hi]);
+      voices.push({ ...v, lo, hi });
+    }
     if (!voices.length) return 0;
     const reply = this.reply("preloaded");
     this.node.port.postMessage({ type: "preload", voices });
@@ -126,7 +140,7 @@ export class GmOutput {
     this.closed = true;
     this.batch = [];
     if (!this.node) return;
-    this.node.port.postMessage({ type: "off" });
+    this.node.port.postMessage({ type: "close" });
     this.node.disconnect();
     this.node = null;
   }

@@ -15,6 +15,8 @@
 //                                  use, where decoding stalls the audio thread
 //   { type: 'clear' }              drop what is not yet due
 //   { type: 'off' }                drop it and silence every voice
+//   { type: 'close' }              the node is done with: its bank let go and
+//                                  process() false, so the processor is collected
 // ---------------------------------------------------------------------------
 
 import { SoundBankLoader, SpessaSynthProcessor, SpessaLog } from "../vendor/spessasynth.js";
@@ -45,7 +47,9 @@ class GmProcessor extends AudioWorkletProcessor {
   receive(msg) {
     switch (msg.type) {
       case "bank": {
-        const bank = SoundBankLoader.fromArrayBuffer(msg.bytes);
+        // The samples stay views into the file's buffer, which the bank
+        // keeps anyway: copied, they would hold it twice (22.5 MiB more).
+        const bank = SoundBankLoader.fromArrayBuffer(msg.bytes, { copySampleData: false });
         const synth = new SpessaSynthProcessor(sampleRate, { eventsEnabled: false, decodedSampleBudget: DECODED_BUDGET });
         synth.soundBankManager.addSoundBank(bank, "main");
         this.queue = [];
@@ -82,10 +86,17 @@ class GmProcessor extends AudioWorkletProcessor {
         this.queue = [];
         this.synth?.stopAll(true);
         break;
+      case "close":
+        this.queue = [];
+        this.synth?.destroy();
+        this.synth = this.bank = null;
+        this.closed = true;
+        break;
     }
   }
 
   process(_inputs, outputs) {
+    if (this.closed) return false;
     const [L, R] = outputs[0];
     if (!this.synth) return true;
     // What falls in this quantum goes to the synth, at its place in it.
