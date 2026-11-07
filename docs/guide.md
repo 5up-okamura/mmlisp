@@ -2583,6 +2583,40 @@ Build to hear the edited score, as with other source edits. Opening a different
 score closes the tool. Escape closes it while focus is inside it; source-editor
 shortcuts keep their normal meaning.
 
+### Converting to another machine
+
+**Edit ▸ Convert to Machine…** puts the open score on another machine.
+`md`, `pc88` and `x68k` take one another's scores at the words' level. The
+voices, loops, gates, curves and comments stay as written; only what the
+other machine lacks changes. Every machine's score can also go to General
+MIDI, read as it plays (as a song import's last Target is, above).
+
+The dialog has a row per channel the score writes, each going to one of the
+machine's channels or dropped:
+
+- A channel the machine has, of the same kind, stays: `fm1` is `fm1`.
+- FM past the machine's count (x68k's `fm7`, `fm8`), FM3's operator tracks
+  onto x68k, and CSM onto x68k go to an FM channel the score leaves free,
+  else a square. Each operator track gets a one-operator voice made from the
+  patch's (`kit-op2`). x68k plays CSM's notes as plain notes.
+- A square goes to a free square, else to a free FM channel under
+  `presets/waveforms`' square.
+- The noise stays the noise; x68k `fm8`'s `:mode noise` notes go to it too.
+- A sample track that plays only kit roles (`kick`, `snare` …) goes to the
+  PC-8801's ROM rhythm, and the ROM rhythm goes to sample channels playing
+  `presets/rx5` under the same names.
+
+The words the machine lacks are read in its own words or dropped:
+
+- `:lfo-freq` becomes the nearest `:lfo-rate` (in Hz).
+- A noise rate becomes the nearest `:mode whiteN`, and back.
+- DT2, SSG-EG, the OPM's LFO depths and wave, and the SSG's mixer and
+  envelope are dropped, as is a sample's `:pan` or `:pitch` where the voice
+  has none.
+
+The log names each change, and the score's first line says where it came
+from. It is one undo step.
+
 ### Comparing two versions with A/B
 
 **Edit ▸ A/B Compare** shows two small buttons at the source's upper right.

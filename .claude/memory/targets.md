@@ -82,7 +82,7 @@ Open:
 - A program a hot-swap brings mid-play decodes on the audio thread (decode
   off it and `setAudioData` if it is heard).
 
-## Machine conversion (planned 2026-11-07; score-port.js built, the UI not yet)
+## Machine conversion (built 2026-11-07)
 
 A score of one 4-op FM machine on another — x68k, md, pc88 — at the words'
 level, not through its VGM (the user: what the composer wrote — `:gate`, a
@@ -128,10 +128,11 @@ keys, as check-import-to-midi compares); tools/tests' md, pc88 and x68k
 scores each onto the other two compile clean, notes kept where a channel
 takes them; the dropped-words list is what the rules say.
 
-Order: score-port.js + check (done) → the MDX dialog's rows (done: Target
-x68k / md / pc88 / midi, rows from `portRows`, guide.md § Song imports) →
-Edit > Convert to Machine… (the import dialog reused, `showImportDialog`) →
-guide.md § Edit.
+All built: score-port.js + check, the MDX dialog's Target x68k / md / pc88 /
+midi with rows (guide.md § Song imports), Edit > Convert to Machine… (the
+import dialog reused; msx, pce, fc, gb offered midi only; guide.md
+§ Converting to another machine). Open: a dropped MDX part is logged by its
+x68k channel (`fm7`), not its part name (FM G).
 
 Built (score-port.js, `check:score-port`): `portRows(text, to)` gives the
 dialog its rows ({key, head, kind, notes, to, choices}; x68k fm8's noise

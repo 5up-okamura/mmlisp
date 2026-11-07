@@ -383,6 +383,10 @@
           title="A VGM or NSF just imported: tap its beat, and it is written again on that tempo and grid">
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-touch_app"/></svg><span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
         </button>
+        <button class="menu-item" onclick="convertMachineAction();closeMenus()"
+          title="The score on another machine: md, pc88 and x68k at the words' level, a row per channel; or General MIDI. One undo step">
+          <svg class="menu-icon" aria-hidden="true"><use href="#mi-memory"/></svg><span>Convert to Machine…</span>
+        </button>
         <div class="menu-sep"></div>
         <button class="menu-item" id="abCompareMenu" role="menuitemcheckbox" aria-checked="false" onclick="toggleABCompare();closeMenus()">
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-compare"/></svg><span>A/B Compare</span><span class="menu-item-shortcut" id="abCompareCheck"></span>
@@ -1142,7 +1146,7 @@
     import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import-timing.js';
     import { RATE, PPQN } from './src/import-song.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
-    import { portRows, portScore } from './src/score-port.js';
+    import { portRows, portScore, scoreTargetOf, PORT_TARGETS } from './src/score-port.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
@@ -4389,6 +4393,73 @@
     window.toggleCommentAction = toggleLineComment;
     window.closeBracketsAction = () => { closeOpenBrackets(editorView); editorView.focus(); };
     window.loopSelectionAction = () => { loopSelectionCmd(editorView); editorView.focus(); };
+
+    // Edit > Convert to Machine…: the open score on another machine — md,
+    // pc88 and x68k one another's at the words' level (score-port.js), a row
+    // per channel onto the machine's channels or drop; any machine's onto
+    // General MIDI through its MIDI (import-to-midi.js). The whole text is
+    // replaced as one undo step; what was dropped or approximated is logged.
+    window.convertMachineAction = async () => {
+      const view = editorView;
+      const text = view.state.doc.toString();
+      const from = scoreTargetOf(text);
+      const sys = (t) => targetProfile(t).system;
+      if (from === 'midi') {
+        log('Convert to Machine: a General MIDI score has no chip to read; File > Import > MIDI puts a MIDI file on a machine', 'err');
+        return;
+      }
+      const near = PORT_TARGETS.includes(from) ? PORT_TARGETS.filter((t) => t !== from) : [];
+      const choices = [...near.map((t) => [t, `${sys(t)} (:target ${t})`]), ['midi', `General MIDI (:target midi) — read as the ${sys(from)}’s`]];
+      const imports = _importSources;
+      const rowsFor = (target) => {
+        if (!near.includes(target)) return [];
+        const plan = portRows(text, target, { imports });
+        if (plan.error) return [];
+        return plan.rows.map((r) => ({
+          key: r.key,
+          label: `${r.key === 'fm8/noise' ? 'fm8 · its noise notes' : r.head} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
+          value: r.to,
+          choices: r.choices,
+        }));
+      };
+      const got = await showImportDialog({
+        title: 'Convert to Machine',
+        summary: `The score is the ${sys(from)}’s (:target ${from}).` +
+          (near.length ? '' : ' Its chips are its own: it converts onto General MIDI.'),
+        fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, choices,
+          hint: near.length
+            ? 'md, pc88 and x68k keep what was written — voices, loops, gates, curves; a channel the machine has stays, FM past its count and the squares go to channels left free; what it has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
+            : 'General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
+        rows: rowsFor(choices[0][0]),
+        rowsFor,
+      });
+      if (!got) return;
+      const to = got.fields.target;
+      let out, said;
+      try {
+        if (to === 'midi') {
+          const { ir, diagnostics } = compileMMLisp(text, _lastFileName, { imports, voiceStamps: true });
+          const errors = diagnostics.filter((d) => d.severity === 'error');
+          if (errors.length) throw new Error(`the score does not compile: ${errors[0].message}`);
+          const res = chipScoreToMidi(ir, { source: text, fileName: _lastFileName, from: `${from}, then as MIDI` });
+          out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
+          said = res.warnings;
+        } else {
+          const res = portScore(text, to, { rows: got.rows, imports });
+          if (res.error) throw new Error(res.error);
+          out = res.text;
+          said = res.said;
+        }
+      } catch (e) {
+        log(`Convert to Machine: ${e?.message || e}`, 'err');
+        return;
+      }
+      view.dispatch({ changes: { from: 0, to: text.length, insert: out }, userEvent: 'input.convert' });
+      await refreshImportsAndCompile(); // the stand-ins' and the kit's preset sets
+      log(`Convert to Machine: the ${sys(from)}’s score onto ${to === 'midi' ? 'General MIDI' : `the ${sys(to)}`} — Undo takes it back`, 'info');
+      for (const w of said) log(`Convert to Machine: ${w}`, 'info');
+      view.focus();
+    };
 
     // Edit > Loop Selection (edit-tools.js): inside one channel the selected
     // notes become `#loop … (go loop)`; across channels, or at a bare cursor,
