@@ -33,7 +33,9 @@ export const midiDrums = {
   kind: "sample",
   // Each hit's velocity; the track's faders go into it.
   level: { scale: "linear", steps: 128 },
-  words: words("PAN"),
+  // No :pan: the eight tracks share channel 10 and its one CC10 (a GM kit
+  // pans its keys itself).
+  words: words(),
   points: false,
   // The GM kit's roles, built in: `kick` plays key 36. A sample that is no
   // role plays its written note as the key (export-midi.js says so). The

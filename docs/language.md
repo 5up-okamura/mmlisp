@@ -2512,7 +2512,9 @@ at a time, as on every machine: a chord is several channels.
 - **The drums** play the GM kit's roles (`kick`, `snare`, `hat`, `ride`,
   `crash` … — the gm-drums set's names), built in, each at its GM key; a
   sample that is no role plays its written note as the key (`W_TARGET`).
-  Each hit's `:vel` and the track's `:vol` are its velocity.
+  Each hit's `:vel` and the track's `:vol` are its velocity; the eight
+  tracks share channel 10's one pan, so a drum track has no `:pan` (a GM kit
+  pans its keys itself).
 
 A word of another machine's chips (`:tl1`, `:duty`, `:wave`) is `E_TARGET`
 here, and the MIDI words are `E_TARGET` on every other machine.

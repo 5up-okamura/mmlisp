@@ -265,6 +265,9 @@ const exported = (src) => {
   const keys = (n) => [...new Set(d.tracks.find((t) => t.name === n).notes.map((x) => x.key))].sort((a, b) => a - b);
   assert.deepEqual(d.tracks.filter((t) => /^drum\d$/.test(t.name)).map((t) => [t.name, t.channel]), [["drum1", 9], ["drum2", 9], ["drum3", 9], ["drum8", 9]], "the drums' tracks, all channel 10");
   assert.deepEqual([keys("drum1"), keys("drum2"), keys("drum3"), keys("drum8")], [[36, 38], [42, 46], [49], [51]], "kick snare / hat hat-open / crash / ride at their GM keys");
+  // The drums share channel 10's one CC10: a drum track's :pan is refused.
+  const pan = compileMMLisp("(def-score :target midi)\n(drum1 :pan -1 kick c)", "pan.mmlisp").diagnostics;
+  assert.ok(pan.some((x) => x.severity === "error" && /:pan .*drum1/.test(x.message)), "no :pan on the drums");
 }
 
 // ── The import reads it back ──────────────────────────────────────────────
