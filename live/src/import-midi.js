@@ -426,7 +426,11 @@ const takenBy = (tp, h) => {
  * channel the drums take (fm6, the OPLL's fm7-9) is not the melody's. A channel
  * with no level (the 2A03's triangle) gets the lowest lane of those kept.
  */
-export function defaultMidiOptions(analysis, target = DEFAULT_TARGET) {
+// A MIDI file's own machine is the GM instrument (`:target midi`), as a VGM's
+// is its chips': the dialog opens on it.
+export const MIDI_DEFAULT_TARGET = "midi";
+
+export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET) {
   const tp = targetProfile(target);
   const d = destsFor(tp);
   const board = onBoard(tp);

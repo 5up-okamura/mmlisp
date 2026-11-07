@@ -1465,7 +1465,11 @@ in every browser (an iPhone's too, which has no Web MIDI): **GM
 SoundFont…** keeps in the browser. Either plays a `:target midi` score in
 Live with nothing else connected, and its **File ▸ Export ▸ WAV…** and
 **Stems…** render on that SoundFont (FluidR3Mono unless yours is the output
-chosen). `Choose Output…` asks the browser once,
+chosen). **GM Reverb** (Off, Half, Full) is that SoundFont's reverb as it
+plays and in its WAV; a channel's own send is its `:cc91`. A `:target midi`
+score's Channels meters show its notes — each note's `:vel` under the
+faders, peaking as it starts — since the sound is not the page's chips'.
+`Choose Output…` asks the browser once,
 then lists the MIDI ports; `Off` stops. What goes out is what
 **File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its
 channel, its notes, its `gm-*` or role voice's program, its levels, pan and
@@ -1867,8 +1871,9 @@ rarely mark one), unticked for a VGM (one without a loop point is usually a
 jingle).
 
 **Target** is the machine the score is written for, and picking another one
-sets the rows to that machine's channels. A MIDI file names no machine, so it
-offers all of them, the Mega Drive first. A VGM, NSF or tracker module starts
+sets the rows to that machine's channels. A MIDI file is a General MIDI
+instrument's, so it starts on `midi` (a channel each, the drums on
+`drum1`…) and offers every other machine. A VGM, NSF or tracker module starts
 on the machine of its own chips, which keeps what they have; the Mega Drive
 is always offered, and so is any other machine whose channels hold at least
 half of the song's notes — a Game Boy song can be a PC Engine's or an X68000's,

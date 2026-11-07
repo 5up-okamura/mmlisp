@@ -10,12 +10,14 @@
 //                globals: the bank loads, a message sounds from the quantum
 //                its audio time falls in and not before, a clear drops what
 //                is not yet due, an off leaves no voice, a preload
-//                decodes a plan's voices, a close ends the processor
+//                decodes a plan's voices, a close ends the processor, a
+//                quantum that runs twice its time is reported ('late')
 //   preload      a plan preloaded again sends nothing; a key past what was
 //                decoded sends that voice alone, its range widened
 //   a render     `:target midi`'s WAV (export-wav.js → gm-render.js): a loop
 //                twice and the fade, a one-shot to its release's end, a solo
-//                its track alone, and none without a SoundFont
+//                its track alone, GM Reverb's level, and none without a
+//                SoundFont
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -111,6 +113,21 @@ tell({ type: "close" });
 assert.equal(gm.process([], [[L, R]]), false, "a closed processor ends");
 assert.equal(gm.gm.bank, null, "and holds no bank");
 
+// A run late: one quantum twice its time is said ('late', after its
+// window), none at all is not.
+{
+  const late = new Processor();
+  let slow = false;
+  late.gm.render = () => { if (!slow) return; const t = performance.now(); while (performance.now() - t < 7); };
+  posted.length = 0;
+  const step = (n, slowAt = -1) => { for (let i = 0; i < n; i++) { slow = i === slowAt; late.process([], [[L, R]]); globalThis.currentTime += Q / sampleRate; } };
+  step(Math.ceil((2.2 * sampleRate) / Q));
+  assert.ok(!posted.some((m) => m.type === "late"), "nothing late, nothing said");
+  step(Math.ceil((2.2 * sampleRate) / Q), 10);
+  const said = posted.find((m) => m.type === "late");
+  assert.ok(said && said.worst >= 7, `a quantum 7 ms long is said: ${JSON.stringify(said)}`);
+}
+
 // ── GmOutput.preload: only what no plan before asked for ───────────────
 {
   const sent = [];
@@ -147,6 +164,12 @@ assert.equal(gm.gm.bank, null, "and holds no bank");
   const piano = await render(two, 0), drums = await render(two, 1);
   assert.ok(peak(piano.L, 0, 1.9 * 48000) > 0.05 && peak(piano.L, 3 * 48000, 3.9 * 48000) < 0.01, "ch1 soloed: the piano, not the kick");
   assert.ok(peak(drums.L, 0, 1.9 * 48000) < 0.01 && peak(drums.L, 2.05 * 48000, 3.9 * 48000) > 0.05, "drum1 soloed: the kick, not the piano");
+  // GM Reverb: Off leaves a note's tail dry; Full rings on after it.
+  const stab = "(def-score :target midi)\n(ch1 gm-piano :tempo 120 :len 16 c _2.)";
+  const wet = await renderWavSamples(new IRPlayer(() => {}).loadJSON(compileMMLisp(stab, "r.mmlisp").ir), { gmBank: bankBytes(), gmReverb: 1 });
+  const dry = await renderWavSamples(new IRPlayer(() => {}).loadJSON(compileMMLisp(stab, "r.mmlisp").ir), { gmBank: bankBytes(), gmReverb: 0 });
+  const tail = (x) => peak(x.L, 0.9 * 48000, Math.min(x.L.length, 1.2 * 48000));
+  assert.ok(tail(wet) > 3 * tail(dry), `reverb Full rings past the note, Off does not: ${tail(wet).toExponential(1)} vs ${tail(dry).toExponential(1)}`);
   // No SoundFont, no render: it says why.
   await assert.rejects(renderWavSamples(new IRPlayer(() => {}).loadJSON(compileMMLisp("(def-score :target midi)\n(ch1 c)", "x.mmlisp").ir), {}), /needs a SoundFont/);
 }

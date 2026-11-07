@@ -2491,7 +2491,8 @@ its score is a Standard MIDI File (File ▸ Export ▸ MIDI…), and while Live 
 it the sound is a MIDI output's (MMLisp ▸ MIDI ▸ Output: a MIDI port, or
 the page's GM SoundFont, FluidR3Mono or your own). Its WAV and stems are
 rendered on that SoundFont, as the GM output plays it (the bundled
-FluidR3Mono unless your own is the output chosen); it has no VGM or video.
+FluidR3Mono unless your own is the output chosen; its reverb is MMLisp ▸ MIDI
+▸ GM Reverb, a channel's send to it its `:cc91`); it has no VGM or video.
 Its channels are `ch1`–`ch16` but `ch10`, each the MIDI channel
 it names, and the drums, channel 10, as eight tracks — `drum1`–`drum8` — so
 hits sound together, as a ROM rhythm's tracks do. A track plays one note

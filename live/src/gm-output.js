@@ -58,8 +58,10 @@ const added = new WeakMap();
  * resolves when the bank is loaded and the output can take a run.
  */
 export class GmOutput {
-  constructor({ loadBank }) {
+  constructor({ loadBank, reverb = 1, onLate = null }) {
     this.loadBank = loadBank;
+    this.reverbGain = reverb;
+    this.onLate = onLate; // ({ count, worst, budget }): the audio thread ran late
     this.node = null;
     this.attaching = null;
     this.batch = [];
@@ -75,11 +77,13 @@ export class GmOutput {
       const bytes = await this.loadBank();
       const node = new AudioWorkletNode(ctx, "mmlisp-gm", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       node.port.onmessage = ({ data }) => {
+        if (data.type === "late") return this.onLate?.(data);
         const done = this.pending.get(data.type === "error" ? "ready" : data.type);
         this.pending.delete(data.type === "error" ? "ready" : data.type);
         done?.(data);
       };
       const reply = this.reply("ready");
+      node.port.postMessage({ type: "reverb", gain: this.reverbGain });
       node.port.postMessage({ type: "bank", bytes }, [bytes]);
       const r = await reply;
       if (r.type === "error") throw new Error(r.message);
@@ -105,6 +109,12 @@ export class GmOutput {
   flush() {
     if (this.batch.length && this.node) this.node.port.postMessage({ type: "midi", events: this.batch });
     this.batch = [];
+  }
+
+  /** The reverb's level, 0–1 (MMLisp > MIDI > GM Reverb). */
+  reverb(gain) {
+    this.reverbGain = gain;
+    this.node?.port.postMessage({ type: "reverb", gain });
   }
 
   /** What was sent and is not yet due, dropped (a seek, a stop). */

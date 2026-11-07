@@ -193,7 +193,8 @@ port as well, on the preview's clock, or on a GM SoundFont in the page.
   VRC7's notes elsewhere on their own voices, read on four operators), NSF
   (each song run on a 6502, onto `fc`'s chips) and mucom88, through a
   dialog for tempo and channels — and, for MIDI, VGM, NSF and the modules,
-  the machine to write for (any whose channels keep half the notes); MDX
+  the machine to write for (a MIDI file's own, `:target midi`, first; any
+  whose channels keep half the notes); MDX
   (with its PDX) as an X68000 score and MGS as an MSX one
 - Recordings, in WAV or any format the browser decodes: **Audio as Formants**
   (a sound's spectral peaks on FM3's operators — CSM's vocoder voice, or

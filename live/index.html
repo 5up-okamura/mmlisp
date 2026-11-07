@@ -7182,7 +7182,7 @@
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
         const gmBank = machine.soundFont ? await gmBankForRender() : null;
         ({ bytes, pcmCount, durationSec } = await renderWav(offline, {
-          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank,
+          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank, gmReverb: gmReverb(),
           onProgress: (f) => { line.textContent = `${stamp} Rendering WAV… ${Math.floor(f * 100)}%`; },
         }));
       } catch (e) {
@@ -7240,7 +7240,7 @@
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
         const gmBank = machine.soundFont ? await gmBankForRender() : null;
         set = await renderStems(ir, () => new IRPlayer(() => {}).loadJSON(ir), {
-          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank,
+          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank, gmReverb: gmReverb(),
           onProgress: (f) => { line.textContent = `${stamp} Rendering stems… ${Math.floor(f * 100)}%`; },
         }, ({ index, head, bytes }) => zip.add(stemName(index, head), bytes));
       } catch (e) {
@@ -13292,6 +13292,11 @@
     const GM_OUT = 'mmlisp:gm', SF_OUT = 'mmlisp:soundfont';
     const isGmOut = (name) => name === GM_OUT || name === SF_OUT;
     let _gm = null; // { source: GM_OUT | SF_OUT, output: GmOutput }
+    // MMLisp > MIDI > GM Reverb: the GM output's reverb level (each channel's
+    // send is its CC91, `:cc91`), on its playing and its renders (pref 'gmReverb').
+    const GM_REVERB = { off: 0, half: 0.5, full: 1 };
+    const gmReverb = () => GM_REVERB[loadPref('gmReverb', 'full')] ?? 1;
+    let _gmLateSaid = -Infinity;
 
     async function openMidiOut() {
       // A device plugged or a port opening on its first send changes the
@@ -13329,6 +13334,13 @@
         ...(sfName ? [item(`SoundFont: ${sfName}`, _midiOutName === SF_OUT, () => selectMidiOut(SF_OUT),
           'Play the preview on your SoundFont, kept in the browser')] : []),
         item('Load SoundFont…', false, chooseSoundFont, 'An .sf2 or .sf3 of your own to play the preview on, kept in the browser'));
+      // The GM output's reverb (a channel's send is its :cc91).
+      const level = loadPref('gmReverb', 'full');
+      const rev = document.createElement('div');
+      rev.className = 'menu-label';
+      rev.textContent = 'GM Reverb';
+      el.append(rev, ...[['off', 'Off'], ['half', 'Half'], ['full', 'Full']].map(([k, label]) =>
+        item(label, level === k, () => setGmReverb(k), 'The GM SoundFont\'s reverb, as it plays and in a WAV; a channel\'s send is its :cc91')));
       if (!midiOutSupported) return;
       if (!_midiOuts) {
         el.append(item('Choose Output…', false, openMidiOut,
@@ -13368,7 +13380,7 @@
         if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
       } else if (isGmOut(_midiOutName)) {
         const source = _midiOutName;
-        _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont }) };
+        _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont, reverb: gmReverb(), onLate: gmLate }) };
         startGmOutput();
       } else if (!quiet && was) log('MIDI output: off', 'info');
       renderMidiOutMenu();
@@ -13429,6 +13441,22 @@
     // The bank as the service worker keeps it, else the network's (which the
     // worker then keeps): its network-first fetch would store 22.5 MB again
     // on every launch. The file is never changed in place, only renamed.
+    // The audio thread could not keep up with the GM output: said once in a
+    // while, with what lightens it.
+    function gmLate({ count, worst, budget }) {
+      const t = performance.now();
+      if (t - _gmLateSaid < 15000) return;
+      _gmLateSaid = t;
+      log(`GM output: ${count} audio block(s) rendered late (worst ${worst.toFixed(1)} ms of ${budget.toFixed(1)}) — heard as clicks; ` +
+        (gmReverb() > 0 ? 'MMLisp > MIDI > GM Reverb Off lightens it' : 'the device is busy'), 'warn');
+    }
+    function setGmReverb(level) {
+      savePref('gmReverb', level);
+      _gm?.output.reverb(gmReverb());
+      renderMidiOutMenu();
+    }
+    window.setGmReverb = setGmReverb;
+
     async function fetchGmBank() {
       const res = (await globalThis.caches?.match(GM_BANK_URL).catch(() => null)) ?? await fetch(GM_BANK_URL);
       if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);
@@ -14436,11 +14464,31 @@
     const VU_RANGE_DB = 40;       // bar spans [-VU_RANGE_DB, 0] dB
     const VU_RELEASE = 0.9;       // displayed-level decay per VU tick
     const _vuLevels = new Map();  // head → displayed level
+    // A machine with no taps (`:target midi`: its sound is a MIDI output's or
+    // the GM SoundFont's) meters its notes instead — the note sounding at the
+    // track's playhead, at its :vel (2 dB a step) under the strip's fader and
+    // the master's, nothing muted — not a level heard. A note's start is its
+    // peak; held, it settles under it (a hit, a drum's, falls away).
+    const NOTE_VU_HELD = 0.7;
+    const _vuNotes = new Map(); // head → the note metered last
+    function noteVu(head) {
+      const cell = _vizNotes.find((c) => c.head === head);
+      const clock = cell && player?.trackClock?.(cell.trackIndex);
+      const n = clock && rollSoundingAt(cell, clock.tick);
+      const fresh = n && n !== _vuNotes.get(head);
+      _vuNotes.set(head, n);
+      if (!n || player.isTrackAudible?.(cell.trackIndex) === false) return 0;
+      const fader = (v) => (v <= 0 ? -Infinity : (Math.min(31, v) - 31) * 2);
+      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(_channelVol.get(head) ?? 31) + fader(_masterVolUi);
+      const level = Math.max(0, Math.min(1, 1 + db / VU_RANGE_DB));
+      return fresh ? level : n.sample ? 0 : level * NOTE_VU_HELD;
+    }
     function updateChannelVu() {
+      const byNotes = !!targetProfile(_lastGoodIR?.metadata?.target).soundFont;
       for (const [head, el] of _chVuEls) {
-        const k = scopeChannelOf(head);
+        const k = byNotes ? null : scopeChannelOf(head);
         const peak = k != null ? _scopePeaks[k] : 0;
-        const target = peak > 0
+        const target = byNotes ? noteVu(head) : peak > 0
           ? Math.max(0, Math.min(1, 1 + (20 * Math.log10(peak / VU_FULL_SCALE)) / VU_RANGE_DB))
           : 0;
         const lvl = Math.max(target, (_vuLevels.get(head) ?? 0) * VU_RELEASE);
@@ -14450,6 +14498,7 @@
     }
     function resetChannelVu() {
       _vuLevels.clear();
+      _vuNotes.clear();
       _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; });
     }
 

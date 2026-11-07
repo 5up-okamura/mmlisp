@@ -55,7 +55,7 @@ export function planClock(plan) {
  * The stereo float buffers of `player`'s score on `bank` (a SoundFont's
  * bytes, kept for the render), as renderWavSamples returns them.
  */
-export async function renderGmSamples(player, { bank, sampleRate = 48000, fadeSec = 4, onProgress = null } = {}) {
+export async function renderGmSamples(player, { bank, reverb = 1, sampleRate = 48000, fadeSec = 4, onProgress = null } = {}) {
   const ir = player.loadedIr?.() ?? player._ir;
   if (!ir) throw new Error("No IR loaded");
   const plan = midiPlan(ir);
@@ -85,6 +85,7 @@ export async function renderGmSamples(player, { bank, sampleRate = 48000, fadeSe
   };
 
   const gm = new GmSynth(sampleRate);
+  gm.setReverb(reverb);
   await gm.load(bank);
   gm.preload(planVoices(plan));
   const run = new MidiOutRun({

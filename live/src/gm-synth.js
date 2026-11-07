@@ -25,6 +25,13 @@ export class GmSynth {
     this.synth = null;
     this.bank = null;
     this.queue = []; // [bytes, time], in time order (a tie keeps its order)
+    this.reverb = 1; // the reverb's level, 0–1: each channel's send is its CC91
+  }
+
+  /** The reverb's level, 0 (none) to 1 (the bank's, as a channel's CC91 sends to it). */
+  setReverb(gain) {
+    this.reverb = Math.max(0, Math.min(1, Number(gain)));
+    this.synth?.setSystemParameter("reverbGain", this.reverb);
   }
 
   /** A SoundFont's bytes loaded (the buffer is kept); resolves { presets }. */
@@ -39,6 +46,7 @@ export class GmSynth {
     this.synth?.destroy();
     this.synth = synth;
     this.bank = bank;
+    synth.setSystemParameter("reverbGain", this.reverb);
     return { presets: bank.presets.length };
   }
 
