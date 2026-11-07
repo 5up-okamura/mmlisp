@@ -420,6 +420,7 @@ export class IRPlayer {
    */
   loadJSON(irObj, { se = null } = {}) {
     this._loadIR(songOrEffectIr(irObj, se));
+    this._irGiven = irObj; // the IR as given (loadedIr), not its song's copy
     return this;
   }
 
@@ -552,6 +553,7 @@ export class IRPlayer {
       this._schedGen++; // the tempo changes ahead move (_tempoChangesAhead)
     }
 
+    this._runs = (this._runs ?? 0) + 1; // runNumber
     this._onRunStart?.();
     this._scheduleLoop();
   }
@@ -792,6 +794,7 @@ export class IRPlayer {
     this._silenceChipPcm(at);
 
     this._audioContext = audioContext;
+    this._runs = (this._runs ?? 0) + 1; // runNumber
     this._onRunStart?.();
     this._scheduleLoop();
     return sec;
@@ -883,9 +886,17 @@ export class IRPlayer {
     return Math.max(0, this._audioContext.currentTime - this._startAudioTime);
   }
 
-  /** The IR the run plays (a hot-swap replaces it at its bar), or null. */
+  /**
+   * The IR the run plays, as it was given to loadJSON / swapAtNextBar (a
+   * score with a def-se plays its song's tracks, the same indices), or null.
+   */
   loadedIr() {
-    return this._ir ?? null;
+    return this._irGiven ?? this._ir ?? null;
+  }
+
+  /** Counts play() and seek() calls: a run that began again (a seek while playing). */
+  runNumber() {
+    return this._runs ?? 0;
   }
 
   /** Whether track `ti` sounds now, as the mixer's mute and solo leave it. */

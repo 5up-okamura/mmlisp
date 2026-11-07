@@ -467,11 +467,14 @@ function trackEvents(events, ctx, chan, drums, notes) {
   const out = [];
   const st = (status) => status | chan;
   // A write at the loop point that is neither the loop's own (forced) nor
-  // the loop's first note's (again) is what stood before the label there —
-  // a start-up setting, the first program — and plays once: `once`, which
-  // Live's output leaves out when it goes round (the file keeps it).
+  // the loop's first note's (again), on a track whose label is the loop
+  // point, is what stood before the label there — a start-up setting, the
+  // first program — and plays once: `once`, which Live's output leaves out
+  // when it goes round (the file keeps it). A track that loops from earlier
+  // is in its loop's body there: all it writes is the body's.
+  const pre = ctx.ownLoop === ctx.loopStart || ctx.ownLoop == null;
   const push = (tick, bytes, keep = false) =>
-    out.push({ tick, order: ORDER.ctrl, bytes, ...(tick === ctx.loopStart && !keep ? { once: true } : {}) });
+    out.push({ tick, order: ORDER.ctrl, bytes, ...(pre && tick === ctx.loopStart && !keep ? { once: true } : {}) });
   const ctrl = (tick, cc, v, keep = false) => push(tick, [st(0xb0), cc, v], keep);
   const line = (target, init) => paramLine(events.filter((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === target), target, init, ctx, ctx.endTick);
   const vol = line("VOL", VOL_UNITY), pan = line("PAN", 0), pitch = line("NOTE_PITCH", 0), snap = line("SNAP", 0);
@@ -807,7 +810,7 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     const track = songTracks[t.i];
     const name = track.scoreChannel ?? track.channel ?? `track ${t.i + 1}`;
     const evNotes = [];
-    const local = { ...ctx, note: (s) => note(`${name}: ${s}`) };
+    const local = { ...ctx, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, note: (s) => note(`${name}: ${s}`) };
     const events = trackEvents(t.events, local, t.channel, t.drums, evNotes);
     events.push({ tick: 0, order: ORDER.meta, bytes: meta(0x03, text(name)) });
     if (ports > 1) events.push({ tick: 0, order: ORDER.meta, bytes: meta(0x21, [t.port]) });

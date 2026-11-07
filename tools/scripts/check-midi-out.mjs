@@ -13,7 +13,9 @@
 //                       or with it cleared — a hot-swap stops the outgoing
 //                       plan at its bar and the incoming one goes on from
 //                       there unchased, the loop going round leaves what stood
-//                       before its label, a plan made again (a def-val moved)
+//                       before its label and lets its last key go, a seek
+//                       while playing starts over (chased round the loop), a
+//                       plan made again (a def-val moved)
 //                       sends nothing twice, a plan that comes late sends
 //                       what fell due since the run began
 import assert from "node:assert/strict";
@@ -213,6 +215,45 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
   // (the body's :vol 20 is written each pass, as the chip has it written)
   assert.deepEqual(cc7.map(([t, v]) => [Math.round(t * 1000) / 1000, v]), [[0, 127], [0.5, 36], [1.5, 36]], ":vol 31 once, never back round the loop");
   assert.equal(sent.filter((m) => isOn(m.b)).length, 5, "c d c d c by 2.2 s");
+}
+{ // The loop's end: the last note's off goes there (it sits at endTick), so
+  // no key is left held round the loop.
+  const { ir, plan } = both("(fm1 :tempo 120 :len 4 #top c d e f (go top))");
+  const p = standIn(ir);
+  const sent = [];
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }) });
+  run.setPlan(plan, ir);
+  drive(run, p, 0, 4.4);
+  const fOff = sent.filter((m) => isOff(m.b) && m.b[1] === 65).map((m) => Math.round(m.t * 1000) / 1000);
+  assert.deepEqual(fOff, [2, 4], "f let go at each pass's end");
+}
+{ // A seek while playing (IRPlayer runNumber): the keys let go, the run over
+  // from its point, chased, and nothing between the two points sent.
+  const { ir, plan } = both("(fm1 :tempo 120 :len 4 :vol 31 #top c :vol 20 d e f (go top))");
+  const p = standIn(ir);
+  p.runs = 1;
+  p.runNumber = () => p.runs;
+  const sent = [];
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }) });
+  run.setPlan(plan, ir);
+  drive(run, p, 0, 0.6);
+  const at = sent.length;
+  // To 2.05 s: the second pass's c (tick 384+, after :vol 20 went by).
+  p.runs++;
+  p.start = 0.6 - 2.05;
+  drive(run, p, 0.6, 0.9);
+  const next = sent.slice(at);
+  assert.ok(next.findIndex((m) => m.b[1] === 123) < next.findIndex((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7), "let go, then chased");
+  const cc7 = next.find((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7);
+  assert.equal(cc7.b[2], 36, "chased round the loop: :vol 20 stands, not the :vol 31 before the label");
+  assert.ok(next.filter((m) => isOn(m.b)).length <= 1, "no burst of what lay between");
+}
+{ // `once` is what stood before a label at the loop point: a track that
+  // loops from earlier writes its body's there (a vel step at tick 96 here).
+  const { plan } = both("(fm1 :tempo 120 :len 2 #top (macro :step 48t :vel [15 10 5 1]) c (go top))\n(fm2 :len 4 c)");
+  assert.equal(plan.loopStart, 96);
+  const at96 = plan.tracks[0].events.filter((e) => e.tick === 96 && (e.bytes[0] & 0xf0) === 0xb0);
+  assert.ok(at96.length && at96.every((e) => !e.once), "fm1's CC11 at the loop point is its body's");
 }
 { // A plan that comes late: what fell due since the run began goes at once.
   const { ir, plan } = both(SONG);

@@ -59,9 +59,16 @@ export async function openMidiOutputs(onChange) {
  * error. Live runs it in the compile worker (kind 'midi').
  */
 export function midiPlanOf(src, name, imports, vals) {
-  const { ir, diagnostics } = compileMMLisp(src, name, { imports, voiceStamps: true, voiceHoist: false });
-  return diagnostics.some((d) => d.severity === "error") ? null : midiPlan(ir, { vals });
+  // A slider moved replans the score it compiled last: its IR is kept, as a
+  // def-val's value changes no IR.
+  const key = `${name}\u0000${src}\u0000${[...(imports ?? new Map())].map(([k, v]) => `${k}:${v.length}:${v}`).join("\u0000")}`;
+  if (lastCompiled?.key !== key) {
+    const { ir, diagnostics } = compileMMLisp(src, name, { imports, voiceStamps: true, voiceHoist: false });
+    lastCompiled = { key, ir: diagnostics.some((d) => d.severity === "error") ? null : ir };
+  }
+  return lastCompiled.ir ? midiPlan(lastCompiled.ir, { vals }) : null;
 }
+let lastCompiled = null;
 
 // A note's key, by channel: what a stop lets go.
 const keyOf = (bytes) => ((bytes[0] & 0x0f) << 7) | bytes[1];
@@ -95,9 +102,13 @@ export class MidiOutRun {
     this.clear = clear;
     this.onSkip = onSkip;
     this.lastAt = -Infinity; // the latest time anything was sent for
+    this.plans = new WeakMap(); // IR → its plan, made ahead of its play or swap
     this.plan = null; // for this.planIr
     this.planIr = null;
+    this.irSeen = null; // the IR the player ran at the last pass
     this.running = false;
+    this.run = 0; // the player's runNumber this run began at
+    this.skipSaid = "";
     this.tracks = null; // per plan track: { sent, active: Map key → bytes, audible }
     this.runStart = null; // audio time the run began
     this.swapAt = null; // the pending hot-swap's time, as last seen
@@ -105,17 +116,25 @@ export class MidiOutRun {
     this.offAt = null; // the swap whose keys were let go
   }
 
-  /** The plan for the player's IR `ir` (midiPlan of the same score). */
+  /**
+   * The plan for the IR `ir` (midiPlan of the same score): kept for when the
+   * player runs it — given ahead, for an IR about to play or swap in.
+   */
   setPlan(plan, ir) {
-    // The same IR planned again (a def-val moved): each track goes on from
+    this.plans.set(ir, plan);
+    if (ir !== this.planIr) return;
+    // The IR playing planned again (a def-val moved): each track goes on from
     // where it was sent to, its keys still held.
-    const carry = this.tracks && this.planIr === ir
-      ? new Map(this.plan.tracks.map((t, k) => [t.trackIndex, this.tracks[k]])) : null;
+    const carry = this.tracks ? new Map(this.plan.tracks.map((t, k) => [t.trackIndex, this.tracks[k]])) : null;
     this.plan = plan;
-    this.planIr = ir;
     this.tracks = carry ? plan.tracks.map((t) => carry.get(t.trackIndex) ?? { sent: carry.values().next().value?.sent ?? 0, active: new Map(), audible: true }) : null;
-    const skipped = plan.tracks.filter((t) => t.port > 0).map((t) => t.name);
-    if (skipped.length) this.onSkip?.(`past fifteen channels, not sent: ${skipped.join(", ")}`);
+    this.sayskipped();
+  }
+
+  sayskipped() {
+    const skipped = this.plan.tracks.filter((t) => t.port > 0).map((t) => t.name).join(", ");
+    if (skipped && skipped !== this.skipSaid) this.onSkip?.(`past fifteen channels, not sent: ${skipped}`);
+    this.skipSaid = skipped;
   }
 
   /**
@@ -130,24 +149,36 @@ export class MidiOutRun {
       if (this.running) this.stop(now);
       return;
     }
+    // A seek while playing begins the run again (IRPlayer runNumber): what
+    // sounds is let go, and the run starts over from its point, chased.
+    const run = player.runNumber?.() ?? 0;
+    if (this.running && run !== this.run) this.stop(now);
     if (!this.running) {
       this.running = true;
+      this.run = run;
       this.runStart = now;
       this.chase = true;
       this.tracks = null;
     }
     const ir = player.loadedIr();
-    if (this.plan && this.planIr !== ir) {
+    if (ir !== this.irSeen) {
       // A swap went in (or a new run's IR): the outgoing plan is done — its
       // keys let go at the bar already, if it was a swap that was seen.
-      if (this.swapAt == null || this.offAt !== this.swapAt) this.allOff(this.swapAt ?? now);
+      if (this.plan && this.tracks && !(this.swapAt != null && this.offAt === this.swapAt)) this.allOff(this.swapAt ?? now);
       this.offAt = null;
+      this.irSeen = ir;
       this.plan = null;
       this.planIr = null;
       this.tracks = null;
       if (this.swapAt == null) this.chase = true;
     }
-    if (!this.plan) return; // its plan is coming
+    if (!this.plan) {
+      const plan = this.plans.get(ir);
+      if (!plan) return; // its plan is coming
+      this.plan = plan;
+      this.planIr = ir;
+      this.sayskipped();
+    }
     const swap = player.pendingSwapTime();
     if (swap != null) this.swapAt = swap;
     const horizon = Math.min(now + Math.max(0.15, player.lookaheadSec()), swap ?? Infinity);
@@ -189,7 +220,7 @@ export class MidiOutRun {
   // the plan follows a swap, which leaves them as they stand.
   begin(player, now) {
     const from = Math.max(this.runStart ?? now, now - LATE_SEC);
-    const at = this.swapAt != null && !this.chase ? this.swapAt : from;
+    const at = this.swapAt != null && !this.chase ? Math.max(this.swapAt, now - LATE_SEC) : from;
     this.tracks = this.plan.tracks.map((t) => {
       const raw = player.trackTickAt(t.trackIndex, at)?.raw ?? 0;
       if (this.chase && t.port === 0) this.chaseTo(t, raw, now);
@@ -215,8 +246,12 @@ export class MidiOutRun {
       // Round the loop again (past the plan's end), what stood before the
       // label at the loop point plays no more (export-midi.js `once`).
       const again = a >= endTick;
-      for (let i = lo; i < ev.length && ev[i].tick < tb; i++)
-        if (ev[i].bytes[0] < 0xf0 && !(again && ev[i].once)) emit(ev[i], a + (ev[i].tick - ta));
+      const out = (e, raw) => { if (e.bytes[0] < 0xf0 && !(again && e.once)) emit(e, raw); };
+      let i = lo;
+      for (; i < ev.length && ev[i].tick < tb; i++) out(ev[i], a + (ev[i].tick - ta));
+      // The plan's end reached: what stands at endTick itself — the offs of
+      // the notes the loop's end or the song's end cuts — goes there.
+      if (tb >= endTick) for (; i < ev.length && ev[i].tick <= endTick; i++) out(ev[i], a + (endTick - ta));
       if (segEnd <= a) break;
       a = segEnd;
       if (loopStart == null && a >= endTick) break;
@@ -231,14 +266,22 @@ export class MidiOutRun {
     return loopStart + ((raw - loopStart) % (endTick - loopStart));
   }
 
-  // A track's controllers as they stand at raw tick `raw`, sent now.
+  // A track's controllers as they stand at raw tick `raw`, sent now: on a
+  // pass after the first, as the plan's end left them, then the loop's own
+  // writes from its start to the point (not what stood before its label).
   chaseTo(t, raw, now) {
-    const tick = this.tickOf(raw) ?? this.plan.endTick;
+    const { endTick, loopStart } = this.plan;
+    const tick = this.tickOf(raw) ?? endTick;
+    const round = raw >= endTick && loopStart != null;
     const last = new Map();
+    const take = (e) => { const k = chaseKey(e.bytes); if (k) last.set(k, e.bytes); };
     for (const e of t.events) {
+      if (round ? e.tick > endTick : e.tick >= tick) break;
+      take(e);
+    }
+    if (round) for (const e of t.events) {
       if (e.tick >= tick) break;
-      const k = chaseKey(e.bytes);
-      if (k) last.set(k, e.bytes);
+      if (e.tick >= loopStart && !e.once) take(e);
     }
     const ch = t.channel;
     const at = this.perfAt(now);

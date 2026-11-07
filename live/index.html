@@ -7942,6 +7942,7 @@
       _lastGoodIR = ir;
       _lastGoodSrc = src;
       _irSource.set(ir, src);
+      if (_midiOutRun) requestMidiPlan(ir); // ahead of its Play or swap
       _lastSourceMap = sourceMap;
       applyTargetUi(ir);
       keysFollowTarget(ir);
@@ -13232,13 +13233,19 @@
     let _midiOutName = '';     // the chosen output's name, '' off
     let _midiOutRun = null;
     let _midiOutTimer = 0;
-    let _midiOutIr = null;     // the player's IR the newest plan was asked for
-    let _midiOutAsk = 0;
+    let _midiOutAsked = new WeakSet(); // the IRs a plan was asked for
+    let _midiOutPortId = null; // the chosen output's id, while it is there
     let _midiOutReplanTimer = 0;
     let _perfAt = (t) => t * 1000;
 
     async function openMidiOut() {
-      _midiOuts ??= await openMidiOutputs(() => { renderMidiOutMenu(); selectMidiOut(_midiOutName, true); });
+      // A device plugged or a port opening on its first send changes the
+      // list: the run goes on; only the chosen output coming or going moves it.
+      _midiOuts ??= await openMidiOutputs(() => {
+        renderMidiOutMenu();
+        const here = _midiOuts.list().find((o) => o.name === _midiOutName);
+        if (!!here !== !!_midiOutRun || (here && here.id !== _midiOutPortId)) selectMidiOut(_midiOutName, true);
+      });
       if (!_midiOuts) { log('MIDI output: access refused', 'err'); return false; }
       selectMidiOut(loadPref('midiOut', ''), true);
       renderMidiOutMenu();
@@ -13282,11 +13289,12 @@
       savePref('midiOut', _midiOutName);
       const out = _midiOutName && _midiOuts?.list().find((o) => o.name === _midiOutName);
       const port = out ? _midiOuts.output(out.id) : null;
+      _midiOutPortId = out?.id ?? null;
       if (_midiOutRun) { _midiOutRun.stop(audioCtx?.currentTime ?? 0); }
       clearInterval(_midiOutTimer);
       _midiOutTimer = 0;
       _midiOutRun = null;
-      _midiOutIr = null;
+      _midiOutAsked = new WeakSet();
       if (port) {
         _midiOutRun = new MidiOutRun({
           send: (bytes, ms) => { try { port.send(bytes, ms); } catch (e) { /* a port gone mid-run */ } },
@@ -13295,6 +13303,8 @@
           onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
         });
         _midiOutTimer = setInterval(midiOutTick, 25);
+        // The score as it stands, planned ahead of its Play.
+        if (_lastGoodIR) requestMidiPlan(_lastGoodIR);
         if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
       } else if (!quiet && was) log('MIDI output: off', 'info');
       renderMidiOutMenu();
@@ -13302,8 +13312,10 @@
     window.selectMidiOut = selectMidiOut;
 
     function midiOutTick() {
-      // The MMLispDRV backend's player has no IR clock to follow.
-      if (!_midiOutRun || !audioCtx || typeof player?.loadedIr !== 'function') return;
+      if (!_midiOutRun) return;
+      // No player (Stop drops it), or the MMLispDRV backend's, which has no
+      // IR clock to follow: the run sees a stop and lets everything go.
+      if (!audioCtx || typeof player?.loadedIr !== 'function') { _midiOutRun.pass(null, audioCtx?.currentTime ?? 0); return; }
       // Context time → the page's performance clock, where the audio is heard.
       const ts = audioCtx.getOutputTimestamp?.();
       if (ts?.performanceTime > 0) _perfAt = (t) => ts.performanceTime + (t - ts.contextTime) * 1000;
@@ -13311,20 +13323,23 @@
         const lead = audioCtx.outputLatency || audioCtx.baseLatency || 0, now = performance.now(), ct = audioCtx.currentTime;
         _perfAt = (t) => now + (t - ct + lead) * 1000;
       }
+      // An IR the player runs that no plan was asked for (a compile that did
+      // not come through applyCompile): ask now; the run waits for it.
       const ir = player.isPlaying() ? player.loadedIr() : null;
-      if (ir && ir !== _midiOutIr) requestMidiPlan(ir);
+      if (ir && !_midiOutAsked.has(ir)) requestMidiPlan(ir);
       _midiOutRun.pass(player, audioCtx.currentTime);
     }
 
-    // The plan of the score the player runs: its source, the sliders' values.
-    // A plan is for that IR only — its tracks, by name, the IR's.
+    // The plan of a compiled IR — asked as it is compiled (applyCompile), so
+    // it is there by its Play or its swap at the bar: its source, the sliders'
+    // values. A plan is for that IR only — its tracks, by name, the IR's.
     function requestMidiPlan(ir) {
-      _midiOutIr = ir;
+      if (!_midiOutRun) return;
+      _midiOutAsked.add(ir);
       const src = _irSource.get(ir) ?? _lastGoodSrc;
       if (src == null) return;
-      const ask = ++_midiOutAsk;
       compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
-        if (ask !== _midiOutAsk || !r?.plan || player?.loadedIr?.() !== ir) return;
+        if (!r?.plan) return;
         const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
         if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return;
         _midiOutRun?.setPlan(r.plan, ir);
@@ -13333,9 +13348,10 @@
 
     // A slider moved: the plan made again, the output going on from where it is.
     function midiOutReplan() {
-      if (!_midiOutRun || !_midiOutIr) return;
+      const ir = player?.loadedIr?.();
+      if (!_midiOutRun || !ir) return;
       clearTimeout(_midiOutReplanTimer);
-      _midiOutReplanTimer = setTimeout(() => { if (_midiOutIr) requestMidiPlan(_midiOutIr); }, 120);
+      _midiOutReplanTimer = setTimeout(() => requestMidiPlan(ir), 120);
     }
 
     function updateMidiChecks() {
