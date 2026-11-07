@@ -20,6 +20,13 @@ const WORKLET_URL = new URL("./gm-worklet.js", import.meta.url).href;
 const DRUM_CH = 9;
 
 /**
+ * The reverb's level when none is chosen (MMLisp > MIDI > GM Reverb, a
+ * render's): half the bank's own (the user's, 2026-11-07). Here, not in
+ * gm-synth.js, so the page does not load the synthesizer to read it.
+ */
+export const GM_REVERB_DEFAULT = 0.5;
+
+/**
  * The voices a plan plays: each bank and program a channel strikes a key under
  * (CC0 / CC32 and the program change before it, channel 10 a kit), with the
  * range of its keys — what the synthesizer decodes ahead.
@@ -58,7 +65,7 @@ const added = new WeakMap();
  * resolves when the bank is loaded and the output can take a run.
  */
 export class GmOutput {
-  constructor({ loadBank, reverb = 1, onLate = null }) {
+  constructor({ loadBank, reverb = GM_REVERB_DEFAULT, onLate = null }) {
     this.loadBank = loadBank;
     this.reverbGain = reverb;
     this.onLate = onLate; // ({ count, worst, budget }): the audio thread ran late

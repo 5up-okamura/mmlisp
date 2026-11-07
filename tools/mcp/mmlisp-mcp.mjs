@@ -600,7 +600,7 @@ const TOOLS = [
         lpf: { type: "boolean", description: "Apply the Mega Drive analog low-pass (default off)." },
         rhythmRom: { type: "string", description: "pc88: the path of the user's YM2608 rhythm ROM (8 KB); without it the score's kit stands in, and a role with no :file is silent." },
         soundFont: { type: "string", description: "midi: the path of an .sf2 / .sf3 to render on; without it the bundled FluidR3Mono GM (live/soundfonts/)." },
-        reverb: { type: "number", description: "midi: the SoundFont's reverb level, 0 (none) to 1 (the default); a channel's send is its :cc91." },
+        reverb: { type: "number", description: "midi: the SoundFont's reverb level, 0 (none) to 1 (the bank's own); 0.5 by default, as Live's; a channel's send is its :cc91." },
       },
     },
     async run(args) {
@@ -638,7 +638,7 @@ const TOOLS = [
         const b = fs.readFileSync(path.resolve(ROOT, args.soundFont ?? "live/soundfonts/FluidR3Mono_GM.sf3"));
         gmBank = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
       }
-      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom, gmBank, gmReverb: args.reverb ?? 1 });
+      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom, gmBank, gmReverb: args.reverb });
       const out = args.out
         ? path.resolve(ROOT, args.out)
         : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");

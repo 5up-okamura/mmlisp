@@ -25,7 +25,9 @@ export class GmSynth {
     this.synth = null;
     this.bank = null;
     this.queue = []; // [bytes, time], in time order (a tie keeps its order)
-    this.reverb = 1; // the reverb's level, 0–1: each channel's send is its CC91
+    // The reverb's level, 0–1 (each channel's send is its CC91): the bank's
+    // own until the caller says (gm-output.js GM_REVERB_DEFAULT).
+    this.reverb = 1;
   }
 
   /** The reverb's level, 0 (none) to 1 (the bank's, as a channel's CC91 sends to it). */

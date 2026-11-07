@@ -271,7 +271,7 @@ export function encodeWav(L, R, sampleRate) {
  *        pc88 score's ADPCM-B image (chips/adpcm-b.js bakeAdpcmB);
  *        `rhythmRom` the YM2608's (without it the rhythm is silent);
  *        `gmBank` the SoundFont a `:target midi` score renders on, `gmReverb`
- *        its reverb's level 0–1
+ *        its reverb's level 0–1 (unset, half)
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
@@ -296,7 +296,7 @@ export async function renderWavSamples(player, opts = {}) {
   if (player._target?.sound === false) {
     if (!opts.gmBank) throw new Error(noSound(player._target));
     const { renderGmSamples } = await import("./gm-render.js");
-    return renderGmSamples(player, { bank: opts.gmBank, reverb: opts.gmReverb ?? 1, sampleRate, fadeSec, onProgress: opts.onProgress ?? null });
+    return renderGmSamples(player, { bank: opts.gmBank, reverb: opts.gmReverb, sampleRate, fadeSec, onProgress: opts.onProgress ?? null });
   }
   const target = player._target;
   const synth = await synthFor(target?.name).create(sampleRate);

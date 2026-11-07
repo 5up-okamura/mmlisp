@@ -83,7 +83,8 @@ The names themselves are guide.md §25; the reasons:
   MIDI_DEFAULT_TARGET). The Channels meters on midi show its notes (each
   note's :vel under the faders, a peak at its start) — not a level heard,
   which the user accepted as a meter that need not be a VU.
-- **GM Reverb** (MMLisp > MIDI, Off / Half / Full: spessasynth's reverbGain)
+- **GM Reverb** (MMLisp > MIDI, Off / Half / Full: spessasynth's reverbGain;
+  Half by default, the user's ruling 2026-11-07: Full was too wet)
   is the user's setting, on the GM output's playing and its renders; a
   channel's send is its `:cc91` (unwritten, the bank's own per-instrument
   send). Crackles were reported on the GM output (2026-11-07), not

@@ -13,7 +13,7 @@
 
 import { midiPlan } from "./export-midi.js";
 import { MidiOutRun } from "./midi-output.js";
-import { planVoices } from "./gm-output.js";
+import { planVoices, GM_REVERB_DEFAULT } from "./gm-output.js";
 import { GmSynth } from "./gm-synth.js";
 
 const QUANTUM = 128;
@@ -55,7 +55,7 @@ export function planClock(plan) {
  * The stereo float buffers of `player`'s score on `bank` (a SoundFont's
  * bytes, kept for the render), as renderWavSamples returns them.
  */
-export async function renderGmSamples(player, { bank, reverb = 1, sampleRate = 48000, fadeSec = 4, onProgress = null } = {}) {
+export async function renderGmSamples(player, { bank, reverb = GM_REVERB_DEFAULT, sampleRate = 48000, fadeSec = 4, onProgress = null } = {}) {
   const ir = player.loadedIr?.() ?? player._ir;
   if (!ir) throw new Error("No IR loaded");
   const plan = midiPlan(ir);
