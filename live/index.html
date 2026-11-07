@@ -14444,9 +14444,9 @@
     let _vizRaf = null;
     let _vizColors = null;
     const VIZ_MIN_CELL_W = 360;   // min cell width (px); cols = floor(editorW / this), capped at 3
-    // …unless the cells come out flat (a phone's width, many channels): then
+    // …unless the cells come out flat, past 3:1 (a phone's width): then
     // more columns, down to VIZ_NARROW_CELL_W, until a cell is about 2:1.
-    const VIZ_FLAT_ASPECT = 4, VIZ_AIM_ASPECT = 2, VIZ_NARROW_CELL_W = 160;
+    const VIZ_FLAT_ASPECT = 3, VIZ_AIM_ASPECT = 2, VIZ_NARROW_CELL_W = 160;
 
     function vizPpqn() {
       return (player?._ir ?? _lastGoodIR)?.ppqn || 96;
@@ -15271,11 +15271,44 @@
     function scopeChannelOf(head) {
       const entry = _chStripModel.find((e) => e.head === head);
       if (entry?.scope != null) return entry.scope;
+      const target = targetProfile(_lastGoodIR?.metadata?.target);
+      // A lane the channel table names is the synth's (the MIDI drums' channel 10).
+      if (target.channels[head]?.scope != null) return target.channels[head].scope;
       // A chip's own sample voice (PCM8's, the ADPCM-B) is 'voice', its own lane.
       if ((entry ?? channelRouting(head)).volKind === 'pcm' && !_scopePcmVoices) return 5;
-      return targetProfile(_lastGoodIR?.metadata?.target).scopeLane(head);
+      return target.scopeLane(head);
     }
-    // One cell per strip channel, in the strips' order.
+    // One cell per lane, in the strips' order: channels on one lane (the
+    // MIDI drums' channel 10, the fm3 parts' FM3) show one wave, so they share
+    // a cell, named together (drum1–3).
+    function scopeCells() {
+      const cells = [], byLane = new Map();
+      for (const cl of _vizNotes) {
+        if (!cl.notes.length) continue;
+        const k = scopeChannelOf(cl.head);
+        const had = k != null ? byLane.get(k) : null;
+        if (had) { had.heads.push(cl.head); continue; }
+        const cell = { lane: k, heads: [cl.head] };
+        cells.push(cell);
+        if (k != null) byLane.set(k, cell);
+      }
+      for (const cell of cells) cell.label = headsLabel(cell.heads);
+      return cells;
+    }
+    // drum1 drum2 drum3 → drum1–3; heads with no common stem, side by side.
+    function headsLabel(heads) {
+      if (heads.length === 1) return heads[0];
+      const parts = heads.map((h) => /^(.*?)(\d+)$/.exec(h));
+      const stem = parts[0]?.[1];
+      if (!parts.every((m) => m && m[1] === stem)) return heads.join(' ');
+      const ns = parts.map((m) => Number(m[2])).sort((x, y) => x - y);
+      const runs = [];
+      for (const n of ns) {
+        const r = runs.at(-1);
+        if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]);
+      }
+      return stem + runs.map(([a, b]) => (a === b ? a : b === a + 1 ? `${a},${b}` : `${a}–${b}`)).join(',');
+    }
     function drawScope() {
       const c = document.getElementById('vizCanvas');
       const wrap = document.getElementById('editorWrap');
@@ -15295,7 +15328,7 @@
       const ctx = c.getContext('2d');
       ctx.clearRect(0, 0, W, H);
       if (!_scopeRings) return;
-      const cells = _vizNotes.filter((cl) => cl.notes.length);
+      const cells = scopeCells();
       if (!cells.length) return;
       const C = cells.length;
       let cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
@@ -15307,7 +15340,7 @@
       const latest = _scopeAbs;
       for (let p = 0; p < C; p++) {
         const cell = cells[p];
-        const k = scopeChannelOf(cell.head);
+        const k = cell.lane;
         const x0 = (p % cols) * cellW, y0 = Math.floor(p / cols) * cellH;
         const midY = y0 + cellH / 2;
         const ring = k != null ? _scopeRings[k] : null;
@@ -15386,7 +15419,7 @@
         ctx.font = `600 ${_vizColors.label} ui-monospace, monospace`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(cell.head, x0 + cellW - 5, y0 + cellH - 4);
+        ctx.fillText(cell.label, x0 + cellW - 5, y0 + cellH - 4);
         ctx.restore();
       }
     }

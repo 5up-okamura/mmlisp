@@ -1223,7 +1223,8 @@ for a few seconds.
 **Source** (the text and its line numbers), **Piano Roll** (a pane under the
 editor; drag the line between them to size it) and **Oscilloscope** (each
 channel's waveform behind the text; a PCM track shows its own voice, not the
-DAC's mix — under MMLispDRV, which streams the DAC itself, their sum). With
+DAC's mix — under MMLispDRV, which streams the DAC itself, their sum;
+channels that sound as one, the fm3 parts or the MIDI drums, share a pane). With
 Source off the oscilloscope fills the editor's place; with both off the piano
 roll takes the whole column — a view for listening, or for a phone. While a
 phone's or tablet's on-screen keyboard is up, the piano roll steps aside and
@@ -1470,7 +1471,8 @@ plays and in its WAV; a channel's own send is its `:cc91`. A `:target midi`
 score's Channels meters show its notes — each note's `:vel` under the
 faders, peaking as it starts — since the sound is not the page's chips'; on
 the GM output, the oscilloscope shows each MIDI channel's own sound (dry,
-before the reverb), the drums' channel 10 under every drum track.
+before the reverb), the drums' channel 10 as one pane for every drum track
+(`drum1–3`).
 `Choose Output…` asks the browser once,
 then lists the MIDI ports; `Off` stops. What goes out is what
 **File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its
