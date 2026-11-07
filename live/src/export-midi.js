@@ -32,6 +32,7 @@
 //                          is the gm voice it stands for (NAMED_VOICES)
 //   a kit role's sample    channel 10, at the role's GM note (import-sf2.js);
 //                          the track's faders go into the velocity there
+//                          (its CC7 127, the melodic channels' full level)
 //
 // The values a score's def-vals hold are their inits and what the score
 // writes to them: nothing plays the file to move them. A def-se's parts are
@@ -536,6 +537,10 @@ function trackEvents(events, ctx, chan, drums, notes) {
   // the fader's place until the next note (ir-player _fmLiveVolAt) — and
   // CC10 the pan or the note's pan macro.
   let cc7 = null, cc10 = null, cc11 = 127, bendNow = 8192, program = null;
+  // Channel 10's CC7 at the melodic channels' full level (127): the faders
+  // are in the drums' velocity, and GM's 100 would leave them 4 dB under.
+  // One drum track writes it; the channel is theirs together.
+  if (drums && ctx.drumLead) ctrl(0, 7, 127);
   const head = { on: 0, limit: list[0]?.on ?? ctx.endTick, head: true };
   const windows = head.limit > 0 ? [head, ...list] : list;
   for (const n of windows) {
@@ -811,11 +816,12 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
   }
 
   const tracksOut = [];
+  const firstDrums = assigned.find((t) => t.drums && t.port === 0);
   for (const t of assigned) {
     const track = songTracks[t.i];
     const name = track.scoreChannel ?? track.channel ?? `track ${t.i + 1}`;
     const evNotes = [];
-    const local = { ...ctx, midiTarget, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, odd: new Set(), note: (s) => note(`${name}: ${s}`) };
+    const local = { ...ctx, midiTarget, drumLead: t === firstDrums, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, odd: new Set(), note: (s) => note(`${name}: ${s}`) };
     const events = trackEvents(t.events, local, t.channel, t.drums, evNotes);
     if (local.odd.size) {
       const odd = [...local.odd].sort().join(", ");

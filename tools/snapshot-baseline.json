@@ -2050,7 +2050,7 @@
   "ir": "280f174a84e63f8b",
   "regs": "67888c5586424a74",
   "vgm": "17f2e3a58aa198f0",
-  "mid": "7138162e87a3df26"
+  "mid": "1ad8a91edceee566"
  },
  "tools/tests/fc/fds.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
@@ -2120,7 +2120,7 @@
  "tools/tests/midi/drums.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "51adb80f91a14524",
-  "mid": "7222e0f122eaee90"
+  "mid": "1471b9dce0cb1431"
  },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
@@ -2141,14 +2141,14 @@
   "ir": "c7d892d2aca943e6",
   "regs": "793b4cbb8ec9562f",
   "vgm": "1db7426aae373b69",
-  "mid": "60a55772899cf64e"
+  "mid": "e5b1090db34f61c7"
  },
  "tools/tests/msx/fm-pac-rhythm.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "fbdedacabedb4132",
   "regs": "47f4a2e4ebfc60a8",
   "vgm": "009485f1f1300b2c",
-  "mid": "35864b89cfeed852"
+  "mid": "2f47b31d658cc574"
  },
  "tools/tests/msx/fm-pac.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
@@ -2204,7 +2204,7 @@
   "ir": "70bef0fe436c5599",
   "regs": "179af8adea1728c1",
   "vgm": "b72508d03f0d285f",
-  "mid": "027cbb0789dbf404"
+  "mid": "2c024f3b99ad1ad8"
  },
  "tools/tests/pc88/ssg-macro.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
