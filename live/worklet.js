@@ -554,8 +554,12 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   // One tap array per lane of the playing synth (its scopeLanes; the Mega
   // Drive's SCOPE_CHANNELS).
+  // A synth with none (the MIDI target's) taps nothing: no scratch, no batch.
+  // (An empty scratch read its first lane's length, threw on every block
+  // after the first, and the block was never rendered.)
   _scopeScratchFor(blockSize) {
     const lanes = this._synth?.scopeLanes ?? SCOPE_CHANNELS;
+    if (!lanes) return null;
     if (!this._scopeScratch || this._scopeScratch.length !== lanes || this._scopeScratch[0].length !== blockSize) {
       this._scopeScratch = Array.from({ length: lanes }, () => new Float32Array(blockSize));
     }

@@ -95,9 +95,12 @@ The names themselves are guide.md §25; the reasons:
   audio thread under the first Play: Play now waits for both (gmReadyFor),
   and choosing GM from the menu loads it in that tap. Open until heard.
   The low noise the user heard on midi with no output (an iPhone, Chrome's
-  home-screen app, i.e. WebKit) is taken for the <audio> stream fed exact
-  zeros (the chips' floor is never zero: md's DAC rests at DC 0.023):
-  synth-midi.js renders a floor of 1/8192. Open until heard.
+  home-screen app, i.e. WebKit): the worklet's scope scratch, for a synth
+  of no lanes (synth-midi.js), threw on every block after the first, so no
+  block was rendered (worklet.js _scopeScratchFor; fixed). A floor under
+  midi's silence (the chips' never sit at zero: md's DAC rests at DC
+  0.023) was tried and taken out again with the fix in, to tell which one
+  the iPhone needs. Open until heard.
 - **A SoundFont as its sound** (the user's go, 2026-11-07). Built: the GM
   output (gm-output.js, gm-worklet.js; MMLisp > MIDI > Output, any browser),
   spessasynth_core in an AudioWorklet of its own fed MidiOutRun's bytes at
