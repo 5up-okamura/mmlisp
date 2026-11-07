@@ -6,7 +6,9 @@
 // monophonic — and this writes it out the one way: one form per channel,
 // one bar a line, `|` at each bar's end, a note crossing a bar split with a
 // tie, `:oct` / `>` `<` for the octave, the track's most common length as
-// its `:len`, and the song loop as `#top … (go top)`.
+// its `:len` — a run of four or more of another under a `:len` of its own
+// (`:len 16 c d e f`), a def named at the track's — and the song loop as
+// `#top … (go top)`.
 //
 // A tracker's patterns can come in as phrases: `track.phrases` is a list of
 // {name, notes, len} laid out in order, each written once as a `(def …)` and
@@ -139,8 +141,10 @@ export function barEnds(timeSigs, endTick) {
  *                force at it, restated at the loop point; `tieIn` ties the
  *                note on from whatever the previous phrase left sounding.
  * @param opts   {bars: number[], endTick, loopTick, marks: [{tick, tokens}],
- *                defLen, oct, vel}
- * @returns {string[]} lines, one per bar
+ *                defLen, len (the `:len` in force coming in, defLen if
+ *                unset), oct, vel}
+ * @returns {{lines: string[], len}} lines, one per bar, and the `:len` in
+ *                force at the end
  */
 function writeBody(notes, opts) {
   const { bars = [], endTick, loopTick = null, marks = [], defLen } = opts;
@@ -184,7 +188,9 @@ function writeBody(notes, opts) {
     if (d === -1) return `< ${name}`;
     return `o${d > 0 ? "+" : ""}${d} ${name}`;
   };
-  const len = (d) => (d === defLen ? "" : lenToken(d));
+  // A piece — a note, a tie's piece, a rest — is written with its length
+  // once the body is laid out (setLens), against the `:len` then in force.
+  const len = (d) => ({ d });
 
   while (t < endTick) {
     while (bi < sortedBounds.length && sortedBounds[bi] <= t) bi++;
@@ -202,7 +208,7 @@ function writeBody(notes, opts) {
     if (tie || (cont && loopTick === t)) {
       // Tied on, or re-attacked at the loop point.
       const end = Math.min(held.tick + held.len, b);
-      line.push(pitch(held.midi) + len(end - t));
+      line.push({ p: pitch(held.midi), ...len(end - t) });
       t = end;
       lastEnd = end;
     } else if (i < notes.length && notes[i].tick <= t) {
@@ -219,27 +225,53 @@ function writeBody(notes, opts) {
       if (end <= start) continue;
       // Tied (or slurred) on from the note before, or from the phrase before.
       if (n.tieIn && (start === 0 || lastEnd === start)) line.push("~");
-      line.push(pitch(n.midi) + len(end - start));
+      line.push({ p: pitch(n.midi), ...len(end - start) });
       t = end;
       lastEnd = end;
     } else {
       held = null;
       const end = Math.min(i < notes.length ? notes[i].tick : endTick, b);
-      line.push("_" + len(end - t));
+      line.push({ p: "_", ...len(end - t) });
       t = end;
     }
     if (t === b && barSet.has(b)) {
       line.push("|");
-      lines.push(line.join(" "));
+      lines.push(line);
       line = [];
     } else if (opts.lineEvery && t >= nextLine) {
-      lines.push(line.join(" "));
+      lines.push(line);
       line = [];
       nextLine = (Math.floor(t / opts.lineEvery) + 1) * opts.lineEvery;
     }
   }
-  if (line.length) lines.push(line.join(" "));
-  return lines;
+  if (line.length) lines.push(line);
+  const end = setLens(lines, opts.len ?? defLen);
+  return { lines: lines.map((l) => l.join(" ")), len: end };
+}
+
+// A run of this many pieces of one length is written under a `:len` of its
+// own (`:len 16 c d e f`), not each with the length (`c16 d16 e16 f16`).
+const LEN_RUN = 4;
+const plainLen = (tok) => /^\d+\.?$/.test(tok);
+
+// Each piece of `lines` written out, in place: bare at the `:len` in force,
+// a run of another length under a `:len` of its own, the rest with theirs.
+// Returns the `:len` in force at the end.
+function setLens(lines, cur) {
+  const pieces = lines.flatMap((l, li) => l.map((x, xi) => (typeof x === "object" ? { li, xi, d: x.d } : null))).filter(Boolean);
+  for (let k = 0; k < pieces.length; k++) {
+    const { li, xi, d } = pieces[k];
+    const { p } = lines[li][xi];
+    let tok = "";
+    if (d !== cur) {
+      let run = 1;
+      while (k + run < pieces.length && pieces[k + run].d === d) run++;
+      if (run >= LEN_RUN && plainLen(lenToken(d))) { cur = d; lines[li][xi] = `:len ${lenToken(d)} ${p}`; continue; }
+      tok = lenToken(d);
+    }
+    lines[li][xi] = p + tok;
+  }
+  return cur;
 }
 
 /** The most common piece length a body will write (the `:len` to set). */
@@ -301,7 +333,7 @@ export function emitSong(song) {
     const oct = first ? octOf(first.midi) : 4;
     const defLen = commonLen(notes, bars, endTick);
     const vel = notes.find((n) => n.vel != null)?.vel ?? 15;
-    const body = writeBody(notes, {
+    const { lines: body } = writeBody(notes, {
       bars, endTick, loopTick, lineEvery: song.lineEvery,
       marks: tr.marks ?? [], defLen, oct, vel, pre: tr.head, noTie: shots(tr.channel), noVel: tr.noVel,
     });
@@ -342,9 +374,11 @@ export function emitPhrased(song) {
     const order = [];
     for (const sg of tr.segments) {
       const { pre, vel, oct } = sg.state;
-      const body = writeBody(sg.notes, {
+      const { lines: body, len } = writeBody(sg.notes, {
         bars: sg.bars, endTick: sg.len, marks: sg.marks ?? [], defLen, oct, vel, pre, noVel: tr.noVel,
       });
+      // A phrase is named in sequence: it leaves the track's `:len` as it found it.
+      if (len !== defLen) body[body.length - 1] += ` :len ${lenToken(defLen)}`;
       const head = [...pre, `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${vel}`])].join(" ");
       const text = [head, ...body].join("\n  ");
       let name = byText.get(text);
@@ -927,10 +961,10 @@ export function emitStructured(song) {
         running = p.st;
         return { tick: p.tick, len: p.len, midi: p.midi, vel: p.vel, tieIn: p.tieIn, pre };
       });
-      const lines = writeBody(notes, { bars: [u.len], endTick: u.len, marks: u.marks, defLen, oct: st.oct, vel: st.vel, pre: st.st, noVel: tr.noVel });
+      const { lines, len } = writeBody(notes, { bars: [u.len], endTick: u.len, marks: u.marks, defLen, len: st.len, oct: st.oct, vel: st.vel, pre: st.st, noVel: tr.noVel });
       const lastP = u.pieces[u.pieces.length - 1];
       const next = lastP ? { oct: octOf(lastP.midi), vel: lastP.vel, st: lastP.st } : st;
-      return { lines, st: next };
+      return { lines, st: { ...next, len } };
     };
     // The first note anywhere in a run (a block may open on a rest bar).
     // A def plays wherever it is named, so its head states everything. A
@@ -950,7 +984,7 @@ export function emitStructured(song) {
       if (whole) {
         // At the track's start there is no macro to clear.
         const sw = start ? held.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : held;
-        return { tokens: [...said(sw), `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held } };
+        return { tokens: [...said(sw), `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held, len: st.len } };
       }
       const sw = st.st.length ? stateChange(st.st, held) : held;
       const back = around ? stateChange(around.st, held).filter((t) => !baked(t)) : [];
@@ -971,6 +1005,10 @@ export function emitStructured(song) {
         // A block's head restates the first note it plays, whatever comes
         // first — a rest-only loop or a def tells the next note nothing.
         if (atHead && idx === 0) ({ tokens: prefix, st } = head(whole, st, around, full, start));
+        // A def is named at the track's `:len` (it is written from there,
+        // and leaves it so): a run under another is closed first.
+        const toDef = it.k === "d" || (it.k !== "u" && byRun.has(it.block.map((b) => b.key).join(",")));
+        if (toDef && st.len !== defLen) { prefix.push(`:len ${lenToken(defLen)}`); st = { ...st, len: defLen }; }
         let got;
         if (it.k === "u") got = writeUnit(it, st);
         else if (it.k === "d") got = { lines: [it.def.name], st: defEnd.get(it.def.name) ?? st };
@@ -1022,13 +1060,14 @@ export function emitStructured(song) {
 
     // Defs first (each written from its own head), in order of creation —
     // a later def may name an earlier one.
-    const zero = { oct: 4, vel: 15, st: [] };
+    const zero = { oct: 4, vel: 15, st: [], len: defLen };
     const defTexts = [];
     for (const d of defs) {
       // A block that is exactly this def's run is written as the def; the
       // def's own items must not name it.
       byRun.delete(d.runKey);
       const w = writeItems(d.items, zero, true, d.items, null, true);
+      if (w.st.len !== defLen) { w.lines[w.lines.length - 1] += ` :len ${lenToken(defLen)}`; w.st = { ...w.st, len: defLen }; }
       byRun.set(d.runKey, d);
       // A def of rests leaves the state as it found it (it is played in place).
       if (lastPiece(d.items)) defEnd.set(d.name, w.st);
