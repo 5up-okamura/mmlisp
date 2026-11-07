@@ -2504,8 +2504,11 @@ at a time, as on every machine: a chord is several channels.
 - **A controller** is `:cc0`–`:cc127`, a value 0–127: written, swept, or
   stepped by a note's macro, which holds until the next note (as `:pan`'s
   does). `:pressure 0–127` is the channel's pressure (aftertouch), the same
-  way. `:vol` (with `:master`) is CC7 and `:pan` CC10, as the export writes
-  every machine's.
+  way. A controller a word writes is that word's, and its `:ccN` an error
+  that names it: `:vol` (with `:master`) is CC7 and `:pan` CC10, as the
+  export writes every machine's; `:bank` CC0 / CC32; `:bend-range` RPN 0
+  (CC101 / CC100, CC6 / CC38); a `:vel` macro CC11. The channel mode
+  messages, `:cc120`–`:cc127`, are written as any controller is.
 - **The bend's reach** is `:bend-range 1–24` semitones (RPN 0), sticky;
   unwritten, the least of 2, 12 and 24 the track's `:pitch`, glides and
   `:semi` macros need.

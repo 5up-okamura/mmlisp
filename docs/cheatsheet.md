@@ -330,7 +330,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   each its GM key). `:prog 0–127` and `:bank 0–16383` the instrument (a
   voice named for one writes it: `gm-piano`, `flute` …, built in);
   `:cc0`–`:cc127` and `:pressure` 0–127 — written, swept, or a note's macro;
-  `:bend-range 1–24`; `:vol` / `:pan` are CC7 / CC10. A patch is a `def`:
+  `:bend-range 1–24`. A CC a word writes is the word's (`:cc7` is an error:
+  `:vol` is CC7, `:pan` CC10, `:bank` CC0/32, `:bend-range` CC6/38/100/101,
+  a `:vel` macro CC11). A patch is a `def`:
   `(def lead :prog 81 :cc74 40)`. No sound of its own: File ▸ Export ▸
   MIDI… writes it, MMLisp ▸ MIDI ▸ Output plays it; no WAV or VGM.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.

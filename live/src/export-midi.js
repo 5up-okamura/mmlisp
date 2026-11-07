@@ -122,7 +122,7 @@ const PARAM_CMDS = new Set(["PARAM_SET", "PARAM_ADD", "PARAM_MUL", "PARAM_FROM_V
 
 // ── Levels ─────────────────────────────────────────────────────────────
 const velDb = (v) => (Math.max(0, Math.min(15, v)) - 15) * VEL_DB_PER_STEP;
-const faderDb = (v) => (v <= 0 ? -Infinity : (Math.min(VOL_UNITY, v) - VOL_UNITY) * VOL_STEP_DB);
+export const faderDb = (v) => (v <= 0 ? -Infinity : (Math.min(VOL_UNITY, v) - VOL_UNITY) * VOL_STEP_DB);
 // dB → a 7-bit level, as GM reads one: gain ∝ (value / 127)².
 const level7 = (db) => (db === -Infinity ? 0 : Math.max(0, Math.min(127, Math.round(127 * 10 ** (db / 40)))));
 const pan7 = (p) => Math.max(0, Math.min(127, Math.round(p < 0 ? 64 + p * 64 : 64 + p * 63)));

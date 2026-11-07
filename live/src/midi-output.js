@@ -18,6 +18,9 @@
 //                            the bar, its controllers as they stand
 //   mute / solo              a track that does not sound sends no key; one
 //                            muted mid-note lets it go at once
+//   the mixer's faders       a key's velocity, as the strip's fader and the
+//                            master's dB read on GM's curve (the score's CC7
+//                            stays the score's); a fader at 0 is a mute
 //   stop                     every key let go, All Notes Off on each channel
 //
 // A track past fifteen melodic channels is the file's second port: one
@@ -29,7 +32,7 @@
 // (tools: check:midi-out).
 // ---------------------------------------------------------------------------
 
-import { RPN_BEND, midiPlan } from "./export-midi.js";
+import { RPN_BEND, midiPlan, faderDb } from "./export-midi.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 
 export const midiOutSupported = typeof navigator !== "undefined"
@@ -92,12 +95,15 @@ export class MidiOutRun {
    * @param {{ send: (bytes: number[], timestampMs: number) => void,
    *           perfAt?: (audioTime: number) => number,
    *           clear?: () => void,
-   *           onSkip?: (what: string) => void }} io
+   *           onSkip?: (what: string) => void,
+   *           fadersOf?: (trackIndex: number) => number[] }} io
    *        `clear` drops what was sent ahead and not yet played (MIDIOutput
-   *        clear(), where the browser has it)
+   *        clear(), where the browser has it); `fadersOf` the mixer's faders
+   *        (0–31) over a track, its strip's and the master
    */
-  constructor({ send, perfAt = (t) => t * 1000, clear = null, onSkip = null }) {
+  constructor({ send, perfAt = (t) => t * 1000, clear = null, onSkip = null, fadersOf = null }) {
     this.send = send;
+    this.fadersOf = fadersOf;
     this.perfAt = perfAt;
     this.clear = clear;
     this.onSkip = onSkip;
@@ -193,7 +199,10 @@ export class MidiOutRun {
       // A track stopped at a `:len 0` note waits: its clock picks up from
       // there at the key-off (IRPlayer _resumeHeldTrack).
       if (held.has(t.trackIndex)) continue;
-      const audible = player.isTrackAudible(t.trackIndex);
+      // The faders' dB, a key's velocity scaled on GM's curve (export-midi
+      // level7); a fader at 0 is a mute.
+      const db = (this.fadersOf?.(t.trackIndex) ?? []).reduce((s, f) => s + faderDb(f), 0);
+      const audible = player.isTrackAudible(t.trackIndex) && db > -Infinity;
       if (st.audible && !audible) this.letGo(st, now); // muted mid-note
       st.audible = audible;
       const c0 = player.trackTickAt(t.trackIndex, now), c1 = player.trackTickAt(t.trackIndex, horizon);
@@ -203,12 +212,14 @@ export class MidiOutRun {
       if (st.sent >= to) continue;
       this.window(t, st.sent, to, (e, raw) => {
         const at = Math.max(now, now + (raw - c0.raw) * spt);
-        if (isOn(e.bytes)) {
+        let bytes = e.bytes;
+        if (isOn(bytes)) {
           if (!audible) return;
-          st.active.set(keyOf(e.bytes), { bytes: e.bytes, at });
+          if (db < 0) bytes = [bytes[0], bytes[1], Math.max(1, Math.round(bytes[2] * 10 ** (db / 40)))];
+          st.active.set(keyOf(bytes), { bytes, at });
         } else if (isOff(e.bytes)) st.active.delete(keyOf(e.bytes));
         this.lastAt = Math.max(this.lastAt, at);
-        this.send(e.bytes, this.perfAt(at));
+        this.send(bytes, this.perfAt(at));
       });
       st.sent = to;
     }

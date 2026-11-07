@@ -268,6 +268,12 @@ const exported = (src) => {
   // The drums share channel 10's one CC10: a drum track's :pan is refused.
   const pan = compileMMLisp("(def-score :target midi)\n(drum1 :pan -1 kick c)", "pan.mmlisp").diagnostics;
   assert.ok(pan.some((x) => x.severity === "error" && /:pan .*drum1/.test(x.message)), "no :pan on the drums");
+  // A controller a word writes is the word's: :cc7 names :vol; the mode
+  // messages are any controller's.
+  const cc = (src) => compileMMLisp(`(def-score :target midi)\n${src}`, "cc.mmlisp").diagnostics.filter((x) => x.severity === "error").map((x) => x.message);
+  assert.deepEqual(cc("(ch1 :cc7 3 c)"), [":cc7 is :vol's: CC7 is written by it (language.md §19)"]);
+  assert.ok(/:cc11 is a :vel macro's/.test(cc("(ch1 (macro :cc11 [1 2]) c)")[0]), "a macro's :cc11 too");
+  assert.deepEqual(cc("(ch1 :cc74 3 :cc123 0 c)"), [], ":cc74 and a mode message are written");
 }
 
 // ── The import reads it back ──────────────────────────────────────────────

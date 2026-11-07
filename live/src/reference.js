@@ -236,7 +236,7 @@ export const REFERENCE = [
   {
     name: ':cc74', prefixes: [':cc'], aliases: ['cc', 'control change', 'controller'], cat: 'track', section: '§19', tracks: MIDI,
     syntax: ':ccN 0–127  ·  (macro :ccN […])  ·  :ccN (curve …)',
-    summary: 'midi: controller N (0–127) of the channel, a value 0–127 — a write, a sweep, or a note\'s macro, which holds until the next note. :cc1 is the modulation wheel, :cc64 the sustain pedal, :cc74 the brightness; :vol and :pan are CC7 and CC10 already.',
+    summary: 'midi: controller N (0–127) of the channel, a value 0–127 — a write, a sweep, or a note\'s macro, which holds until the next note. :cc1 is the modulation wheel, :cc64 the sustain pedal, :cc74 the brightness. A controller a word writes is that word\'s, and its :ccN an error: :vol is CC7, :pan CC10, :bank CC0 and CC32, :bend-range CC6, CC38, CC100 and CC101, a :vel macro CC11.',
     insert: ':cc74 64',
     example: '(def-score :target midi)\n(ch1 gm-lead-saw :len 8 (macro :cc74 (sin 30..100 :len 2)) c d e f)',
   },

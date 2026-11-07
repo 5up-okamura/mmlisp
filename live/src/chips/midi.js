@@ -8,8 +8,17 @@ import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "../export-mi
 
 // A channel's controllers, CC0–CC127 (`:cc74`), each a value 0–127 a write,
 // a macro or a sweep moves; its channel pressure; its program and bank, and
-// its pitch bend's range, which a channel sets.
+// its pitch bend's range, which a channel sets. A controller a word of the
+// language writes is that word's (export-midi.js writes it): `:cc7` is
+// refused for `:vol`, so the two never fight over CC7.
+export const NAMED_CC = {
+  0: ":bank", 32: ":bank", // its MSB and LSB
+  6: ":bend-range", 38: ":bend-range", 100: ":bend-range", 101: ":bend-range", // RPN 0
+  7: ":vol", 10: ":pan",
+  11: "a :vel macro", // within a note, below its velocity
+};
 const CC = /^CC(\d|[1-9]\d|1[01]\d|12[0-7])$/;
+const ownCC = (w) => CC.test(w) && !(Number(w.slice(2)) in NAMED_CC);
 
 export const midiChannel = {
   name: "midi",
@@ -17,7 +26,7 @@ export const midiChannel = {
   kind: "midi",
   // Velocity is the language's :vel, its 2 dB steps read as a GM level.
   level: { scale: "linear", steps: 128 },
-  words: words(CC, "PRESSURE", "PROG", "BANK", "BEND_RANGE", "PAN"),
+  words: words({ test: ownCC }, "PRESSURE", "PROG", "BANK", "BEND_RANGE", "PAN"),
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "a MIDI channel has no :mode; its sound is its :prog" },
   // A voice named for an instrument (gm-*, a role, a ROM voice's name) is a

@@ -133,6 +133,19 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
   const offs = sent.filter((m) => isOff(m.b) && (m.b[0] & 0x0f) === 0 && m.t >= 0.6 && m.t < 0.65);
   assert.ok(offs.length >= 1, "fm1 muted mid-note: its key let go at the mute");
 }
+{ // The mixer's faders: a key's velocity on GM's curve (−12 dB is half),
+  // the score's CC7 as it stands; a fader at 0 keys nothing.
+  const { ir, plan } = both(SONG);
+  const p = standIn(ir);
+  const sent = [];
+  const faders = [[25, 31], [0, 31]]; // fm1 −12 dB, fm2 off
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }), fadersOf: (ti) => faders[ti] });
+  run.setPlan(plan, ir);
+  drive(run, p, 0, 0.6);
+  const ons = sent.filter((m) => isOn(m.b));
+  assert.ok(ons.length && ons.every((m) => (m.b[0] & 0x0f) === 0 && m.b[2] === 64), `fm1 at half its velocity: ${ons.map((m) => m.b[2])}`);
+  assert.ok(sent.some((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7 && m.b[2] === 127), "the score's CC7 untouched");
+}
 { // Stop: every key, then All Notes Off on each channel.
   const { ir, plan } = both(SONG);
   const p = standIn(ir);

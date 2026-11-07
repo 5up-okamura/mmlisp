@@ -14,6 +14,7 @@ import { TARGETS, DEFAULT_TARGET as DEFAULT_TARGET_NAME, targetProfile, partsWit
 import { NOISE_MODE_MAP } from "./chips/sn76489.js";
 import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords, fmInitVoice } from "./chips/fm-words.js";
 import { opllRomVoices } from "./chips/ym2413.js";
+import { NAMED_CC } from "./chips/midi.js";
 import { parse } from "./mmlisp-parser.js";
 import {
   clampForTarget,
@@ -68,8 +69,9 @@ const SUPPORTED_TARGETS = new Set([
   "PAN",
   "NOISE_MODE",
   "DUTY",
-  // A MIDI channel's (chips/midi.js): its controllers and channel pressure.
-  ...Array.from({ length: 128 }, (_, n) => `CC${n}`),
+  // A MIDI channel's (chips/midi.js): its controllers and channel pressure;
+  // a controller a word writes is that word's (namedCc).
+  ...Array.from({ length: 128 }, (_, n) => `CC${n}`).filter((_, n) => !(n in NAMED_CC)),
   "PRESSURE",
   // The FM family's (chips/fm-words.js), the inline-only ones aside.
   ...FM_CHANNEL_WORDS.map((w) => w.word),
@@ -369,6 +371,14 @@ function trackLacks(irTarget, sym, trackState) {
   const here = all.filter((p) => target.parts.includes(p));
   const owners = [...new Set((here.length ? here : all).map((p) => p.label))];
   return `${sym} is the ${owners.join(" / ")}'s; ${head} (${part.label}) has no such thing`;
+}
+
+// A MIDI controller a word of the language writes (chips/midi.js NAMED_CC):
+// `:cc7` is `:vol`'s, said so.
+function namedCc(target) {
+  const n = /^CC(\d+)$/.exec(target ?? "")?.[1];
+  const word = n != null ? NAMED_CC[n] : null;
+  return word ? `:cc${n} is ${word}'s: CC${n} is written by it (language.md §19)` : null;
 }
 
 // PAN symbolic values → logical range -1/0/+1 (encodeB4 maps these to L/LR/R bits)
@@ -4688,7 +4698,7 @@ function compileChannelBody(
                   diagnostics,
                   "error",
                   "E_UNKNOWN_KEYWORD",
-                  `unknown inline keyword: ${val}`,
+                  namedCc(target) ?? `unknown inline keyword: ${val}`,
                   nodeSrc(node),
                   trackName,
                 );
@@ -5368,7 +5378,7 @@ function compileChannelBody(
                 // (E_UNKNOWN_KEYWORD) — never a macro that silently drops.
                 if (!MACRO_TARGETS.has(target)) {
                   pushDiag(diagnostics, "error", "E_MACRO_TARGET",
-                    `${groupSym} is not a macro target (language.md §10 lists them)`,
+                    namedCc(target) ?? `${groupSym} is not a macro target (language.md §10 lists them)`,
                     nodeSrc(rest[j]), trackName);
                   continue;
                 }

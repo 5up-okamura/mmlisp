@@ -68,6 +68,14 @@ The names themselves are guide.md §25; the reasons:
   A SoundFont preview is on the roadmap.
 - **`:vel` stays the language's 16 steps** (2 dB), read as a GM level; a
   finer velocity waits for a score that needs it.
+- **A CC a word writes is the word's** (the user, 2026-11-07: both would be
+  ideal, but not at the cost of reconciling them): `:cc7` is refused for
+  `:vol`, `:cc10` `:pan`, `:cc0`/`:cc32` `:bank`, `:cc6`/`38`/`100`/`101`
+  `:bend-range`, `:cc11` a `:vel` macro (chips/midi.js NAMED_CC). The mode
+  messages `:cc120`–`:cc127` are not restricted.
+- **The mixer's faders scale the MIDI output's velocities** (the user,
+  2026-11-07), on every target: the strip's and the master's dB on GM's
+  curve; the score's CC7 is left as written, and the score is not edited.
 - Open: the on-screen keyboard and a MIDI keyboard's preview notes go to the
   silent synth, not to the MIDI output.
 

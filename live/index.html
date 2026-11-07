@@ -13306,6 +13306,12 @@
           clear: typeof port.clear === 'function' ? () => port.clear() : null,
           perfAt: (t) => _perfAt(t),
           onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
+          // A key's velocity follows the mixer: the track's strip (not a
+          // ROM rhythm's sounds, which share their tracks) and the master.
+          fadersOf: (ti) => {
+            const entry = _chStripModel.find((e) => e.trackIndex === ti && !e.rhythmTracks);
+            return [entry ? _channelVol.get(entry.head) ?? 31 : 31, _masterVolUi];
+          },
         });
         _midiOutTimer = setInterval(midiOutTick, 25);
         // The score as it stands, planned ahead of its Play.
