@@ -1578,8 +1578,7 @@
     .lesson-row.current { background: color-mix(in srgb, var(--foreground) var(--sel), var(--background)); }
     /* A lesson's steps side by side, as many to a row as fit their names: the
        columns follow the panel's width and the type size, each at least as
-       wide as the longest unbroken run of the lesson's names (--lesson-col,
-       renderLessonList). */
+       wide as the lesson's longest name (--lesson-col, renderLessonList). */
     .lesson-group { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(8em, var(--lesson-col, 8em))), 1fr)); column-gap: 0.25rem; }
     .lesson-group-title { grid-column: 1 / -1; font-weight: bold; margin-bottom: 0.2rem; }
     .lesson-heading {
@@ -1602,10 +1601,8 @@
       padding: 0.25rem 0.4rem;
       border-radius: 3px;
       cursor: pointer;
-      /* A name wraps at its spaces only: Japanese breaks at none mid-word
-         (the column fits its longest run; anywhere only past the panel). */
-      word-break: keep-all;
-      overflow-wrap: anywhere;
+      /* A name is one line: the column fits it. */
+      white-space: nowrap;
     }
     @media (hover: hover) { .lesson-row:hover { background: color-mix(in srgb, var(--foreground) var(--hover), var(--background)); } }
     .lesson-row .lesson-mark { width: 1em; flex: none; }

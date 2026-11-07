@@ -11025,24 +11025,14 @@
         heading.textContent = l.group;
         return [heading, group];
       }));
-      // A group's columns fit the longest run of its names with no space in
-      // it (a Japanese name is one), so names wrap at their spaces only and
-      // none breaks mid-word, where a ー or a small kana could start a line.
-      // In em, so they follow the type size; drawn while the list is shown.
-      const range = document.createRange();
+      // A group's columns fit its longest name, so each name is one line
+      // (white-space: nowrap). In em, so they follow the type size; drawn
+      // while the list is shown.
       for (const group of list.querySelectorAll('.lesson-group')) {
         const col = Math.max(0, ...[...group.querySelectorAll('.lesson-row')].map((row) => {
-          const name = row.lastChild, text = name.firstChild;
-          if (!text) return 0;
-          const run = Math.max(0, ...[...text.textContent.matchAll(/\S+/g)].map((m) => {
-            range.setStart(text, m.index);
-            range.setEnd(text, m.index + m[0].length);
-            return [...range.getClientRects()].reduce((w, r) => w + r.width, 0);
-          }));
-          // The row's own: its padding, the mark and the gap before the name.
           const cs = getComputedStyle(row);
-          const chrome = name.getBoundingClientRect().left - row.getBoundingClientRect().left + parseFloat(cs.paddingRight);
-          return (run + chrome + 1) / parseFloat(cs.fontSize);
+          const width = row.lastChild.getBoundingClientRect().right - row.getBoundingClientRect().left + parseFloat(cs.paddingRight);
+          return (width + 1) / parseFloat(cs.fontSize);
         }));
         group.style.setProperty('--lesson-col', `${col.toFixed(2)}em`);
       }
