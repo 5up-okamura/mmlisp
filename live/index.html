@@ -711,8 +711,7 @@
           <div class="lib-chips" id="libKinds">
             <button class="lib-chip" data-kind="fm">FM</button>
             <button class="lib-chip" data-kind="pcm">PCM</button>
-            <button class="lib-chip" data-kind="wave">Wave</button>
-            <button class="lib-chip" data-kind="macro">Macro</button>
+            <button class="lib-chip" data-kind="wave macro" title="Waves (def-wave) and macros: what moves a channel's sound over time">Wave/Macro</button>
             <button class="lib-chip" id="libFits" title="Only what the track at the cursor can play; outside a track, what the score's machine can">Fits track</button>
             <button class="lib-chip" id="libOrder" title="One list, A to Z">A–Z</button>
           </div>
@@ -10069,9 +10068,10 @@
       fits.disabled = !fitsApply;
       fits.classList.toggle('active', fitsApply && _libFilter.fits);
       document.getElementById('libOrder').classList.toggle('active', _libFilter.order === 'az');
+      // A chip may stand for several kinds (Wave/Macro: "wave macro").
       _libList?.setFilter({
         source,
-        kinds: kindsApply ? new Set(_libFilter.kinds) : new Set(),
+        kinds: kindsApply ? new Set([..._libFilter.kinds].flatMap((k) => k.split(' '))) : new Set(),
         fits: fitsApply ? libFitsFn() : null,
         order: _libFilter.order,
       });
