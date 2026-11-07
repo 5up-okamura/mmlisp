@@ -94,6 +94,10 @@ The names themselves are guide.md §25; the reasons:
   output stream starving while the bank loaded and voices decoded on the
   audio thread under the first Play: Play now waits for both (gmReadyFor),
   and choosing GM from the menu loads it in that tap. Open until heard.
+  The low noise the user heard on midi with no output (an iPhone, Chrome's
+  home-screen app, i.e. WebKit) is taken for the <audio> stream fed exact
+  zeros (the chips' floor is never zero: md's DAC rests at DC 0.023):
+  synth-midi.js renders a floor of 1/8192. Open until heard.
 - **A SoundFont as its sound** (the user's go, 2026-11-07). Built: the GM
   output (gm-output.js, gm-worklet.js; MMLisp > MIDI > Output, any browser),
   spessasynth_core in an AudioWorklet of its own fed MidiOutRun's bytes at
