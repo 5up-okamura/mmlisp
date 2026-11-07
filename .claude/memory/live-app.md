@@ -29,7 +29,11 @@ lessons.
   (`ui-texts.js`). Menus, the log and diagnostics stay English; no runtime
   machine translation (offline, fixed glossary terms).
 - **Playback in the worklet** (2026-10-16): not now. iOS plays on behind
-  another app through an `<audio>` element. If ever needed: both players
+  another app while an `<audio>` element plays (since 2026-11-07 fed
+  silence: the synth to the context's own output, hidden or not — through
+  the element its pitch bent at a late quantum, and switching on hide/show
+  broke the sound off; that the direct output sounds in the background
+  awaits the user's iPhone). If ever needed: both players
   already run off a manual clock in `captureRegisterLog`, the page reaches
   the player at ~30 sites in index.html that would read a posted mirror, and
   the hazards are seek/hot-swap/GC stalls on the audio thread.

@@ -8849,14 +8849,14 @@
 
     // ── Sound behind another app (iOS) ─────────────────────────────────────
     // Safari on iPhone and iPad stops a hidden page's Web Audio unless a media
-    // element of the page is playing: there an <audio> fed from a
-    // MediaStreamAudioDestinationNode plays from the Play tap (before anything
-    // awaits), and the lock screen's controls reach the page through the Media
-    // Session. The synth goes through it only while the page is hidden: the
-    // element's stream is resampled at a varying rate to hold its buffer, so a
-    // late quantum is heard there as the pitch bending (the user's iPhone,
-    // 2026-11-07). In front, the synth plays to the context's own output and
-    // the element plays silence, keeping the session a playback one.
+    // element of the page is playing: an <audio> plays from the Play tap
+    // (before anything awaits), fed silence from a
+    // MediaStreamAudioDestinationNode, and the lock screen's controls reach
+    // the page through the Media Session. The synth itself plays to the
+    // context's own output, hidden or not: through the element its sound was
+    // resampled at a varying rate to hold the element's buffer — a late
+    // quantum heard as the pitch bending — and moving it there and back on
+    // each hide and show broke the sound off (the user's iPhone, 2026-11-07).
     let _bgAudio = null, _bgDest = null, _outBus = null;
     function synthOutput() {
       if (!isIOS()) return audioCtx.destination;
@@ -8866,34 +8866,27 @@
         _bgAudio.setAttribute('playsinline', '');
         _bgAudio.srcObject = _bgDest.stream;
         document.body.appendChild(_bgAudio);
+        // The synth's bus, to the output; to the element at no level, so its
+        // stream runs on the context's clock.
         _outBus = audioCtx.createGain();
-        routeSynthOutput();
-        document.addEventListener('visibilitychange', routeSynthOutput);
-        // Sound with the ring / silent switch on, as the element's was.
+        _outBus.connect(audioCtx.destination);
+        const hush = audioCtx.createGain();
+        hush.gain.value = 0;
+        _outBus.connect(hush).connect(_bgDest);
+        // Sound with the ring / silent switch on.
         try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
       }
       return _outBus;
     }
-    function routeSynthOutput() {
-      _outBus.disconnect();
-      if (document.hidden) { _outBus.connect(_bgDest); return; }
-      _outBus.connect(audioCtx.destination);
-      // What the element buffered while hidden would play on under the
-      // direct sound, heard doubled (the user's iPhone, 2026-11-07).
-      if (!_bgAudio.paused) restartBackgroundStream();
-    }
-    // The element's stream attached again: what it had buffered — the song's
-    // last moments before Stop, deeper after a spell in the background — is
-    // dropped, not played first.
-    function restartBackgroundStream() {
-      _bgAudio.srcObject = null;
-      _bgAudio.srcObject = _bgDest.stream;
-      _bgAudio.play().catch(() => {});
-    }
     function startBackgroundAudio() {
       if (!isIOS() || !audioCtx) return;
       synthOutput();
-      if (_bgAudio.paused) restartBackgroundStream();
+      if (!_bgAudio.paused) return;
+      // A paused element keeps the stream it had buffered and would play it
+      // first: attached again, it is dropped.
+      _bgAudio.srcObject = null;
+      _bgAudio.srcObject = _bgDest.stream;
+      _bgAudio.play().catch(() => {});
     }
     function stopBackgroundAudio() {
       _bgAudio?.pause();
