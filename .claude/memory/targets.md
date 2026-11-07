@@ -78,6 +78,34 @@ The names themselves are guide.md §25; the reasons:
   curve; the score's CC7 is left as written, and the score is not edited.
 - Open: the on-screen keyboard and a MIDI keyboard's preview notes go to the
   silent synth, not to the MIDI output.
+- **A SoundFont as its sound (planned, the user's go 2026-11-07).** The
+  engine: spessasynth_core (Apache-2.0; v4.4.9 tried), bundled to one ESM
+  file (~630–750 KB, ~200 KB gzip; its stb-vorbis WASM inside, async
+  compile, no DOM or fetch) and run in the worklet as synth-midi.js, fed
+  timed bytes by midi-output.js's MidiOutRun (its port the worklet's, not a
+  MIDI port), so tempo, loops, seek, mute and faders hold as they do; the
+  WAV / stems / MCP render drive the same MidiOutRun on the render's clock
+  (no register log). The bank: the user's own SF2/SF3 first (IndexedDB, as
+  the YM2608 rhythm ROM), FluidR3Mono_GM.sf3 (MIT, 23,614,353 bytes, under
+  Cloudflare's 25 MiB a file; Debian fluidr3mono-gm-soundfont 2.315) as the
+  bundled one, fetched on first use, never precached. Turned down: a built-in
+  GM synth as an output for the chip machines, an FM GM (libOPNMIDI's bank
+  on the YM2612), a first-party SF2 player (the import-sf2.js parser takes
+  drum kits only and has no voices, modulators, filter or SF3).
+- Measured (headless Chromium; an iPhone, iOS 18.7, Safari 26.6, 48 kHz):
+  bank parse 50–60 ms, ready 75–110 ms; the worklet module 140 ms /
+  918 ms on the iPhone; the sf3's fetch 4.2 s there (the network). Samples
+  decode on first use on the audio thread: a block's worst 39–61 ms against a
+  2.67–2.9 ms budget, 9–14 blocks over (heard as nothing on the iPhone, but
+  it is the risk). `preset.preload(lo, hi)` of the programs and keys a plan
+  plays, before Play: 141 ms (iPhone) – 173 ms, against 733 ms for every key.
+  Decoded memory: every program once +26 MiB, every sample +175 MiB (cap it
+  with `decodedSampleBudget`); the iPhone did not reload with every program
+  decoded. CPU: a five-part demo 2–9 % of real time, every program 11.6 %
+  (iPhone).
+- Open: decoding a program a hot-swap brings mid-play stalls the audio
+  thread (decode off it and `setAudioData` if it is heard); the budget's
+  figure; the oscilloscope stays empty on midi.
 
 ## The PC Engine (pce; built 2026-10-27)
 
