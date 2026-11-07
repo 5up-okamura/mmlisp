@@ -1466,7 +1466,7 @@ in every browser (an iPhone's too, which has no Web MIDI): **GM
 SoundFont…** keeps in the browser. Either plays a `:target midi` score in
 Live with nothing else connected, and its **File ▸ Export ▸ WAV…** and
 **Stems…** render on that SoundFont (FluidR3Mono unless yours is the output
-chosen). **GM Reverb** (Off, Half — the default — or Full) is that SoundFont's reverb as it
+chosen). **GM Reverb** (Off — the default —, Half or Full) is that SoundFont's reverb as it
 plays and in its WAV; a channel's own send is its `:cc91`. A `:target midi`
 score's Channels meters show its notes — each note's `:vel` under the
 faders, peaking as it starts — since the sound is not the page's chips'; on

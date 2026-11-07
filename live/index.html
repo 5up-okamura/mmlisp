@@ -13319,7 +13319,7 @@
     // MMLisp > MIDI > GM Reverb: the GM output's reverb level (each channel's
     // send is its CC91, `:cc91`), on its playing and its renders (pref 'gmReverb').
     const GM_REVERB = { off: 0, half: 0.5, full: 1 };
-    const gmReverb = () => GM_REVERB[loadPref('gmReverb', 'half')] ?? GM_REVERB.half;
+    const gmReverb = () => GM_REVERB[loadPref('gmReverb', 'off')] ?? GM_REVERB.off;
     let _gmLateSaid = -Infinity;
 
     async function openMidiOut() {
@@ -13359,7 +13359,7 @@
           'Play the preview on your SoundFont, kept in the browser')] : []),
         item('Load SoundFont…', false, chooseSoundFont, 'An .sf2 or .sf3 of your own to play the preview on, kept in the browser'));
       // The GM output's reverb (a channel's send is its :cc91).
-      const level = loadPref('gmReverb', 'half');
+      const level = loadPref('gmReverb', 'off');
       const rev = document.createElement('div');
       rev.className = 'menu-label';
       rev.textContent = 'GM Reverb';

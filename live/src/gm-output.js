@@ -21,10 +21,10 @@ const DRUM_CH = 9;
 
 /**
  * The reverb's level when none is chosen (MMLisp > MIDI > GM Reverb, a
- * render's): half the bank's own (the user's, 2026-11-07). Here, not in
+ * render's): none, the channels dry (the user's, 2026-11-07). Here, not in
  * gm-synth.js, so the page does not load the synthesizer to read it.
  */
-export const GM_REVERB_DEFAULT = 0.5;
+export const GM_REVERB_DEFAULT = 0;
 
 /**
  * The voices a plan plays: each bank and program a channel strikes a key under

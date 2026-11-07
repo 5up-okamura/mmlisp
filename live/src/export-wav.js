@@ -271,7 +271,7 @@ export function encodeWav(L, R, sampleRate) {
  *        pc88 score's ADPCM-B image (chips/adpcm-b.js bakeAdpcmB);
  *        `rhythmRom` the YM2608's (without it the rhythm is silent);
  *        `gmBank` the SoundFont a `:target midi` score renders on, `gmReverb`
- *        its reverb's level 0–1 (unset, half)
+ *        its reverb's level 0–1 (unset, none)
  * @returns {Promise<{ bytes:Uint8Array, pcmCount:number, durationSec:number }>}
  */
 export async function renderWav(player, opts = {}) {
