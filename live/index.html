@@ -8876,18 +8876,24 @@
     }
     function routeSynthOutput() {
       _outBus.disconnect();
-      _outBus.connect(document.hidden ? _bgDest : audioCtx.destination);
+      if (document.hidden) { _outBus.connect(_bgDest); return; }
+      _outBus.connect(audioCtx.destination);
+      // What the element buffered while hidden would play on under the
+      // direct sound, heard doubled (the user's iPhone, 2026-11-07).
+      if (!_bgAudio.paused) restartBackgroundStream();
+    }
+    // The element's stream attached again: what it had buffered — the song's
+    // last moments before Stop, deeper after a spell in the background — is
+    // dropped, not played first.
+    function restartBackgroundStream() {
+      _bgAudio.srcObject = null;
+      _bgAudio.srcObject = _bgDest.stream;
+      _bgAudio.play().catch(() => {});
     }
     function startBackgroundAudio() {
       if (!isIOS() || !audioCtx) return;
       synthOutput();
-      if (!_bgAudio.paused) return;
-      // A paused element keeps the stream it had buffered — the song's last
-      // moments before Stop, deeper after a spell in the background — and
-      // would play them first. Attaching the stream again drops them.
-      _bgAudio.srcObject = null;
-      _bgAudio.srcObject = _bgDest.stream;
-      _bgAudio.play().catch(() => {});
+      if (_bgAudio.paused) restartBackgroundStream();
     }
     function stopBackgroundAudio() {
       _bgAudio?.pause();
