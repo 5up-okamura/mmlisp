@@ -479,7 +479,8 @@ export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET) {
  *                 timing: "file" (the file's ticks and tempo map, quantized
  *                 to `grid`; `bpm` scales the map) | "beats" (the beat
  *                 estimated from the notes' times; `bpm` replaces it),
- *                 loop: bool, target?, fileName?}
+ *                 loop: bool, target?, fileName?, from? (what the header
+ *                 says it was: "MIDI" unless a chip's import came this way)}
  */
 export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const warnings = [];
@@ -713,7 +714,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const ccs = [...analysis.counts.cc].map(([c, n]) => `CC${c}×${n}`);
   if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
 
-  const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (MIDI)`];
+  const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (${options.from ?? "MIDI"})`];
   const score = [tp.name !== DEFAULT_TARGET && `:target ${tp.name}`, analysis.title && `:title ${qstr(analysis.title)}`, dacUsed && `:pcm-voices ${dacUsed}`].filter(Boolean);
   if (score.length) header.push(`(def-score ${score.join(" ")})`);
   for (const set of ["gm", "wavetable", "envelopes", "gm-drums"]) if (presets.has(set)) header.push(`(import "presets/${set}/set.mmlisp")`);

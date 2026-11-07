@@ -1150,6 +1150,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import-midi.js';
+    import { chipScoreToMidi } from './src/import-to-midi.js';
     import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
@@ -3525,6 +3526,24 @@
       }, a);
     }
 
+    // A chip song read onto `:target midi` (src/import-to-midi.js): the
+    // Target select's last choice on every song import. The file is read as
+    // its own machine's score — the rows, the loop and the pitch as that
+    // machine's — which is compiled, given GM programs and kit roles, and
+    // read back through its MIDI.
+    const MIDI_TARGET_CHOICE = ['midi', 'General MIDI (:target midi) — read as its own machine, then as MIDI'];
+    const withMidi = (targets, own) => [...targets.filter((t) => t !== 'midi').map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
+      [MIDI_TARGET_CHOICE[0], MIDI_TARGET_CHOICE[1].replace('its own machine', targetProfile(own).system)]];
+    async function readViaMidi(res, { fileName, tag, own, structure = true }) {
+      const name = mmlispName(fileName);
+      const imports = await readImportSources(res.source, name);
+      const { ir, diagnostics } = compileMMLisp(res.source, name, { imports, voiceStamps: true });
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      if (errors.length) throw new Error(`as ${own} it does not compile: ${errors[0].message}`);
+      const out = chipScoreToMidi(ir, { source: res.source, pcm: res.pcm, fileName, structure, from: `${tag}, read as ${own}, then as MIDI` });
+      return { source: out.source, warnings: [...res.warnings, ...out.warnings] };
+    }
+
     // A tracker module (DMF, FUR): tempo, phrases, a destination per channel
     // — and the target (the machine of the module's chips, md, or another that
     // holds most of its notes), which rebuilds the rows at that target's defaults.
@@ -3532,15 +3551,16 @@
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
       const played = a.channels.filter((c) => c.notes > 0);
+      // midi reads the module as its own machine's (its rows those).
       const rowsFor = (target) => {
+        if (target === 'midi') target = a.target;
         const d = defaultTrackerOptions(a, target), choices = ['drop', ...trackerDests(target)];
         return played.map((c) => ({ key: String(c.index), label: c.label, value: d.dest[c.index], choices }));
       };
       const fields = [];
-      if (a.targets.length > 1)
-        fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
-          choices: a.targets.map((tg) => [tg, `${targetProfile(tg).system} (:target ${tg})`]),
-          hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine (md always, the rest where they hold most of its notes) reads the channels for its own' });
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+        choices: withMidi(a.targets, a.target),
+        hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine (md always, the rest where they hold most of its notes) reads the channels for its own; General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
           hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
@@ -3559,26 +3579,28 @@
       const bpm = Number(got.fields.bpm);
       const dest = {};
       for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
-      return trackerToMmlisp(t, {
+      const toMidi = got.fields.target === 'midi';
+      const res = trackerToMmlisp(t, {
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
-        target: got.fields.target ?? def.target,
+        target: toMidi ? a.target : got.fields.target ?? def.target,
         fileName,
       }, a);
+      return toMidi ? readViaMidi(res, { fileName, tag: t.format, own: a.target }) : res;
     }
 
     async function importVgmBytes(bytes, fileName) {
       const parsed = await parseVgm(bytes);
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
-      // Picking another target rebuilds the rows at its defaults.
-      const rowsFor = (target) => vgmRows(a, target);
+      // Picking another target rebuilds the rows at its defaults (midi:
+      // its own machine's, which it is read as).
+      const rowsFor = (target) => vgmRows(a, target === 'midi' ? a.target : target);
       const fields = [];
-      // A file of one machine's chip can be that machine's score or the Mega Drive's.
-      if (a.targets.length > 1)
-        fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
-          choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine (md always, the rest where they hold most of its notes) reads them for its own' });
+      // A file of one machine's chip can be that machine's score, the Mega Drive's, or General MIDI's.
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+        choices: withMidi(a.targets, a.target),
+        hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine (md always, the rest where they hold most of its notes) reads them for its own; General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       );
@@ -3600,8 +3622,9 @@
         rowsFor,
       });
       if (!got) return null;
+      const toMidi = got.fields.target === 'midi';
       const options = {
-        target: got.fields.target ?? def.target,
+        target: toMidi ? a.target : got.fields.target ?? def.target,
         dest: got.rows,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
@@ -3609,6 +3632,8 @@
         structure: !!got.fields.structure,
         fileName,
       };
+      // (Read onto midi, the MIDI import estimates the beat itself: no Tap Tempo.)
+      if (toMidi) return readViaMidi(vgmToMmlisp(parsed, options, a), { fileName, tag: 'VGM', own: a.target, structure: options.structure });
       return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
     }
 
@@ -3616,24 +3641,40 @@
     // tempo to estimate and nothing to set — no dialog. What the file holds
     // goes to the log; repeats are always folded (a run through MXDRV's or
     // MGSDRV's loops is nothing but repeats).
-    function importMdxBytes(bytes, fileName, pdx) {
+    // The one thing to choose is the target: its own machine, or General MIDI.
+    async function driverSongTarget(fileName, own, summary) {
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary,
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: own, choices: withMidi([own], own),
+          hint: `${own} plays it as its driver does; General MIDI reads it so, then gives each channel a GM instrument and the drums kit roles` }],
+      });
+      return got ? got.fields.target : null;
+    }
+    async function importMdxBytes(bytes, fileName, pdx) {
       const mdx = parseMdx(bytes);
       const a = analyzeMdx(mdx);
       const played = a.tracks.filter((t) => t.notes.length);
       const hasPcm = played.some((t) => t.pcm);
-      log(`${fileName}: MDX${mdx.pcm8 ? ' (PCM8)' : ''}${mdx.title ? ' · ' + mdx.title : ''} · ${a.bpm} BPM at the start · ` +
-        played.map((t) => t.label).join(' · '), 'info');
+      const about = `MDX${mdx.pcm8 ? ' (PCM8)' : ''}${mdx.title ? ' · ' + mdx.title : ''} · ${a.bpm} BPM at the start · ` + played.map((t) => t.label).join(' · ');
+      const target = await driverSongTarget(fileName, 'x68k', about + '. Played clock-exact on MXDRV’s timing; repeats folded.');
+      if (!target) return null;
+      log(`${fileName}: ${about}`, 'info');
       if (hasPcm && !pdx) log(`${fileName}: the ADPCM needs ${mdx.pdxName || 'its PDX'}, picked (or dropped) with the MDX — its tracks are left out`, 'warn');
-      return mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
+      const res = mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
+      return target === 'midi' ? readViaMidi(res, { fileName, tag: 'MDX', own: 'x68k' }) : res;
     }
 
-    function importMgsBytes(bytes, fileName) {
+    async function importMgsBytes(bytes, fileName) {
       const mgs = parseMgs(bytes);
       const a = analyzeMgs(mgs);
       const played = a.tracks.filter((t) => t.notes.length);
-      log(`${fileName}: MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start · ` +
-        played.map((t) => t.label).join(' · '), 'info');
-      return mgsToMmlisp(mgs, { structure: true, fileName }, a);
+      const about = `MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start · ` + played.map((t) => t.label).join(' · ');
+      const target = await driverSongTarget(fileName, 'msx', about + '. Played clock-exact on MGSDRV’s timing; repeats folded.');
+      if (!target) return null;
+      log(`${fileName}: ${about}`, 'info');
+      const res = mgsToMmlisp(mgs, { structure: true, fileName }, a);
+      return target === 'midi' ? readViaMidi(res, { fileName, tag: 'MGS', own: 'msx' }) : res;
     }
 
     // NSF: a song is run — the file's own driver on a 6502 — and its writes
@@ -3646,10 +3687,9 @@
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
       const fields = [];
-      if (a.targets.length > 1)
-        fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
-          choices: a.targets.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'fc keeps the Famicom’s chips; another machine reads them for its own' });
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+        choices: withMidi(a.targets, a.target),
+        hint: 'fc keeps the Famicom’s chips; another machine reads them for its own; General MIDI reads it as the Famicom’s, then gives each channel a GM instrument and the noise and DPCM kit roles' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
         { key: 'loop', label: a.fileLoop ? 'Loop (where the song comes round)' : 'Loop (the song stops: off)', type: 'checkbox', value: a.fileLoop },
@@ -3663,11 +3703,12 @@
           `The song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
         fields,
         rows: vgmRows(a, def.target),
-        rowsFor: (target) => vgmRows(a, target),
+        rowsFor: (target) => vgmRows(a, target === 'midi' ? a.target : target),
       });
       if (!got) return null;
+      const toMidi = got.fields.target === 'midi';
       const options = {
-        target: got.fields.target ?? a.target,
+        target: toMidi ? a.target : got.fields.target ?? a.target,
         dest: got.rows,
         followPitch: !!got.fields.followPitch,
         // (A song that stops does not loop: the box keeps the loop the run found.)
@@ -3676,6 +3717,7 @@
         structure: !!got.fields.structure,
         fileName,
       };
+      if (toMidi) return readViaMidi(vgmToMmlisp(parsed, options, a), { fileName, tag: 'NSF', own: a.target, structure: options.structure });
       return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
     }
 

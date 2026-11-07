@@ -1870,8 +1870,8 @@ plays it as found, other notes retune it.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
-**A MIDI, DefleMask / Furnace, VGM or NSF import opens a dialog first** (an
-MDX or MGS converts straight away): what the file holds, the timing and
+**A song import opens a dialog first** (an MDX or MGS has only its Target
+to choose): what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
@@ -1892,6 +1892,22 @@ squares and waves.
 A song that lands on `presets/waveforms` stand-ins and nothing else on `x68k`,
 with no squares to balance against, gets them at a full carrier (`loud-square`
 …, defined at the top of the score).
+
+**General MIDI** is the last Target of every chip song — VGM, NSF, DefleMask /
+Furnace, MDX, MGS. The song is read as its own machine's score (the rows are
+that machine's), and that score through its MIDI — the MIDI import's beat,
+repeats and bends, onto `ch1`… and `drum1`…. A GM instrument has none of the
+chip's sound, so each channel is given one: an instrument's name says it
+where the song names them (a tracker's "Bass", a ROM voice); otherwise its
+kind and range do — a low part a bass, a square the square lead, a wave the
+saw lead, an FM part an electric piano (strings where its notes are held).
+The noise becomes drums by pitch — the higher a hat, the lower a snare — and
+the samples kit roles by their names (BD, snare, HH …) or their sound: the
+most played low one the kick, the other low ones toms, bright ones hats,
+open hats and crashes by how long they ring. A sample longer than 2 s is a
+driver's mix, not a hit, and is left out. The log lists every guess; rename
+in the score what reads wrong. FM patches, duties, wavetables, the noise's
+mode and the samples' own sound do not carry.
 
 **MIDI.** The dialog shows the quantize grid (the coarsest one the notes sit
 on) and the loop marked with CC111 or `loopStart` / `loopEnd` markers. MIDI
@@ -2337,7 +2353,7 @@ hit starts.
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
 written for the song's own machine: an MDX as an `x68k` score, an MGS as an
-`msx` one. Both count in clocks, 48 a quarter, so the timing is exact (no
+`msx` one (or, as its Target, General MIDI's: above). Both count in clocks, 48 a quarter, so the timing is exact (no
 tempo is estimated); an MDX whose notes sit on another grid (176-clock
 bars: 44 a quarter) is read on that one, its notes 8ths and 16ths and its
 tempo scaled to match and the tempo commands become `:tempo`. Each track keeps
