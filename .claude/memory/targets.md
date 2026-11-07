@@ -111,9 +111,10 @@ in vgmToMmlisp and cannot be called from here):
 | x68k fm8's `:mode noise` notes → md/pc88 | to `noise`: md the nearest `:mode whiteN` by Hz (125 kHz / n vs the PSG's rates, import-vgm nearestWhite), pc88 `:noise-rate` by Hz; its tone notes stay on the FM channel |
 | `:lfo-freq N` (OPM) → OPN | `:lfo-rate 1–8` nearest in Hz; `:lfo-wave :lfo-pmd :lfo-amd` dropped (depth is already `:fms`/`:ams`) |
 | OPN `:lfo-rate` → x68k | `:lfo-freq` nearest in Hz |
-| md sqr1–3 → x68k | fm7/fm8 as square stand-ins (two; the third drops), rows decide |
-| md noise → x68k | fm8 `:mode noise` under a voice, `:noise-rate` by Hz |
-| md fm3-1…fm3-4, fm3-csm → x68k | fm3 one of them, the rest drop (the rows show them) |
+| md fm3-1…fm3-4 → x68k | each a free FM channel of the eight (fm7, fm8, any fm1–6 the score does not use), under a one-operator voice made from fm3's (operator N the carrier, the others TL 127): the same sound. Nothing drops while a channel is free (the user, 2026-11-07) |
+| md fm3-csm → x68k | fm3's plain notes, the CSM rate dropped and said (the language has no CSM on x68k) |
+| md sqr1–3 → x68k | free FM channels as square stand-ins, after the fm3-N; drop only past the eight, rows decide |
+| md noise → x68k | fm8 `:mode noise` under a voice, `:noise-rate` by Hz (fm8 kept free for it when the score has a noise track) |
 | pc88 sqr `:mode both` / `:env` / `:env-rate` → md | `:mode tone`, the envelope dropped and said (no reading on the PSG); `:mode env` notes dropped |
 | pc88 rhythm1–6 (kit roles) ↔ md pcm1–3 (kit-role samples) | by role: a rhythm track is a pcm track playing `kick` … under the RX5 import, and back where the samples are roles (the import writes both so) |
 | pcm: x68k pcm1–8 / md pcm1–3 / pc88 pcm1 | rows, first come; `:fx`, `:rate`, `:file` as they are |
