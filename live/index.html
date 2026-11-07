@@ -9138,6 +9138,8 @@
     }
     function applyTargetUi(ir) {
       const target = targetProfile(ir?.metadata?.target);
+      // A score with no sound of its own scopes the GM output's channels.
+      _gm?.output.scope(!!target.soundFont);
       for (const el of document.querySelectorAll('[data-needs]')) {
         const has = targetHas(target, el.dataset.needs);
         if (el.classList.contains('menu-item')) el.disabled = !has;
@@ -13382,7 +13384,8 @@
         if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
       } else if (isGmOut(_midiOutName)) {
         const source = _midiOutName;
-        _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont, reverb: gmReverb(), onLate: gmLate }) };
+        _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont, reverb: gmReverb(), onLate: gmLate, onScope: onScopeBatch }) };
+        _gm.output.scope(!!targetProfile(_lastGoodIR?.metadata?.target).soundFont);
         // Chosen from the menu (a tap), the context can start and the bank
         // load now, not under the first Play; restored at launch, it waits.
         if (!quiet && !audioCtx) initAudio().then(() => startGmOutput());
@@ -15199,7 +15202,9 @@
       _scopeTriggers?.forEach((t) => t.reset());
     }
 
-    function onScopeBatch(msg) {
+    // `giveBack` returns the batch's buffers to the worklet that posted it:
+    // the chips', or the GM output's (a `:target midi` score's lanes).
+    function onScopeBatch(msg, giveBack = (ch) => workletNode?.port.postMessage({ type: 'scope-return', ch }, ch)) {
       _scopeSR = msg.sampleRate || _scopeSR;
       _scopeFreqs = msg.freq || _scopeFreqs;
       // While PCM plays, FM6 carries the DAC: its fnum/block latch describes a
@@ -15227,7 +15232,7 @@
       _scopeStill = still ? _scopeStill + 1 : 0;
       _scopeAbs += len;
       // Recycle the transferred buffers back to the worklet.
-      workletNode?.port.postMessage({ type: 'scope-return', ch: msg.ch }, msg.ch);
+      giveBack(msg.ch);
     }
     // The strip head's scope channel, the target's (targets.js scopeLane), a
     // rhythm sound's its strip's. A Mega Drive PCM track has its voice's own

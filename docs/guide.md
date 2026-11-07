@@ -1468,7 +1468,9 @@ Live with nothing else connected, and its **File ▸ Export ▸ WAV…** and
 chosen). **GM Reverb** (Off, Half — the default — or Full) is that SoundFont's reverb as it
 plays and in its WAV; a channel's own send is its `:cc91`. A `:target midi`
 score's Channels meters show its notes — each note's `:vel` under the
-faders, peaking as it starts — since the sound is not the page's chips'.
+faders, peaking as it starts — since the sound is not the page's chips'; on
+the GM output, the oscilloscope shows each MIDI channel's own sound (dry,
+before the reverb), the drums' channel 10 under every drum track.
 `Choose Output…` asks the browser once,
 then lists the MIDI ports; `Off` stops. What goes out is what
 **File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its

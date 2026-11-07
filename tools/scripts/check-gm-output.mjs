@@ -11,7 +11,7 @@
 //                its audio time falls in and not before, a clear drops what
 //                is not yet due, an off leaves no voice, a preload
 //                decodes a plan's voices, a close ends the processor, a
-//                quantum that runs twice its time is reported ('late')
+//                quantum that runs four times its time is reported ('late')
 //   preload      a plan preloaded again sends nothing; a key past what was
 //                decoded sends that voice alone, its range widened
 //   a render     `:target midi`'s WAV (export-wav.js → gm-render.js): a loop
@@ -113,19 +113,19 @@ tell({ type: "close" });
 assert.equal(gm.process([], [[L, R]]), false, "a closed processor ends");
 assert.equal(gm.gm.bank, null, "and holds no bank");
 
-// A run late: one quantum twice its time is said ('late', after its
+// A run late: one quantum four times its time is said ('late', after its
 // window), none at all is not.
 {
   const late = new Processor();
   let slow = false;
-  late.gm.render = () => { if (!slow) return; const t = performance.now(); while (performance.now() - t < 7); };
+  late.gm.render = () => { if (!slow) return; const t = performance.now(); while (performance.now() - t < 12); };
   posted.length = 0;
   const step = (n, slowAt = -1) => { for (let i = 0; i < n; i++) { slow = i === slowAt; late.process([], [[L, R]]); globalThis.currentTime += Q / sampleRate; } };
   step(Math.ceil((2.2 * sampleRate) / Q));
   assert.ok(!posted.some((m) => m.type === "late"), "nothing late, nothing said");
   step(Math.ceil((2.2 * sampleRate) / Q), 10);
   const said = posted.find((m) => m.type === "late");
-  assert.ok(said && said.worst >= 7, `a quantum 7 ms long is said: ${JSON.stringify(said)}`);
+  assert.ok(said && said.worst >= 12, `a quantum 12 ms long is said: ${JSON.stringify(said)}`);
 }
 
 // ── GmOutput.preload: only what no plan before asked for ───────────────

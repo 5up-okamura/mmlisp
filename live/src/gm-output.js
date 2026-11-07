@@ -65,8 +65,10 @@ const added = new WeakMap();
  * resolves when the bank is loaded and the output can take a run.
  */
 export class GmOutput {
-  constructor({ loadBank, reverb = GM_REVERB_DEFAULT, onLate = null }) {
+  constructor({ loadBank, reverb = GM_REVERB_DEFAULT, onLate = null, onScope = null }) {
     this.loadBank = loadBank;
+    this.onScope = onScope; // (batch, giveBack): a scope batch, as the chips' worklet's
+    this.scopeOn = false;
     this.reverbGain = reverb;
     this.onLate = onLate; // ({ count, worst, budget }): the audio thread ran late
     this.node = null;
@@ -85,12 +87,14 @@ export class GmOutput {
       const node = new AudioWorkletNode(ctx, "mmlisp-gm", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       node.port.onmessage = ({ data }) => {
         if (data.type === "late") return this.onLate?.(data);
+        if (data.type === "scope") return this.onScope?.(data, (ch) => node.port.postMessage({ type: "scope-return", ch }, ch));
         const done = this.pending.get(data.type === "error" ? "ready" : data.type);
         this.pending.delete(data.type === "error" ? "ready" : data.type);
         done?.(data);
       };
       const reply = this.reply("ready");
       node.port.postMessage({ type: "reverb", gain: this.reverbGain });
+      node.port.postMessage({ type: "scope-enable", on: this.scopeOn });
       node.port.postMessage({ type: "bank", bytes }, [bytes]);
       const r = await reply;
       if (r.type === "error") throw new Error(r.message);
@@ -116,6 +120,16 @@ export class GmOutput {
   flush() {
     if (this.batch.length && this.node) this.node.port.postMessage({ type: "midi", events: this.batch });
     this.batch = [];
+  }
+
+  /**
+   * Each MIDI channel's sound to the oscilloscope (onScope), or not: on for
+   * a score with no sound of its own (`:target midi`), whose lanes the chips
+   * do not fill.
+   */
+  scope(on) {
+    this.scopeOn = !!on;
+    this.node?.port.postMessage({ type: "scope-enable", on: this.scopeOn });
   }
 
   /** The reverb's level, 0–1 (MMLisp > MIDI > GM Reverb). */

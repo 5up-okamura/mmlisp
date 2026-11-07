@@ -127,7 +127,8 @@ The names themselves are guide.md §25; the reasons:
   (iPhone).
 - Open: decoding a program a hot-swap brings mid-play stalls the audio
   thread (decode off it and `setAudioData` if it is heard); the budget's
-  figure; the oscilloscope stays empty on midi.
+  figure. The oscilloscope on midi is the GM output's (spessasynth's
+  `channelOutputs`, dry, a lane a MIDI channel; drums share channel 10's).
 
 ## The PC Engine (pce; built 2026-10-27)
 

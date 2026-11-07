@@ -25,6 +25,7 @@ export class GmSynth {
     this.synth = null;
     this.bank = null;
     this.queue = []; // [bytes, time], in time order (a tie keeps its order)
+    this.keys = new Array(16).fill(0); // each channel's latest key held, 0 none: its pitch for the scope
     // The reverb's level, 0–1 (each channel's send is its CC91): the bank's
     // own until the caller says (gm-output.js GM_REVERB_DEFAULT).
     this.reverb = 1;
@@ -75,6 +76,11 @@ export class GmSynth {
     return Date.now() - t;
   }
 
+  /** Each channel's latest key held as a frequency (Hz), 0 none: the oscilloscope's trigger. */
+  freqs() {
+    return this.keys.map((k) => (k ? 440 * 2 ** ((k - 69) / 12) : 0));
+  }
+
   /** What is not yet due, dropped. */
   clear() {
     this.queue = [];
@@ -83,6 +89,7 @@ export class GmSynth {
   /** That, and every voice silenced. */
   off() {
     this.queue = [];
+    this.keys.fill(0);
     this.synth?.stopAll(true);
   }
 
@@ -96,16 +103,22 @@ export class GmSynth {
   /**
    * One quantum (at most 128 frames) into L / R from `at` (their offset),
    * starting at time `now`: what falls in it goes to the synth at its place.
+   * `channels`, if given, [[L, R] × 16]: each MIDI channel's dry sound added
+   * in too, for the oscilloscope.
    */
-  render(L, R, at, count, now) {
+  render(L, R, at, count, now, channels = undefined) {
     if (!this.synth) return;
     const end = now + count / this.sampleRate;
     let n = 0;
     for (; n < this.queue.length && this.queue[n][1] < end; n++) {
       const [bytes, when] = this.queue[n];
       this.synth.processMessage(bytes, 0, { time: this.synth.currentTime + Math.max(0, when - now) });
+      const kind = bytes[0] & 0xf0, ch = bytes[0] & 0x0f;
+      if (kind === 0x90 && bytes[2] > 0) this.keys[ch] = bytes[1];
+      else if ((kind === 0x80 || kind === 0x90) && this.keys[ch] === bytes[1]) this.keys[ch] = 0;
+      else if (kind === 0xb0 && bytes[1] >= 120) this.keys[ch] = 0; // all sound / notes off
     }
     if (n) this.queue.splice(0, n);
-    this.synth.process(L, R, at, count);
+    this.synth.process(L, R, at, count, channels);
   }
 }
