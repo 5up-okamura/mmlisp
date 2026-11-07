@@ -7340,12 +7340,13 @@
       const fail = (e) => { error ||= e; };
       const videoEnc = new VideoEncoder({ output: (c, m) => mux.addVideo(c, m), error: fail });
       videoEnc.configure(vcfg);
-      // The sound: the worklet's output, read as AudioData off a stream and
-      // encoded with the stream's own rate and channel count. Reading starts
-      // with the first frame, so the two tracks start together.
+      // The sound: the preview's (soundingNodes), read as AudioData off a
+      // stream and encoded with the stream's own rate and channel count.
+      // Reading starts with the first frame, so the two tracks start together.
       const audioEnc = new AudioEncoder({ output: (c, m) => mux.addAudio(c, m), error: fail });
       const audioDest = audioCtx.createMediaStreamDestination();
-      workletNode.connect(audioDest);
+      const sounding = soundingNodes();
+      for (const n of sounding) n.connect(audioDest);
       const [audioTrack] = audioDest.stream.getAudioTracks();
       const reader = new MediaStreamTrackProcessor({ track: audioTrack }).readable.getReader();
       let pump = Promise.resolve();
@@ -7377,7 +7378,7 @@
         async stop(discard) {
           try { await reader.cancel(); } catch (_) { /* already closed */ }
           await pump;
-          try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+          for (const n of sounding) try { n.disconnect(audioDest); } catch (_) { /* gone with the context */ }
           audioTrack.stop();
           try {
             if (!discard && !error) {
@@ -7401,7 +7402,8 @@
     // samples the canvas itself at VIDEO_FPS.
     function streamVideoRecorder(canvas, mime) {
       const audioDest = audioCtx.createMediaStreamDestination();
-      workletNode.connect(audioDest);
+      const sounding = soundingNodes();
+      for (const n of sounding) n.connect(audioDest);
       let videoTrack = canvas.captureStream(0).getVideoTracks()[0];
       const paced = typeof videoTrack.requestFrame === 'function';
       if (!paced) {
@@ -7420,7 +7422,7 @@
         stop(discard) {
           return new Promise((resolve) => {
             recorder.onstop = () => {
-              try { workletNode.disconnect(audioDest); } catch (_) { /* gone with the context */ }
+              for (const n of sounding) try { n.disconnect(audioDest); } catch (_) { /* gone with the context */ }
               for (const t of stream.getTracks()) t.stop();
               resolve(discard || !chunks.length ? null : new Blob(chunks, { type }));
             };
@@ -8878,12 +8880,17 @@
       }
       return _outBus;
     }
+    // What the preview sounds on: the chips' worklet, and the GM output's
+    // while it plays (a video's sound takes both).
+    function soundingNodes() {
+      return [workletNode, _gm?.output.node].filter(Boolean);
+    }
     function startBackgroundAudio() {
       if (!isIOS() || !audioCtx) return;
       synthOutput();
       if (!_bgAudio.paused) return;
-      // A paused element keeps the stream it had buffered and would play it
-      // first: attached again, it is dropped.
+      // A paused element would go on from where it stopped: attached again,
+      // it starts at the stream's now.
       _bgAudio.srcObject = null;
       _bgAudio.srcObject = _bgDest.stream;
       _bgAudio.play().catch(() => {});
@@ -15277,19 +15284,22 @@
       if ((entry ?? channelRouting(head)).volKind === 'pcm' && !_scopePcmVoices) return 5;
       return target.scopeLane(head);
     }
-    // One cell per lane, in the strips' order: channels on one lane (the
-    // MIDI drums' channel 10, the fm3 parts' FM3) show one wave, so they share
-    // a cell, named together (drum1–3).
+    // One cell per lane, in the strips' order: channels the target puts on
+    // one lane (the MIDI drums' channel 10, the fm3 parts' FM3) show one
+    // wave, so they share a cell, named together (drum1–3). Grouped by the
+    // table's lane, which holds still — not the lane drawn, where a Mega
+    // Drive PCM track moves to FM6's and back as the DAC stops and starts.
     function scopeCells() {
       const cells = [], byLane = new Map();
+      const target = targetProfile(_lastGoodIR?.metadata?.target);
       for (const cl of _vizNotes) {
         if (!cl.notes.length) continue;
-        const k = scopeChannelOf(cl.head);
-        const had = k != null ? byLane.get(k) : null;
+        const group = _chStripModel.find((e) => e.head === cl.head)?.scope ?? target.scopeLane(cl.head);
+        const had = group != null ? byLane.get(group) : null;
         if (had) { had.heads.push(cl.head); continue; }
-        const cell = { lane: k, heads: [cl.head] };
+        const cell = { lane: scopeChannelOf(cl.head), heads: [cl.head] };
         cells.push(cell);
-        if (k != null) byLane.set(k, cell);
+        if (group != null) byLane.set(group, cell);
       }
       for (const cell of cells) cell.label = headsLabel(cell.heads);
       return cells;

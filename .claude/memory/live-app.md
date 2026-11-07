@@ -32,8 +32,7 @@ lessons.
   another app while an `<audio>` element plays (since 2026-11-07 fed
   silence: the synth to the context's own output, hidden or not — through
   the element its pitch bent at a late quantum, and switching on hide/show
-  broke the sound off; that the direct output sounds in the background
-  awaits the user's iPhone). If ever needed: both players
+  broke the sound off; the user's iPhone: clean, in front and behind). If ever needed: both players
   already run off a manual clock in `captureRegisterLog`, the page reaches
   the player at ~30 sites in index.html that would read a posted mirror, and
   the hazards are seek/hot-swap/GC stalls on the audio thread.
