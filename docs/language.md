@@ -2484,6 +2484,38 @@ those chips cannot do is a compile error, not a different sound.
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
 | `gb` | Nintendo Game Boy: the LR35902's two pulses, wave and noise | VGM, WAV |
 | `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM, the N163's wavetables | VGM (without the VRC6, the MMC5 and the N163), WAV |
+| `midi` | A General MIDI instrument: fifteen melodic channels and the drums | MIDI (the file, and Live's MIDI output); no sound of its own |
+
+**`midi` is a General MIDI instrument**, a machine with no sound of its own:
+its score is a Standard MIDI File (File ▸ Export ▸ MIDI…), and while Live plays
+it the sound is a MIDI output's (MMLisp ▸ MIDI ▸ Output); it has no WAV, VGM,
+stems or video. Its channels are `ch1`–`ch16` but `ch10`, each the MIDI channel
+it names, and the drums, channel 10, as four tracks — `drums`, `drums2`–`drums4`
+— so hits sound together, as a ROM rhythm's tracks do. A track plays one note
+at a time, as on every machine: a chord is several channels.
+
+- **An instrument** is a channel's `:program 0–127` (sticky), and `:bank
+  0–16383` the bank it reads from (CC0 its MSB, CC32 its LSB, ahead of the
+  program). A voice named for an instrument writes its program: the 128 GM
+  programs by name (`gm-piano` … `gm-gunshot`) and the roles (`piano`,
+  `flute` …, the VRC7's ROM names), built in, as the OPLL's ROM voices are; a
+  `def-fm` named on a channel is no instrument (`W_TARGET`). A `def` makes a
+  patch of words: `(def lead :program 81 :cc74 40)`.
+- **A controller** is `:cc0`–`:cc127`, a value 0–127: written, swept, or
+  stepped by a note's macro, which holds until the next note (as `:pan`'s
+  does). `:pressure 0–127` is the channel's pressure (aftertouch), the same
+  way. `:vol` (with `:master`) is CC7 and `:pan` CC10, as the export writes
+  every machine's.
+- **The bend's reach** is `:bend-range 1–24` semitones (RPN 0), sticky;
+  unwritten, the least of 2, 12 and 24 the track's `:pitch`, glides and
+  `:semi` macros need.
+- **The drums** play the GM kit's roles (`kick`, `snare`, `hat`, `ride`,
+  `crash` … — the gm-drums set's names), built in, each at its GM key; a
+  sample that is no role plays its written note as the key (`W_TARGET`).
+  Each hit's `:vel` and the track's `:vol` are its velocity.
+
+A word of another machine's chips (`:tl1`, `:duty`, `:wave`) is `E_TARGET`
+here, and the MIDI words are `E_TARGET` on every other machine.
 
 **Every target exports MIDI** (File ▸ Export ▸ MIDI…, `live/src/export-midi.js`):
 a Standard MIDI File, format 1 at the IR's 96 ticks a quarter, of what the

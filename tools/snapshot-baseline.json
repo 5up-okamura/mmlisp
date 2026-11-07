@@ -2112,6 +2112,16 @@
   "vgm": "ba988da9d6bcb18b",
   "mid": "bb44a0f6eaf35cd2"
  },
+ "tools/tests/midi/channels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "cbedaec142c81f52",
+  "mid": "b708e990610c7dec"
+ },
+ "tools/tests/midi/drums.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "01d50c129219be1f",
+  "mid": "d9e5fb34fc343fd5"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",

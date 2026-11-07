@@ -58,6 +58,8 @@ export function destsFor(target) {
     wave: target.channelNames.filter((h) => target.partOf(h).kind === "wave"),
     // Every noise channel: the PC Engine's two (noise5, noise6).
     noises: target.channelNames.filter((h) => target.partOf(h).kind === "noise"),
+    // A MIDI channel (`:target midi`): any instrument's.
+    midi: target.channelNames.filter((h) => target.partOf(h).kind === "midi"),
   };
 }
 /** A channel of the target's own board, not of a cartridge chip it lists (fc's expansions): those are the user's to name. */

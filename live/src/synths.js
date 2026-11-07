@@ -9,8 +9,9 @@ import { MsxSynth, SCOPE_LANES as MSX_SCOPE_LANES } from "./synth-msx.js";
 import { PceSynth, SCOPE_LANES as PCE_SCOPE_LANES } from "./synth-pce.js";
 import { FcSynth, SCOPE_LANES as FC_SCOPE_LANES } from "./synth-fc.js";
 import { GbSynth, SCOPE_LANES as GB_SCOPE_LANES } from "./synth-gb.js";
+import { MidiSynth } from "./synth-midi.js";
 
-export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth, pce: PceSynth, fc: FcSynth, gb: GbSynth };
+export const SYNTHS = { md: MegaDriveSynth, pc88: Pc88Synth, x68k: X68kSynth, msx: MsxSynth, pce: PceSynth, fc: FcSynth, gb: GbSynth, midi: MidiSynth };
 
 /** The synth for `name` (a target's), the Mega Drive's for any other. */
 export const synthFor = (name) => SYNTHS[name] ?? MegaDriveSynth;

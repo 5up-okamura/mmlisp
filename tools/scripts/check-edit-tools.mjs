@@ -463,10 +463,11 @@ const noUnknown = (text, imports) => assert.deepEqual(compileMMLisp(text, 'a.mml
   .filter((d) => d.severity === 'error').map((d) => `${d.code} ${d.message}`), []);
 check('every built-in name compiles on its machine', () => {
   for (const [name, target] of Object.entries(TARGETS)) {
-    const [fm] = target.headsOfKind('fm');
+    // A voice on the machine's first channel that takes one: FM, or a MIDI channel's program.
+    const [voiced] = [...target.headsOfKind('fm'), ...target.channelNames.filter((h) => target.partOf(h).programNames)];
     const kit = target.parts.find((p) => p.kit);
     for (const d of builtinNames(target)) {
-      const head = d.kind === 'voice' ? fm : target.headsOf(kit.name)[0];
+      const head = d.kind === 'voice' ? voiced : target.headsOf(kit.name)[0];
       noUnknown(`(def-score :target ${name})\n(${head} ${d.name} :len 4 c)`);
     }
   }
@@ -477,6 +478,7 @@ check('a machine lists its own: ROM voices, the kit by its roles', () => {
   assert.ok(names('pc88').includes('rim') && names('pc88').includes('init-fm'));
   assert.ok(names('fc').includes('buzzy-bell') && !names('fc').includes('piano'));
   assert.deepEqual(names('pce'), []);
+  assert.ok(names('midi').includes('gm-piano') && names('midi').includes('flute') && names('midi').includes('kick') && names('midi').includes('triangle'));
   assert.equal(builtinNames(TARGETS.md).find((d) => d.name === 'piano').from, 'ROM 4-op');
   assert.equal(builtinNames(TARGETS.msx).find((d) => d.name === 'piano').from, 'ROM');
 });

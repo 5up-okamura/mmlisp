@@ -69,7 +69,9 @@ const FM_CHANNELS = Math.max(
 // toneLaneOf), each through its chip's encoder: the PSG's tones at 0-2 and
 // its noise at 3 (chips/: psgEncoder), the wave channels from 4 (waveEncoder).
 // A part of another kind has no core yet.
-const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", wave: "psg", sample: "sample" };
+// A MIDI channel has no chip to write (chips/midi.js): the `none` core keeps
+// its events on the clock and writes nothing.
+const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", wave: "psg", sample: "sample", midi: "none" };
 const PSG_LANES = TONE_LANES; // the PSG core's
 // The sample core's handler for each sample part: the chips' own voices (the
 // YM2608's rhythm and ADPCM-B, the OPLL's rhythm), PCM8's mix, the Mega
@@ -85,6 +87,7 @@ const SAMPLE_HANDLERS = {
   "pce-dda": "_dispatchDdaEvent",
   "fc-dpcm": "_dispatchDpcmEvent",
   dac: "_dispatchDacEvent",
+  "midi-drums": "_dispatchNothing",
 };
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
@@ -2402,6 +2405,7 @@ export class IRPlayer {
       }
       return;
     }
+    if (core === "none") return; // a MIDI channel's: its sound is the MIDI output's
     if (core !== "fm" && LFO_TARGETS.has(ev.args?.target) && /^PARAM_/.test(ev.cmd))
       ev = { ...ev, _route: FM_LFO_ROUTE, _chIndex: 0 };
 
@@ -2794,6 +2798,9 @@ export class IRPlayer {
   // across is the score's events — note, release, level, master, loop point —
   // timed, in the order the driver's sequencer would act on them. Global
   // events (tempo/markers/loops) are handled by _dispatchGlobalEvent first.
+  // A sample part whose sound is elsewhere (the MIDI drums): nothing to write.
+  _dispatchNothing() {}
+
   _dispatchDacEvent(ev, when) {
     const voice = ev._chIndex ?? 0;
     switch (ev.cmd) {

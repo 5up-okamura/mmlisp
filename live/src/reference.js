@@ -38,6 +38,7 @@ const PSG = ['psg'];
 const PCM = ['pcm'];
 const FM_PSG = ['fm', 'psg'];
 const WAVE = ['wave'];
+const MIDI = ['midi'];
 
 export const REFERENCE = [
   // ---- score and song-wide -------------------------------------------------
@@ -84,9 +85,9 @@ export const REFERENCE = [
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },
   {
-    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'gb', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
-    syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc | gb)',
-    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. gb is the Game Boy\'s APU: sqr1 / sqr2 the pulses, wave and noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV — and its expansion chips where a score names their channels, each named by its chip (vrc6-sqr1, fds-wave …); VGM leaves out a chip it has no command for, WAV plays it.',
+    name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'gb', 'midi', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
+    syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc | gb | midi)',
+    summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. gb is the Game Boy\'s APU: sqr1 / sqr2 the pulses, wave and noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV — and its expansion chips where a score names their channels, each named by its chip (vrc6-sqr1, fds-wave …); VGM leaves out a chip it has no command for, WAV plays it. midi is a General MIDI instrument: ch1–ch16 but ch10, and drums — no sound of its own: File > Export > MIDI… writes it, and MMLisp > MIDI > Output plays it.',
     insert: '(def-score :target pc88)',
     example: '(def-score :target pc88)\n(fm6 :len 8 c e g e)\n(rhythm1 :len 4 kick c c snare c c)',
   },
@@ -203,6 +204,55 @@ export const REFERENCE = [
     summary: 'fc: the N163\'s wavetable channels — def-waves in 4-bit steps at a 4-bit volume. The highest one the score names sets how many run; the chip plays them in turn, so more channels each sound quieter, and 7–8 whine as on the chip. Up to 5 running, each wave is 32 steps; at 6 or more, 16 (a warning says so). VGM has no N163: an export leaves it out; WAV plays it.',
     insert: '(n163-wave1 :len 8 c e g e)',
     example: '(def-score :target fc)\n(def-wave saw :wave (saw -128..127))\n(n163-wave1 saw :len 8 e g > c e)',
+  },
+  {
+    name: '(ch1 …)', aliases: ['ch2', 'ch3', 'ch4', 'ch5', 'ch6', 'ch7', 'ch8', 'ch9', 'ch11', 'ch12', 'ch13', 'ch14', 'ch15', 'ch16', 'midi channel'], cat: 'channels', section: '§19', tracks: MIDI,
+    syntax: '(def-score :target midi) (ch1 …)',
+    summary: 'midi: a General MIDI instrument\'s fifteen melodic channels, ch1–ch16 but ch10 (the drums). A track is its channel and plays one note at a time; a voice named for an instrument (gm-*, piano …) is its program, :vol its CC7, :pan its CC10, :pitch and glides its bend. It has no sound of its own: MMLisp > MIDI > Output plays it, File > Export > MIDI… writes it.',
+    insert: '(ch1 gm-piano :len 4 c e g e)',
+    example: '(def-score :target midi)\n(ch1 gm-piano :len 4 c e g > c)',
+  },
+  {
+    name: '(drums …)', aliases: ['drums2', 'drums3', 'drums4', 'ch10', 'gm drums'], cat: 'channels', section: '§19', tracks: PCM,
+    syntax: '(def-score :target midi) (drums kick …)',
+    summary: 'midi: channel 10, the GM drums, as four tracks — drums, drums2–drums4 — so hits sound together (a kick under a hat). Its sounds are the kit\'s roles (kick, snare, hat, ride, crash …), built in, each at its GM key; a sample that is no role plays its written note as the key. Each hit\'s :vel and the track\'s :vol are its velocity.',
+    insert: '(drums :len 8 kick c hat c snare c hat c)',
+    example: '(def-score :target midi)\n(drums :len 4 kick c snare c kick c snare c)\n(drums2 :len 8 hat c c c c c c c c)',
+  },
+  {
+    name: ':program', aliases: ['program', 'program change', 'instrument'], cat: 'track', section: '§19', tracks: MIDI,
+    syntax: ':program 0–127',
+    summary: 'midi: the channel\'s instrument, a GM program 0–127 (sticky). A voice named for an instrument writes it too: gm-piano is 0, flute 73. :bank picks the bank it reads from.',
+    insert: ':program 0',
+    example: '(def-score :target midi)\n(ch1 :program 81 :len 8 c e g e)',
+  },
+  {
+    name: ':bank', aliases: ['bank select'], cat: 'track', section: '§19', tracks: MIDI,
+    syntax: ':bank 0–16383',
+    summary: 'midi: the bank the channel\'s :program picks from, 14 bits — sent as CC0 (its MSB) and CC32 (its LSB) ahead of the program. Sticky.',
+    insert: ':bank 0',
+    example: '(def-score :target midi)\n(ch1 :bank 128 :program 0 :len 4 c e)',
+  },
+  {
+    name: ':cc74', prefixes: [':cc'], aliases: ['cc', 'control change', 'controller'], cat: 'track', section: '§19', tracks: MIDI,
+    syntax: ':ccN 0–127  ·  (macro :ccN […])  ·  :ccN (curve …)',
+    summary: 'midi: controller N (0–127) of the channel, a value 0–127 — a write, a sweep, or a note\'s macro, which holds until the next note. :cc1 is the modulation wheel, :cc64 the sustain pedal, :cc74 the brightness; :vol and :pan are CC7 and CC10 already.',
+    insert: ':cc74 64',
+    example: '(def-score :target midi)\n(ch1 gm-lead-saw :len 8 (macro :cc74 (sin 30..100 :len 2)) c d e f)',
+  },
+  {
+    name: ':pressure', aliases: ['aftertouch', 'channel pressure'], cat: 'track', section: '§19', tracks: MIDI,
+    syntax: ':pressure 0–127  ·  (macro :pressure […])  ·  :pressure (curve …)',
+    summary: 'midi: the channel\'s pressure (aftertouch), 0–127 — a write, a sweep, or a note\'s macro.',
+    insert: ':pressure 64',
+    example: '(def-score :target midi)\n(ch1 gm-strings1 :len 2 :pressure (linear 0..127 :len 2) c e)',
+  },
+  {
+    name: ':bend-range', aliases: ['pitch bend range', 'rpn'], cat: 'track', section: '§19', tracks: MIDI,
+    syntax: ':bend-range 1–24',
+    summary: 'midi: how far the channel\'s pitch bend reaches, in semitones (RPN 0), sticky. Unwritten, it is the least of 2, 12 and 24 the track\'s :pitch, glides and :semi macros need; a pitch past it is held there.',
+    insert: ':bend-range 12',
+    example: '(def-score :target midi)\n(ch1 :bend-range 12 :len 2 c (glide 8) g)',
   },
   {
     name: ':duty', aliases: ['duty', 'pulse width'], cat: 'track', section: '§19', tracks: PSG,

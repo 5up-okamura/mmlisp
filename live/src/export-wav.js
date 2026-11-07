@@ -33,6 +33,9 @@ import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 import { RHYTHM_BIT } from "./chips/ym2608.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 
+/** Why a target with no sound of its own (`:target midi`) renders no WAV. */
+export const noSound = (target) => `the ${target.system} (:target ${target.name}) has no sound of its own: File > Export > MIDI… writes it, and MMLisp > MIDI > Output plays it`;
+
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
 const DEFAULT_FADE_SEC = 4;
 
@@ -284,6 +287,7 @@ export async function renderWav(player, opts = {}) {
 export async function renderWavSamples(player, opts = {}) {
   const why = notYet(player._target, "play"); // a register log with no core to play it
   if (why) throw new Error(why);
+  if (player._target?.sound === false) throw new Error(noSound(player._target));
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
   const target = player._target;

@@ -36,7 +36,7 @@ export function mixerStrips(ir) {
     if (head != null && !headToTrack.has(head)) headToTrack.set(head, ti);
   });
   // The ROM rhythm (a part with a kit: the YM2608's, the OPLL's).
-  const kitPart = target.parts.find((p) => p.kit);
+  const kitPart = target.parts.find((p) => p.kit && p.soundStrips !== false);
   const rhythmHeads = new Set(kitPart ? target.headsOf(kitPart.name) : []);
   const soundOf = new Map((ir?.metadata?.samples ?? []).filter((d) => d.rhythm).map((d) => [d.name, d.rhythm]));
   const sounds = new Set();

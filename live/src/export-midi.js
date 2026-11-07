@@ -111,7 +111,8 @@ export const GM_KIT_ROLES = {
 export const GM_DRUM_NOTE = Object.fromEntries(Object.entries(GM_KIT_ROLES).map(([note, role]) => [role, Number(note)]));
 
 // The words this export reads; any other write is a machine's own.
-const READ_TARGETS = new Set(["VOL", "MASTER", "PAN", "NOTE_PITCH", "SNAP"]);
+const READ_TARGETS = new Set(["VOL", "MASTER", "PAN", "NOTE_PITCH", "SNAP", "PROGRAM", "BANK", "BEND_RANGE", "PRESSURE"]);
+const isCC = (t) => /^CC\d+$/.test(t);
 const READ_NOTE_ARGS = new Set([
   "pitch", "length", "gate", "vel", "legato", "fm3Op", "opMask", "sample", "rate", "mode", "baseRate",
   "pitchMacro", "velMacro", "note_semi", "keyon", "pan", "vol",
@@ -535,10 +536,41 @@ function trackEvents(events, ctx, chan, drums, notes) {
       return [t, c];
     });
   }
-  const range = need > 1e-9 ? BEND_RANGES.find((r) => r >= need - 1e-9) ?? BEND_RANGES.at(-1) : 0;
-  if (need > BEND_RANGES.at(-1) + 1e-9) ctx.note(`a pitch past ±${BEND_RANGES.at(-1)} semitones is held there`);
-  if (range) for (const [cc, v] of RPN_BEND(range)) ctrl(0, cc, v);
+  // `:target midi`'s own words (chips/midi.js), as the score writes them:
+  // its program, bank, controllers, pressure and bend range.
+  const own = ctx.midiTarget && !drums;
+  const reach = own ? line("BEND_RANGE", 0) : null;
+  // (A write at tick 0 takes the line's first point: a written point is one
+  // past the unwritten value, 0 here, −1 for a program, bank or controller.)
+  const reached = reach ? reach.filter(([, v]) => v > 0) : [];
+  const written = reached.length > 0;
+  const auto = need > 1e-9 ? BEND_RANGES.find((r) => r >= need - 1e-9) ?? BEND_RANGES.at(-1) : 0;
+  const rangeAt = (t) => (written ? lineAt(reach, t) || auto : auto);
+  const top = written ? Math.max(...reached.map(([, v]) => v)) : BEND_RANGES.at(-1);
+  if (need > top + 1e-9) ctx.note(`a pitch past ±${top} semitones is held there`);
+  if (written) {
+    for (const [t, v, f] of reached) for (const [cc, x] of RPN_BEND(v)) ctrl(t, cc, x, f);
+  } else if (auto) for (const [cc, v] of RPN_BEND(auto)) ctrl(0, cc, v);
+  const range = written ? reached[0][1] : auto;
   out.bendRange = range;
+  if (own) {
+    // The bank (CC0 / CC32) ahead of the program it picks from, each where
+    // it is written; a write at the loop point again (forced).
+    for (const [t, v, f] of line("BANK", -1).filter(([, v]) => v >= 0)) { ctrl(t, 0, v >> 7, f); ctrl(t, 32, v & 127, f); }
+    let last = null;
+    for (const [t, v, f] of line("PROGRAM", -1).filter(([, v]) => v >= 0)) if (v !== last || f) push(t, [st(0xc0), (last = v)], f);
+  }
+  // Its controllers (`:cc74`) and pressure: a write, a sweep, a note's macro,
+  // which holds until the next note as a pan macro does.
+  const ccs = own ? [...new Set([
+    ...events.filter((e) => PARAM_CMDS.has(e.cmd) && isCC(e.args?.target)).map((e) => Number(e.args.target.slice(2))),
+    ...list.flatMap((n) => Object.keys(n.a).filter((k) => /^cc\d+$/.test(k)).map((k) => Number(k.slice(2)))),
+  ])].sort((x, y) => x - y) : [];
+  const owned = [...ccs.map((n) => ({ target: `CC${n}`, arg: `cc${n}`, bytes: (v) => [st(0xb0), n, v] })),
+    ...(own && (events.some((e) => PARAM_CMDS.has(e.cmd) && e.args?.target === "PRESSURE") || list.some((n) => n.a.pressure))
+      ? [{ target: "PRESSURE", arg: "pressure", bytes: (v) => [st(0xd0), v] }] : [])]
+    .map((c) => ({ ...c, line: line(c.target, -1), now: null }));
+  for (const c of owned) for (const n of list) n[`w_${c.arg}`] = macroWrites(n.a[c.arg], n, ctx);
 
   // The loop's first note: a player looping between the marks comes back to
   // it from the end, so what a note decides for itself (its bend, its
@@ -548,7 +580,7 @@ function trackEvents(events, ctx, chan, drums, notes) {
   const anyVolMacro = list.some((n) => n.volW?.length);
   const usesPan = !drums && (pan.length > 1 || pan[0][1] !== 0 || list.some((n) => n.panW?.length));
   // The forced points are the loop point's few: gathered once, not searched.
-  const forced = new Map([vol, pan, master].map((pts) => [pts, pts.filter(([, , f]) => f).map(([t]) => t)]));
+  const forced = new Map([vol, pan, master, ...owned.map((c) => c.line)].map((pts) => [pts, pts.filter(([, , f]) => f).map(([t]) => t)]));
   const forcedIn = (pts, a, b) => forced.get(pts).some((t) => t >= a && t <= b);
 
   // Each note's window, from its on to the next note's (before the first,
@@ -580,6 +612,16 @@ function trackEvents(events, ctx, chan, drums, notes) {
           if (v !== cc10 || force) ctrl(t, 10, (cc10 = v), force);
         }
       }
+      for (const c of owned) {
+        const w = n[`w_${c.arg}`];
+        const at = cursor(w);
+        for (const t of sortedTicks([on, ...pointsIn(c.line, on, limit).map(([t]) => t), ...(w ?? []).map(([t]) => t)])) {
+          const v = Math.round(at(t) ?? lineAt(c.line, t));
+          if (v < 0) continue; // not written yet
+          const force = (t === on && again && (w?.length || forcedIn(c.line, ctx.loopStart, on))) || (t !== on && forcedIn(c.line, t, t));
+          if (v !== c.now || force) push(t, c.bytes((c.now = Math.max(0, Math.min(127, v)))), force);
+        }
+      }
     }
     if (n.head) continue;
 
@@ -595,7 +637,7 @@ function trackEvents(events, ctx, chan, drums, notes) {
     if (!drums) {
       // The voice: a gm-* one, a role or a ROM voice is its program; at the
       // loop's first note again when a voice change starts the loop.
-      const prog = programOf(n.voice);
+      const prog = own ? null : programOf(n.voice); // a MIDI channel writes its PROGRAM
       const anew = again && n.voiceAt >= ctx.loopStart;
       if (prog != null && (prog !== program || anew)) push(on, [st(0xc0), (program = prog)], anew);
       // CC11: the note's vel macro, below its peak (the note's velocity).
@@ -607,7 +649,8 @@ function trackEvents(events, ctx, chan, drums, notes) {
       }
       // The bend.
       for (const [t, c] of n.bend) {
-        const v = Math.max(0, Math.min(16383, 8192 + Math.round((Math.max(-range, Math.min(range, c / 100)) / (range || 1)) * 8192)));
+        const r = rangeAt(t);
+        const v = Math.max(0, Math.min(16383, 8192 + Math.round((Math.max(-r, Math.min(r, c / 100)) / (r || 1)) * 8192)));
         if (v !== bendNow || (t === on && again && range)) push(t, [st(0xe0), v & 0x7f, v >> 7], again);
         bendNow = v;
       }
@@ -766,9 +809,9 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     if (!e.src || e._voiceSet) continue; // a voice is said below
     if (PARAM_CMDS.has(e.cmd)) {
       const t = e.args?.target;
-      if (!READ_TARGETS.has(t) && !valTargets.has(t)) leftOut.add(t);
+      if (!READ_TARGETS.has(t) && !isCC(t) && !valTargets.has(t)) leftOut.add(t);
     } else if (!STRUCTURE.has(e.cmd) && !e.cmd.startsWith("LOOP_")) leftOut.add(e.cmd);
-    if (e.cmd === "NOTE_ON") for (const k of Object.keys(e.args ?? {})) if (!READ_NOTE_ARGS.has(k)) leftOut.add(k.toUpperCase());
+    if (e.cmd === "NOTE_ON") for (const k of Object.keys(e.args ?? {})) if (!READ_NOTE_ARGS.has(k) && !/^cc\d+$|^pressure$/.test(k)) leftOut.add(k.toUpperCase());
   }
   if (leftOut.size) {
     const names = [...leftOut].sort();
@@ -784,10 +827,17 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     const pcm = events.filter((e) => e.cmd === "PCM_NOTE_ON");
     return pcm.length > 0 && !events.some((e) => e.cmd === "NOTE_ON") && pcm.some((e) => GM_DRUM_NOTE[e.args?.sample] != null);
   };
+  // On `:target midi` a track is the channel it names (ch1 → 1, drums → 10).
+  const midiTarget = ir.metadata?.target === "midi";
   let melodic = 0;
   const assigned = played.map((events, i) => {
     const hasNotes = events.some((e) => e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON");
     if (!hasNotes) return null;
+    if (midiTarget) {
+      const head = songTracks[i].scoreChannel ?? songTracks[i].channel;
+      const drums = /^drums\d?$/.test(head);
+      return { i, events, drums, port: 0, channel: drums ? DRUM_CH : Number(/^ch(\d+)$/.exec(head)?.[1] ?? 1) - 1 };
+    }
     const drums = kit(events);
     const slot = drums ? null : melodic++;
     return { i, events, drums, port: drums ? 0 : Math.floor(slot / MELODIC.length), channel: drums ? DRUM_CH : MELODIC[slot % MELODIC.length] };
@@ -814,7 +864,7 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     const track = songTracks[t.i];
     const name = track.scoreChannel ?? track.channel ?? `track ${t.i + 1}`;
     const evNotes = [];
-    const local = { ...ctx, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, odd: new Set(), note: (s) => note(`${name}: ${s}`) };
+    const local = { ...ctx, midiTarget, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, odd: new Set(), note: (s) => note(`${name}: ${s}`) };
     const events = trackEvents(t.events, local, t.channel, t.drums, evNotes);
     if (local.odd.size) {
       const odd = [...local.odd].sort().join(", ");

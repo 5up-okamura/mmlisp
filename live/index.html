@@ -302,10 +302,10 @@
             <button class="menu-item" onclick="exportMidiFile();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>MIDI…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
-            <button class="menu-item" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
-            <button class="menu-item" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
-            <button class="menu-item" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
-            <button class="menu-item" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
+            <button class="menu-item" data-needs="sound" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
+            <button class="menu-item" data-needs="sound" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
+            <button class="menu-item" data-needs="sound" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
+            <button class="menu-item" data-needs="sound" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Imported…</span></button>
@@ -2443,7 +2443,7 @@
     // macros — an envelope is the voice it does not have. Outside a track — a
     // def, the top level — everything.
     const AC_TRACK_SET = new Set(AC_TRACKS);
-    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg', wave: 'wave' };
+    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg', wave: 'wave', midi: 'midi' };
     function headPartKind(head) {
       const part = targetProfile(_lastGoodIR?.metadata?.target).partOf(head)
         ?? Object.values(TARGETS).find((t) => t.partOf(head))?.partOf(head);
@@ -2475,7 +2475,7 @@
     function pickableNames(state, pos) {
       const text = state.doc.toString();
       const track = trackKindAt(text, pos);
-      const fits = (d) => d.kind === 'voice' ? track == null || track === 'voice'
+      const fits = (d) => d.kind === 'voice' ? track == null || track === 'voice' || track === 'midi'
         : d.kind === 'sample' ? track == null || track === 'sample'
         : d.kind === 'wave' ? track == null || track === 'wave'
         : d.kind !== 'val' && d.kind !== 'fn';
@@ -9126,6 +9126,8 @@
       if (what === 'part') return target.hasPart(arg);
       if (what === 'word') return target.hasWord(arg);
       if (what === 'driver') return target.driver === 'mmlispdrv';
+      // A sound of its own to record (not `:target midi`'s, whose sound is a MIDI output's).
+      if (what === 'sound') return target.sound !== false;
       return !!target[what];
     }
     function applyTargetUi(ir) {
@@ -9391,6 +9393,9 @@
           await syncPcmBankToWorklet(_lastGoodIR, player, current);
           if (!current()) return;
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
+          // A score with no sound of its own sounds on a MIDI output only.
+          if (targetProfile(_lastGoodIR.metadata?.target).sound === false && !_midiOutRun)
+            log('This machine has no sound of its own: choose MMLisp > MIDI > Output to hear it', 'warn');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
@@ -10015,10 +10020,10 @@
       _libFitsKind = track;
       // Outside a track, what the score's machine can play.
       if (track == null) return (it) => it.source !== 'presets' || !it.mark;
-      const chip = { voice: 'fm', sample: 'pcm', psg: 'psg', wave: 'wave' }[track];
+      const chip = { voice: 'fm', sample: 'pcm', psg: 'psg', wave: 'wave', midi: 'midi' }[track];
       return (it) => it.source === 'ref' ? !it.tracks || it.tracks.includes(chip)
         : it.source !== 'presets' ? true
-        : !it.mark && (it.kind === 'macro' || (track === 'voice' && it.kind === 'fm')
+        : !it.mark && (it.kind === 'macro' || ((track === 'voice' || track === 'midi') && it.kind === 'fm')
           || (track === 'sample' && it.kind === 'pcm') || (track === 'wave' && it.kind === 'wave'));
     }
 

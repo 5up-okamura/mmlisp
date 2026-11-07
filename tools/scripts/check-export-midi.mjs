@@ -26,7 +26,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { exportMidi, GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/export-midi.js";
+import { exportMidi, midiPlan, GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/export-midi.js";
 import { OPLL_ROM_NAMES } from "../../live/src/chips/ym2413.js";
 import { VRC7_ROM_NAMES } from "../../live/src/chips/vrc7.js";
 import { parseMidi, analyzeMidi } from "../../live/src/import-midi.js";
@@ -243,6 +243,28 @@ const exported = (src) => {
   assert.deepEqual(o.tracks.map((t) => [t.name, t.drums, t.notes.map((n) => n.key)]), [["pcm1", true, [36, 62]], ["pcm2", false, [60, 64]]]);
   assert.ok(o.notes.some((n) => /^pcm1: clap-x: no kit role/.test(n)), o.notes.join(" | "));
   assert.ok(o.notes.some((n) => /^pcm2: clap-x: no kit role, so the hits are notes/.test(n)), o.notes.join(" | "));
+}
+
+// ── :target midi: the channels it names, its own words ────────────────────
+{
+  const planOf = (file) => midiPlan(compileScoreFile(file, { voiceStamps: true, voiceHoist: false }).ir);
+  const ctl = (t, status) => t.events.filter((e) => (e.bytes[0] & 0xf0) === status).map((e) => [Math.round(e.tick), ...e.bytes.slice(1)]);
+  const p = planOf("tools/tests/midi/channels.mmlisp");
+  const tr = Object.fromEntries(p.tracks.map((t) => [t.name, t]));
+  assert.deepEqual(p.tracks.map((t) => [t.name, t.channel]), [["ch1", 0], ["ch2", 1], ["ch3", 2], ["ch16", 15]], "a track is the channel it names");
+  assert.deepEqual(p.notes, [], "nothing left out: every word is MIDI's");
+  assert.deepEqual(ctl(tr.ch1, 0xc0), [[0, 0], [384, 73]], "gm-piano, then flute, by name");
+  assert.deepEqual(ctl(tr.ch2, 0xc0), [[0, 81]], ":program 81 in a def");
+  assert.ok(ctl(tr.ch2, 0xb0).filter(([, c]) => c === 74).length > 8, "a :cc74 macro, a value a step");
+  assert.deepEqual(ctl(tr.ch2, 0xd0).map(([, v]) => v), [64], ":pressure 64");
+  const ch3 = tr.ch3.events.filter((e) => e.tick === 0 && e.bytes[0] < 0xf0).map((e) => [e.bytes[0] & 0xf0, ...e.bytes.slice(1)].join(","));
+  assert.ok(ch3.indexOf("176,0,1") >= 0 && ch3.indexOf("176,0,1") < ch3.indexOf("192,48"), ":bank 128 (CC0 1, CC32 0) ahead of :program 48");
+  assert.ok(ch3.includes("176,6,12"), ":bend-range 12 is RPN 0");
+  assert.deepEqual(ctl(tr.ch16, 0xc0), [[0, 38]], "a role: synth-bass is the gm bass-syn1");
+  const d = planOf("tools/tests/midi/drums.mmlisp");
+  const keys = (n) => [...new Set(d.tracks.find((t) => t.name === n).notes.map((x) => x.key))].sort((a, b) => a - b);
+  assert.deepEqual(d.tracks.filter((t) => /^drums/.test(t.name)).map((t) => [t.name, t.channel]), [["drums", 9], ["drums2", 9], ["drums3", 9]], "the drums' tracks, all channel 10");
+  assert.deepEqual([keys("drums"), keys("drums2"), keys("drums3")], [[36, 38], [42, 46], [49]], "kick snare / hat hat-open / crash at their GM keys");
 }
 
 // ── The import reads it back ──────────────────────────────────────────────

@@ -1452,6 +1452,11 @@ MIDI, and the menu is not shown there). The choice is remembered.
   unassigns the picked slider, `Esc` ends. `Clear CC Assignments` removes them
   all. Assignments belong to this browser, not to the score.
 
+A score for a MIDI instrument rather than a chip is `(def-score :target midi)`
+(`docs/language.md` §19): its channels are `ch1`–`ch16` and the drums, its
+instruments `:program` or a voice's name, its controllers `:cc74` …, and it
+sounds only through the output below.
+
 `MMLisp > MIDI > Output` plays the preview to a MIDI output as well — a
 sound module, a DAW, a synthesizer beside the chips. `Choose Output…` asks
 the browser once, then lists the outputs; `Off` stops. What goes out is what

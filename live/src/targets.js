@@ -23,9 +23,10 @@ import msx from "./targets/msx.js";
 import pce from "./targets/pce.js";
 import fc from "./targets/fc.js";
 import gb from "./targets/gb.js";
+import midi from "./targets/midi.js";
 import { opllRomVoices } from "./chips/ym2413.js";
 
-const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10 };
+const SCOPE_BASE = { fm: 0, tone: 6, noise: 6, sample: 10, wave: 10, midi: 0 };
 
 function profile(def) {
   // A register write names its chip by the worklet's port (chips/ `vgm.ports`:
@@ -84,7 +85,7 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce), fc: profile(fc), gb: profile(gb) };
+export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce), fc: profile(fc), gb: profile(gb), midi: profile(midi) };
 export const DEFAULT_TARGET = "md";
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */
@@ -130,9 +131,12 @@ export function builtinNames(target) {
     { name: "init-fm", kind: "voice", builtin: true, from: "built-in", about: "The blank voice: a sine" },
     ...[...opllRomVoices(fm).keys()].map((name) => ({ name, kind: "voice", builtin: true, from: fm.rom ? "ROM" : "ROM 4-op", about: `${fm.rom ? fm.label : "The OPLL"}'s ROM voice` })),
   ];
+  // A MIDI channel's instruments, by name (chips/midi.js programNames).
+  const programs = target.parts.filter((p) => p.programNames).flatMap((p) => p.programNames.map((name) =>
+    ({ name, kind: "voice", builtin: true, from: "GM", about: `GM program ${p.programOf(name)}` })));
   const kit = target.parts.filter((p) => p.kit).flatMap((p) =>
     Object.entries(p.kit).map(([name, sound]) => ({ name, kind: "sample", builtin: true, from: "ROM", about: `${p.label}: ${sound.toUpperCase()}` })));
-  return [...voices, ...kit];
+  return [...voices, ...programs, ...kit];
 }
 
 /**

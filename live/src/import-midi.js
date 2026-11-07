@@ -40,7 +40,7 @@ import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimate
   assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
 import { DEFAULT_TARGET, targetProfile } from "./targets.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
-import { GM_PROGRAMS } from "./export-midi.js";
+import { GM_PROGRAMS, GM_KIT_ROLES } from "./export-midi.js";
 
 // presets/gm, in program order (README.md), the MIDI export's table. The
 // bank's note offsets live on the voices themselves, as `:key` — a key is
@@ -401,7 +401,7 @@ function detectGrid(analysis) {
 export function midiDests(targetName = DEFAULT_TARGET) {
   const tp = targetProfile(targetName);
   const d = destsFor(tp);
-  return { melodic: [...d.fm, ...d.psg, ...d.wave], drums: [...d.pcm, ...d.noises] };
+  return { melodic: [...d.fm, ...d.psg, ...d.wave, ...d.midi], drums: [...d.pcm, ...d.noises] };
 }
 // What one channel is to the rest: the sounds of a kit share a voice but each
 // is a track, so a track names itself.
@@ -454,7 +454,7 @@ export function defaultMidiOptions(analysis, target = DEFAULT_TARGET) {
     dest[l.key] = h ?? "drop";
     if (h) take(h);
   });
-  const pools = [d.fm, d.psg, d.wave].map((p) => p.filter(board)).sort((a, b) => b.length - a.length);
+  const pools = [d.fm, d.psg, d.wave, d.midi].map((p) => p.filter(board)).sort((a, b) => b.length - a.length);
   const free = pools.flat().filter((h) => !gone.has(tp.voiceKey(h)));
   melodic.forEach((l) => { dest[l.key] = free.shift() ?? "drop"; });
   // The 2A03's triangle has no level: the bass, which least needs one.
@@ -611,6 +611,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const use = (set, name) => { presets.add(set); return name; };
   // A program as the channel plays it (the header's reading of a program).
   const voiceOf = (part, program) => {
+    if (part.kind === "midi") return GM_VOICES[program]; // built in: the program itself
     if (part.kind === "fm") return part.words("FM_ALG") ? use("gm", GM_VOICES[program]) : romVoiceOf(part, roleOf(program));
     if (part.kind === "wave") return use("wavetable", `wave-${roleOf(program)}`);
     return part.noLevel ? null : use("envelopes", psgEnvOf(program));
@@ -618,6 +619,8 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // A drum key as the channel plays it: the sound to switch to, the note.
   const drumOf = (part, key) => {
     const kind = drumKindOf(key);
+    // A GM kit (`:target midi`'s drums) has the key's own role.
+    if (part.kit?.[GM_KIT_ROLES[key]]) return { name: GM_KIT_ROLES[key], midi: DRUM_KEY };
     if (part.kit) return { name: kind.kit.find((k) => part.kit[k]), midi: DRUM_KEY };
     if (part.kind === "sample") return { name: GM_DRUMS[key] && use("gm-drums", GM_DRUMS[key]), midi: DRUM_KEY };
     const env = use("envelopes", kind.env);

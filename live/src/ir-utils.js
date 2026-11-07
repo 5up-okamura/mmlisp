@@ -84,6 +84,15 @@ export const MACRO_TARGET_RANGE = {
   LOOP_END: { min: 0, max: 8 },
   LOOP_LEN: { min: 0, max: 8 },
 
+  // A MIDI channel's (chips/midi.js): a controller CC0–CC127 (the suffix
+  // stripped), its pressure, its program, its bank (14 bits: MSB and LSB) and
+  // its bend's range in semitones.
+  CC: { min: 0, max: 127 },
+  PRESSURE: { min: 0, max: 127 },
+  PROGRAM: { min: 0, max: 127 },
+  BANK: { min: 0, max: 16383 },
+  BEND_RANGE: { min: 1, max: 24 },
+
   // Value slots (def-val) as write targets, VAL0–VAL15: an i16, like the slot.
   VAL: { min: -32768, max: 32767 },
 };

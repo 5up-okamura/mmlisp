@@ -51,6 +51,24 @@ The names themselves are guide.md §25; the reasons:
 - No wait for the cursor to rest before the panel swaps. (Drawing on a
   stage vector and wave generators are on the roadmap.)
 
+## MIDI (midi; built 2026-11-07)
+
+- **No chords, by ruling** (the user, 2026-11-07): a channel plays one note
+  at a time, as every machine's; a chord is several channels. Notes that
+  start and stop together could be written, others could not, so none are.
+- **The drums are four tracks** (`drums`, `drums2`–`drums4`, all channel 10),
+  as a ROM rhythm's are: GM drums need hits that sound together.
+- **No `def-midi`**: an instrument is `:program` (and `:bank`), a patch a
+  `def` of words; a voice named for an instrument (gm-*, the roles, the
+  VRC7's ROM names) writes its program — built in, as the OPLL's ROM is.
+- **No sound of its own**: Live's Play runs the clock silent (synth-midi.js)
+  and the MIDI output sounds it; WAV, VGM, stems and video are refused.
+  A SoundFont preview is on the roadmap.
+- **`:vel` stays the language's 16 steps** (2 dB), read as a GM level; a
+  finer velocity waits for a score that needs it.
+- Open: the on-screen keyboard and a MIDI keyboard's preview notes go to the
+  silent synth, not to the MIDI output.
+
 ## The PC Engine (pce; built 2026-10-27)
 
 - **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,

@@ -1,0 +1,9 @@
+; :target midi — a General MIDI instrument's channels: programs by name and by
+; number, a bank, controllers written, swept and stepped by a note's macro,
+; channel pressure, the bend's range, a glide, a loop.
+(def-score :target midi :title "midi channels")
+(def lead :program 81 :cc74 40)
+(ch1 :tempo 120 gm-piano :len 4 #top c e g :pan left > c < flute :vol 24 c e g e (go top))
+(ch2 lead :len 8 (macro :cc74 (sin 30..90 :len 2)) c d e f :pressure 64 g a b > c)
+(ch3 :bank 128 :program 48 :bend-range 12 :len 2 c :pitch (linear 0..700 :len 12f) e :pitch 0 g c)
+(ch16 synth-bass :oct 2 :len 8 :cc1 (linear 0..127 :len 4) c c g g c c g g)

@@ -69,7 +69,8 @@ never compiled for one standard and baked for the other (driver.md §3.3).
 
 `metadata.target` is the machine the score is for (`(def-score :target …)`,
 language.md §19), present only when it is not the Mega Drive: `"pc88"`,
-`"x68k"`, `"msx"`, `"pce"`, `"fc"`, `"gb"`. A
+`"x68k"`, `"msx"`, `"pce"`, `"fc"`, `"gb"`, `"midi"` (no chips: the IR player
+keeps its clock and writes nothing). A
 consumer reads its chips from its profile (`live/src/targets.js`). The MMB exporter refuses
 any target but the Mega Drive, and the IR player one whose chips have no
 register encoder yet (`live/src/chips/`).
@@ -667,6 +668,10 @@ write.
 | `LFO_PMD` / `LFO_AMD` | 0–127      | `x68k`: the LFO's pitch / level depth (reg 0x19, bit 7 set / clear). `fc`: `LFO_PMD` the FDS's modulation depth, 0–63 ($4084). Song-wide. |
 | `LFO_WAVE`        | 0–3            | `x68k`: the LFO's waveform (reg 0x1B bits 1–0): saw, square, triangle, noise. `fc`: no `value` but `table`, the FDS's modulation table — 32 steps, each `0`, `±1`, `±2`, `±4` or `"reset"` ($4088). Song-wide. |
 | `FM_NOISE`        | 0–1            | `x68k` fm8's `:mode`: 1 noise (reg 0x0F bit 7, NE: its fourth operator the noise), 0 tone. |
+| `CC0`–`CC127`     | 0–127          | `midi`: the channel's controller n (`:cc74`): a write, a sweep, a note's macro (`cc74` in NOTE_ON's args). |
+| `PRESSURE`        | 0–127          | `midi`: the channel's pressure (aftertouch); a write, a sweep, a note's macro. |
+| `PROGRAM` / `BANK` | 0–127 / 0–16383 | `midi`: the channel's program and the bank it reads from (CC0 / CC32). Inline only; a voice named for an instrument emits its PROGRAM (`chips/midi.js`). |
+| `BEND_RANGE`      | 1–24           | `midi`: the channel's pitch bend reach in semitones (RPN 0). Inline only. |
 | `VAL0`–`VAL15`    | −32768–32767   | Value slot n (`:name` of a `def-val`, language.md §8). Song-wide, as `MASTER`; no register. |
 | `FM_ALG`          | 0–7            | B0 bits 2–0.                                                 |
 | `FM_FB`           | 0–7            | B0 bits 5–3.                                                 |

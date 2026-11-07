@@ -85,7 +85,9 @@ function outputsOf({ file, frameHz, seFile }, compiled) {
     // No MMB; the IR and its diagnostics, and the rest once the chips encode.
     const { ir, diagnostics } = compiled;
     const out = { diagnostics: diagnostics.map((d) => d.code ?? d.message).join(","), ir: plainIr(ir) };
-    if (!target.encodes || diagnostics.some((d) => d.severity === "error")) return out;
+    // A machine with no sound of its own (`:target midi`) has its IR and its
+    // MIDI (below): no register log, no VGM.
+    if (!target.encodes || target.sound === false || diagnostics.some((d) => d.severity === "error")) return out;
     // The chip's own sample RAM (the YM2608's ADPCM-B) or the samples as
     // frames (PCM8's, the PC Engine's DDA), baked as Live does.
     const { adpcm, frames } = bakedChipSamples(ir, target);

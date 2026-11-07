@@ -110,8 +110,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
 ## Outputs
 
 The score's way out to other tools, beside the game. File > Export > MIDI,
-Stems and MMLisp > MIDI > Output are built; the rest, in this order, waits for
-its use:
+Stems, MMLisp > MIDI > Output and `:target midi` are built; the rest, in this
+order, waits for its use:
 
 1. **Stems that add up on every chip** — today a stem is its strip soloed,
    and where an emulator steps on a register write (the YM2612's and
@@ -119,11 +119,12 @@ its use:
    OPLL's user voice, the 2A03's mixer) the stems summed are not the WAV
    sample for sample. One render with every write and the chip's own
    channel taps would be; per chip, for a user who needs the sum.
-2. **`:target midi` and a plugin** — a score written for MIDI, and the
-   machines as instruments in a DAW, are held until 1 and 2 show who uses
-   them: a target is the language's vocabulary and a preview to carry, and a
-   chip VSTi has makers already (a plugin that plays a score, its def-vals the
-   DAW's automation, is the one MMLisp would bring).
+2. **A plugin** — the machines as instruments in a DAW, held until someone
+   needs it: a chip VSTi has makers already (a plugin that plays a score, its
+   def-vals the DAW's automation, is the one MMLisp would bring).
+3. **`:target midi`'s own preview** — today it sounds only through a MIDI
+   output (and not in Safari, which has no Web MIDI); a SoundFont player
+   would give it WAV, stems and a sound in every browser.
 
 ## Future vision
 
