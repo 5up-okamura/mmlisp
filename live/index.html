@@ -10311,7 +10311,8 @@
 
     // The Guide's steps (tutorial/), so a search finds how the app is used —
     // `export`, `tap tempo` — as it finds the language: Open goes to the step.
-    // Under All and the search only; the Guide tab is their own list.
+    // Reference as the language's entries are (under All and Ref, their
+    // groups after the entries'); the Guide tab is their own list.
     async function guideItems() {
       let lessons;
       try { lessons = await loadLessons(); } catch (e) { log('Library: ' + e.message, 'err'); return []; }
@@ -10320,7 +10321,7 @@
         fetchText(`tutorial/${key}.mmlisp`).then(parseStep).catch(() => null)));
       return steps.flatMap(({ l, li, st, si, key }, i) => texts[i] ? [{
         key: 'guide:' + key,
-        source: 'guide',
+        source: 'ref',
         group: 'guide:' + l.id,
         groupLabel: `Guide · ${lessonText(l.id, l.title)}`,
         name: lessonText(textKeys(key).title, st.title),

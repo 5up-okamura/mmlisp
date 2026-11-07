@@ -2695,8 +2695,8 @@ open editing tools, **Library**, everything that comes with the app in one
 list — the language reference (**Ref**), the **Presets** (the voice, sample and wave sets), the
 **Snippets** and the **Scores** (the examples) — so looking up a keyword,
 picking a voice or trying a technique takes one click instead of a file
-dialog — and **Guide** (below). Under All, the Library lists the Guide's steps
-too: a search for `export` or `tap tempo` finds how the app does it, and
+dialog — and **Guide** (below). Under All and Ref, the Library lists the
+Guide's steps too: a search for `export` or `tap tempo` finds how the app does it, and
 **Open** goes to the step. **Tools ▸ Library** — or **⌘K** / **Ctrl+K** from
 anywhere, the editor included — opens the panel on Library with the search box
 taking the keys; **Tools ▸ Params** — **⌘J** / **Ctrl+J** — opens it on Params,
