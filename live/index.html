@@ -1142,6 +1142,7 @@
     import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import-timing.js';
     import { RATE, PPQN } from './src/import-song.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
+    import { portRows, portScore } from './src/score-port.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
@@ -3646,10 +3647,11 @@
     }
 
     // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so there is no
-    // tempo to estimate and nothing to set — no dialog. What the file holds
+    // tempo to estimate and nothing else to set. What the file holds
     // goes to the log; repeats are always folded (a run through MXDRV's or
     // MGSDRV's loops is nothing but repeats).
-    // The one thing to choose is the target: its own machine, or General MIDI.
+    // The one thing to choose is the target: its own machine, or General MIDI
+    // (an MDX also md and pc88, with rows: importMdxBytes).
     async function driverSongTarget(fileName, own, summary) {
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3659,18 +3661,50 @@
       });
       return got ? got.fields.target : null;
     }
+    // An MDX is read as the X68000's score whichever Target: md and pc88 then
+    // take it at the words' level (score-port.js) — its voices, loops and
+    // gates as MXDRV played them — with a row per part (FM A–H, PCM) onto
+    // the machine's channels, or drop.
+    const MDX_TARGETS = ['x68k', 'md', 'pc88'];
     async function importMdxBytes(bytes, fileName, pdx) {
       const mdx = parseMdx(bytes);
       const a = analyzeMdx(mdx);
       const played = a.tracks.filter((t) => t.notes.length);
       const hasPcm = played.some((t) => t.pcm);
       const about = `MDX${mdx.pcm8 ? ' (PCM8)' : ''}${mdx.title ? ' · ' + mdx.title : ''} · ${a.bpm} BPM at the start · ` + played.map((t) => t.label).join(' · ');
-      const target = await driverSongTarget(fileName, 'x68k', about + '. Played clock-exact on MXDRV’s timing; repeats folded.');
-      if (!target) return null;
+      const res = mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
+      // Each x68k channel's part, as the summary names it.
+      const partOf = Object.fromEntries(played.map((t) => [t.pcm ? `pcm${t.index - 7}` : `fm${t.index + 1}`, t.name]));
+      const rowsFor = (target) => {
+        if (target === 'x68k' || !MDX_TARGETS.includes(target)) return [];
+        const plan = portRows(res.source, target);
+        if (plan.error) return [];
+        return plan.rows.map((r) => ({
+          key: r.key,
+          label: r.key === 'fm8/noise' ? `${partOf.fm8 ?? 'FM H'} · its noise notes` : partOf[r.head] ?? r.head,
+          value: r.to,
+          choices: r.choices,
+        }));
+      };
+      const got = await showImportDialog({
+        title: `Import ${fileName}`,
+        summary: about + '. Played clock-exact on MXDRV’s timing; repeats folded.',
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: 'x68k', rebuildsRows: true,
+          choices: withMidi(MDX_TARGETS, 'x68k'),
+          hint: 'x68k plays it as its driver does; md and pc88 take its voices, loops and gates as written — FM past their six, and the PCM past theirs, on the channels left free, what they have not (DT2, the OPM’s LFO, its noise) read in their words or said; General MIDI reads it as the X68000’s, then gives each channel a GM instrument and the drums kit roles' }],
+        rows: [],
+        rowsFor,
+      });
+      if (!got) return null;
+      const target = got.fields.target;
       log(`${fileName}: ${about}`, 'info');
       if (hasPcm && !pdx) log(`${fileName}: the ADPCM needs ${mdx.pdxName || 'its PDX'}, picked (or dropped) with the MDX — its tracks are left out`, 'warn');
-      const res = mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
-      return target === 'midi' ? readViaMidi(res, { fileName, tag: 'MDX', own: 'x68k' }) : res;
+      if (target === 'midi') return readViaMidi(res, { fileName, tag: 'MDX', own: 'x68k' });
+      if (target === 'x68k') return res;
+      const out = portScore(res.source, target, { rows: got.rows, header: false });
+      if (out.error) throw new Error(out.error);
+      const source = out.text.replace(/^(; Imported from .*?) \(MDX\)/, `$1 (MDX, read as x68k, then onto ${target})`);
+      return { ...res, source, warnings: [...res.warnings, ...out.said] };
     }
 
     async function importMgsBytes(bytes, fileName) {

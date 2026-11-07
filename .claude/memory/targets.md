@@ -128,9 +128,10 @@ keys, as check-import-to-midi compares); tools/tests' md, pc88 and x68k
 scores each onto the other two compile clean, notes kept where a channel
 takes them; the dropped-words list is what the rules say.
 
-Order: score-port.js + check (done) → the MDX dialog's rows → Edit > Convert
-to Machine… (the import dialog reused, `showImportDialog`) → guide.md (§ Song
-imports, § Edit).
+Order: score-port.js + check (done) → the MDX dialog's rows (done: Target
+x68k / md / pc88 / midi, rows from `portRows`, guide.md § Song imports) →
+Edit > Convert to Machine… (the import dialog reused, `showImportDialog`) →
+guide.md § Edit.
 
 Built (score-port.js, `check:score-port`): `portRows(text, to)` gives the
 dialog its rows ({key, head, kind, notes, to, choices}; x68k fm8's noise

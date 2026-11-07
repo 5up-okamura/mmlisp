@@ -58,8 +58,8 @@ const isNote = (v) => typeof v === "string" && NOTE.test(v);
 const restOf = (v) => `_${NOTE.exec(v)[2]}`;
 const num = (node) => (node?.kind === "atom" && /^-?\d+(\.\d+)?$/.test(node.value) ? Number(node.value) : null);
 const isList = (n, head) => n?.kind === "list" && n.bracket === "()" && (head == null || n.items[0]?.value === head);
-const NOISE_SPLIT = "fm8/noise";
-const notes = (n) => `${n} note${n === 1 ? "" : "s"}`; // the row of x68k fm8's :mode noise notes
+const NOISE_SPLIT = "fm8/noise"; // the row of x68k fm8's :mode noise notes
+const notes = (n) => `${n} note${n === 1 ? "" : "s"}`;
 
 /** The `:target` a score names, or md. */
 export function scoreTargetOf(text) {
@@ -112,8 +112,7 @@ function walk(items, fn) {
   let prev = null;
   for (const n of items) {
     if (isList(n) && DESCEND.has(n.items[0]?.value)) walk(n.items.slice(1), fn);
-    else if (n.kind === "list") for (const m of n.items) if (m.kind === "atom") fn(m, null);
-    fn(n, prev);
+    else fn(n, prev); // a value list (a curve, a glide) is no body
     prev = n;
   }
 }
@@ -607,6 +606,10 @@ class Porter {
         outs[i] = this.renderList(it, inner.outs, inner.after);
       }
     }
+    // A tie into or out of a note the split made a rest ties nothing.
+    if (ctx.split)
+      for (let i = start; i < items.length; i++)
+        if (items[i].value === "~" && [outs[i - 1], outs[i + 1]].some((o) => typeof o === "string" && o.startsWith("_"))) outs[i] = null;
     return { outs, after };
   }
 
@@ -651,6 +654,7 @@ class Porter {
       return DROP;
     }
     if (ctx.destPart ? ctx.destPart.words(w) : this.to.hasWord(w)) return KEEP;
+    if (w === "PAN" && (val.value === "center" || val.value === "0")) return DROP; // as a channel with none plays
     const label = ctx.srcPart?.words(w) ? ctx.srcPart.label : owners.find((p) => this.from.parts.includes(p))?.label ?? owners[0].label;
     this.say(`${base} (the ${label}'s): ${where} has none; taken out`);
     return DROP;

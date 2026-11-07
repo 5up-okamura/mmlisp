@@ -1871,8 +1871,8 @@ plays it as found, other notes retune it.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
-**A song import opens a dialog first** (an MDX or MGS has only its Target
-to choose): what the file holds, the timing and
+**A song import opens a dialog first** (an MGS has only its Target to
+choose; an MDX its Target and, onto md or pc88, its rows): what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
@@ -2355,7 +2355,16 @@ hit starts.
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
 written for the song's own machine: an MDX as an `x68k` score, an MGS as an
-`msx` one (or, as its Target, General MIDI's: above). Both count in clocks, 48 a quarter, so the timing is exact (no
+`msx` one (or, as its Target, General MIDI's: above). An MDX's Target can
+also be `md` or `pc88`: the `x68k` score is then moved onto that machine at
+the words' level, so the voices, loops, gates and curves stay as written. A
+row per part (FM A–H, the PCM) takes it to a channel or drops it. By
+default every part keeps its channel where the machine has it, and FM G and
+H go to an FM channel the song leaves free, else a square. Track H's noise
+notes go to `noise`. What the machine lacks is read in its words —
+`:lfo-freq` as the nearest `:lfo-rate`, a noise rate as the nearest
+`:mode whiteN` — or dropped (DT2, the OPM's LFO depths and wave, PCM8's
+`:pitch` on the Mega Drive), and the log says each. Both count in clocks, 48 a quarter, so the timing is exact (no
 tempo is estimated); an MDX whose notes sit on another grid (176-clock
 bars: 44 a quarter) is read on that one, its notes 8ths and 16ths and its
 tempo scaled to match and the tempo commands become `:tempo`. Each track keeps
