@@ -9398,6 +9398,8 @@
           _runSe = se;
           await syncPcmBankToWorklet(_lastGoodIR, player, current);
           if (!current()) return;
+          if (se == null) await gmReadyFor(_lastGoodIR);
+          if (!current()) return;
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
           // A score with no sound of its own sounds on a MIDI output only.
           if (targetProfile(_lastGoodIR.metadata?.target).sound === false && !_midiOutName)
@@ -13381,7 +13383,10 @@
       } else if (isGmOut(_midiOutName)) {
         const source = _midiOutName;
         _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont, reverb: gmReverb(), onLate: gmLate }) };
-        startGmOutput();
+        // Chosen from the menu (a tap), the context can start and the bank
+        // load now, not under the first Play; restored at launch, it waits.
+        if (!quiet && !audioCtx) initAudio().then(() => startGmOutput());
+        else startGmOutput();
       } else if (!quiet && was) log('MIDI output: off', 'info');
       renderMidiOutMenu();
     }
@@ -13412,6 +13417,24 @@
       if (_lastGoodIR) requestMidiPlan(_lastGoodIR);
     }
 
+    // The GM output ready before a run starts: its bank loaded and the
+    // score's voices decoded, so neither lands on the audio thread while the
+    // song plays (heard as drop-outs; on a phone, whose output is a stream,
+    // as a pitch that sags at the start while the stream catches up). A slow
+    // fetch holds the song back no longer than GM_READY_MS.
+    const GM_READY_MS = 8000;
+    async function gmReadyFor(ir) {
+      const gm = _gm;
+      if (!gm || gm.failed || !ir) return;
+      startGmOutput();
+      if (!gm.ready) return;
+      const ready = (async () => {
+        await gm.ready;
+        if (_gm === gm && _midiOutRun) await requestMidiPlan(ir, { reuse: true });
+      })().catch(() => {});
+      await Promise.race([ready, new Promise((r) => setTimeout(r, GM_READY_MS))]);
+    }
+
     // The GM output takes the run once there is a context (on a phone, the
     // first Play: ensureWorkletNode calls this) and its bank is loaded; a
     // run already playing picks it up from there, as an output turned on
@@ -13423,7 +13446,7 @@
       const what = gm.source === GM_OUT ? 'GM (FluidR3Mono)' : `SoundFont ${loadPref('soundFont', '')}`;
       log(`MIDI output: ${what}, loading…`, 'info');
       const t0 = performance.now();
-      gm.output.attach(audioCtx, synthOutput()).then((r) => {
+      gm.ready = gm.output.attach(audioCtx, synthOutput()).then((r) => {
         if (_gm !== gm) return;
         startMidiOutRun({
           send: (bytes, ms) => gm.output.send(bytes, ms / 1000),
@@ -13519,23 +13542,29 @@
     // The plan of a compiled IR — asked as it is compiled (applyCompile), so
     // it is there by its Play or its swap at the bar: its source, the sliders'
     // values. A plan is for that IR only — its tracks, by name, the IR's.
-    function requestMidiPlan(ir) {
-      if (!_midiOutRun) return;
+    // Resolves when the plan is set (and, on the GM output, its voices
+    // decoded); `reuse` takes a request already on its way for that IR.
+    const _midiPlanPending = new WeakMap(); // IR → its latest request
+    function requestMidiPlan(ir, { reuse = false } = {}) {
+      if (!_midiOutRun) return Promise.resolve();
+      if (reuse && _midiPlanPending.has(ir)) return _midiPlanPending.get(ir);
       _midiOutAsked.add(ir);
       // Only an IR the editor compiled has a plan: its own source, never
       // another's that happens to use the same channels.
       const src = _irSource.get(ir);
-      if (src == null) return;
+      if (src == null) return Promise.resolve();
       const failed = (why) => { if (!_midiOutAsked.has(ir)) return; log(`MIDI output: no plan for this score (${why}); nothing is sent for it`, 'warn'); };
-      compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
+      const asked = compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
         if (!r?.plan) return failed('it did not compile');
         const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
         if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return failed('its tracks differ');
         _midiOutRun?.setPlan(r.plan, ir);
         // The GM output decodes the plan's programs and keys now, not on
         // their first notes, where the audio thread would stall.
-        _gm?.output.preload(r.plan).catch(() => {});
+        return _gm?.output.preload(r.plan).catch(() => {});
       }).catch((e) => failed(e?.message ?? e));
+      _midiPlanPending.set(ir, asked);
+      return asked;
     }
 
     // A slider moved: the plan made again, the output going on from where it is.

@@ -89,7 +89,11 @@ The names themselves are guide.md §25; the reasons:
   send). Crackles were reported on the GM output (2026-11-07), not
   reproduced headless (2 late quanta at the bank's load, none playing); the
   worklet now says when quanta run late (gm-worklet.js 'late'), which tells
-  an underrun from a sound of the bank's.
+  an underrun from a sound of the bank's. A pitch that sags early in a
+  played song (the user, 2026-11-07; its WAV clean) is taken for the phone's
+  output stream starving while the bank loaded and voices decoded on the
+  audio thread under the first Play: Play now waits for both (gmReadyFor),
+  and choosing GM from the menu loads it in that tap. Open until heard.
 - **A SoundFont as its sound** (the user's go, 2026-11-07). Built: the GM
   output (gm-output.js, gm-worklet.js; MMLisp > MIDI > Output, any browser),
   spessasynth_core in an AudioWorklet of its own fed MidiOutRun's bytes at
