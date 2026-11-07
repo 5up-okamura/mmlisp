@@ -7,7 +7,8 @@ emulators, and compile them to a compact binary for a Mega Drive sound driver �
 with a design built around *interactive* music: tracks that start, stop, layer,
 and respond to game state at runtime. The same language writes for the
 PC-8801, the X68000, the MSX, the PC Engine, the Famicom and the Game Boy, auditioned in the
-browser and exported as VGM.
+browser and exported as VGM — and for a General MIDI instrument: every score
+goes out as a MIDI file, and Live plays it to a MIDI port as it plays.
 
 - **Try it now:** https://mmlisp.com/
 - **Playback driver:** MMLispDRV (68k sequencer + Z80 PCM/write engine, SGDK
@@ -39,6 +40,16 @@ browser and exported as VGM.
   Engine, the Famicom or the Game Boy: their chips' own
   channels and words, auditioned in Live and exported as VGM — see
   [Machines](#machines).
+- **Out as MIDI, too.** Every score, on every machine, exports a Standard
+  MIDI File — its notes, voices as GM programs, levels, pans, bends and loop
+  — and Live plays the same to a MIDI port (Web MIDI) in time with the
+  chips, following tempo, loops, seeks, mute / solo and the mixer's faders:
+  a sound module, a DAW or a synth beside the emulation. `(def-score :target
+  midi)` writes for a GM instrument itself — `ch1`–`ch16`, the drums as
+  `drum1`–`drum8` on channel 10, `:prog` / `:bank`, any controller as
+  `:cc74`, `:pressure`, `:bend-range` — swept and stepped by the same curves
+  and macros as a chip's registers. File > Export > Stems renders each mixer
+  strip as a WAV of its own for a DAW.
 - **Interactive by design.** Tracks start, stop, layer and fade at runtime,
   sound effects take channels from the song and give them back, and `def-val`
   slots let game code drive parameters live via `$name` — in Live, an XY pad
@@ -83,6 +94,11 @@ browser and exported as VGM.
 | `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
 | `gb` | Game Boy | LR35902's APU: two pulses, wave, noise | its own | VGM, WAV |
 | `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
+| `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a MIDI output | MIDI |
+
+Every machine also exports MIDI (File > Export > MIDI…) and plays to a MIDI
+output (MMLisp > MIDI > Output) beside its chips; `midi` has no sound of its
+own, so it plays only there and has no WAV or VGM.
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each
@@ -154,7 +170,8 @@ Follow Playback; the FM parameter panel — the machine's own operators and
 registers, the FM-PAC's two on msx — live from playback and editable while
 it runs; one slider per `def-val` and an XY pad; channel mute / solo; the
 on-screen keyboard and a MIDI keyboard to play and step-input, with MIDI Learn
-for a controller's knobs.
+for a controller's knobs. MMLisp > MIDI > Output plays the score to a MIDI
+port as well, on the preview's clock.
 
 **Bringing sounds in** (File > Import, or drop the file):
 
@@ -183,7 +200,8 @@ for a controller's knobs.
   song opens converted and finds its PDX or mucom88 banks beside it, and a
   downloaded song pack needs no unpacking
 
-**Saving and sharing.** VGM, WAV and video export, PCM included; `.mmlisp`
+**Saving and sharing.** VGM, WAV, MIDI, stems (a WAV a mixer strip, in a
+ZIP) and video export, PCM included; `.mmlisp`
 files opened and saved in place, File > Open Recent, and the score kept in the
 browser between launches; File > Share… makes a short link that opens the
 score.
