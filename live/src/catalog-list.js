@@ -38,7 +38,7 @@ export function setTextWithIcons(el, text) {
 export function createCatalogList({ list, note, hint = () => '', onHighlight = () => {} }) {
   let items = [];
   let groupActions = {};
-  let filter = { source: 'all', kinds: new Set(), fits: null, order: 'group', query: '' };
+  let filter = { source: 'all', fits: null, order: 'group', query: '' };
   const open = new Set(); // groups unfolded by hand
   let rows = []; // what is on screen, in order: { el, item } or { el, group }
   let at = -1;
@@ -59,7 +59,6 @@ export function createCatalogList({ list, note, hint = () => '', onHighlight = (
   function visible() {
     return items.filter((it) =>
       (filter.source === 'all' || it.source === filter.source)
-      && (filter.kinds.size === 0 || filter.kinds.has(it.kind))
       && (!filter.fits || filter.fits(it)));
   }
 

@@ -709,9 +709,6 @@
             <button class="lib-seg-btn" role="radio" data-source="scores">Scores</button>
           </div>
           <div class="lib-chips" id="libKinds">
-            <button class="lib-chip" data-kind="fm">FM</button>
-            <button class="lib-chip" data-kind="pcm">PCM</button>
-            <button class="lib-chip" data-kind="wave macro" title="Waves (def-wave) and macros: what moves a channel's sound over time">Wave/Macro</button>
             <button class="lib-chip" id="libFits" title="Only what the track at the cursor can play; outside a track, what the score's machine can">Fits track</button>
             <button class="lib-chip" id="libOrder" title="One list, A to Z">A–Z</button>
           </div>
@@ -9960,7 +9957,6 @@
     let _libFitsKind;                      // the cursor's track kind the list was filtered for
     const _libFilter = {
       source: 'all',
-      kinds: new Set(),
       fits: false,
       order: 'group',
     };
@@ -10049,29 +10045,23 @@
     }
 
     // A chip that means nothing for the source picked is disabled, and its
-    // setting rests until a source it applies to comes back: FM / PCM / Macro
-    // sort the presets (All, Presets); Fits track has nothing to sort in the
-    // snippets and scores, which fit any track.
+    // setting rests until a source it applies to comes back: Fits track has
+    // nothing to sort in the snippets and scores, which fit any track. (What
+    // a kind of def is to look for, the presets' groups are: a set is one
+    // kind, and Fits track narrows to what the track at the cursor takes.)
     function applyLibFilter() {
       const { source } = _libFilter;
-      const kindsApply = source === 'all' || source === 'presets';
       const fitsApply = source !== 'snippets' && source !== 'scores';
       for (const b of document.querySelectorAll('#libSources .lib-seg-btn')) {
         b.classList.toggle('active', b.dataset.source === source);
         b.setAttribute('aria-checked', String(b.dataset.source === source));
       }
-      for (const b of document.querySelectorAll('#libKinds .lib-chip[data-kind]')) {
-        b.disabled = !kindsApply;
-        b.classList.toggle('active', kindsApply && _libFilter.kinds.has(b.dataset.kind));
-      }
       const fits = document.getElementById('libFits');
       fits.disabled = !fitsApply;
       fits.classList.toggle('active', fitsApply && _libFilter.fits);
       document.getElementById('libOrder').classList.toggle('active', _libFilter.order === 'az');
-      // A chip may stand for several kinds (Wave/Macro: "wave macro").
       _libList?.setFilter({
         source,
-        kinds: kindsApply ? new Set([..._libFilter.kinds].flatMap((k) => k.split(' '))) : new Set(),
         fits: fitsApply ? libFitsFn() : null,
         order: _libFilter.order,
       });
@@ -10107,8 +10097,6 @@
         if (!b) return;
         if (b.id === 'libFits') _libFilter.fits = !_libFilter.fits;
         else if (b.id === 'libOrder') _libFilter.order = _libFilter.order === 'az' ? 'group' : 'az';
-        else if (_libFilter.kinds.has(b.dataset.kind)) _libFilter.kinds.delete(b.dataset.kind);
-        else _libFilter.kinds.add(b.dataset.kind);
         applyLibFilter();
       });
       // The list's keys, from the search box (where Space and ←→ stay text)
