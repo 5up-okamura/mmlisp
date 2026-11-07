@@ -11026,8 +11026,11 @@
         return [heading, group];
       }));
       // A group's column is as wide as its longest name, so each name is
-      // one line (white-space: nowrap): in em, so it follows the type size;
-      // drawn while the list is shown.
+      // one line (white-space: nowrap): in em, so it follows the type size.
+      // Measured in the names' own font (Open Sans swaps in when it loads)
+      // and while the list is shown (renderLessons draws it then).
+      await document.fonts?.ready;
+      if (!list.clientWidth) return;
       for (const group of list.querySelectorAll('.lesson-group')) {
         group.dataset.col = Math.max(8, ...[...group.querySelectorAll('.lesson-row')].map((row) => {
           const cs = getComputedStyle(row);
