@@ -38,7 +38,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `import-timing.js`              | Edit > Tap Tempo: a VGM's or NSF's times read against a beat the user taps, held to its onsets (`fitBeat`), with snap, shuffle and bar lines (`vgmToMmlisp`'s `timing`) |
 | `import-nsf.js` (+ `cpu6502.js`) | NSF / NSFe: each song run on a 6502, its chip writes read by import-vgm.js's models (`nesChips`), its loop where the state comes round (`tools npm run check:import-nsf`) |
 | `import-mdx.js`, `import-mgs.js` | Driver songs played clock-exact: MDX (MXDRV, + its PDX) as `:target x68k`, MGS (MGSDRV) as `:target msx` (`tools npm run check:import-mdx-mgs`) |
-| `import-to-midi.js`             | A chip song imported onto `:target midi` (every song import's last Target): read as its own machine's score, given GM programs and kit roles by name or sound, then through its MIDI and the MIDI import (`tools npm run check:import-to-midi`) |
+| `import-to-midi.js`             | A chip song imported onto `:target midi` (every song import's last Target, mucom88's too): read as its own machine's score, given GM programs and kit roles by name or sound, then through its MIDI and the MIDI import (`tools npm run check:import-to-midi`) |
 | `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
 | `import-shapes.js`              | What the importers share before the writer: the score's defs keyed by what they hold (`defTable`), frame vectors, Shift-JIS |
 | `import-resynth.js`             | File > Import > Audio as Formants: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (x68k: fm1's operators; msx, pce: wave1–4) (`tools npm run check:resynth`) |

@@ -1759,7 +1759,8 @@ pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 **For pc88.** A `.muc` is written for the YM2608, so the import dialog's
 **Target** starts at pc88 (the NEC PC-8801), which keeps what the chip has
 instead of reading it for the Mega Drive (language.md §19); md converts it
-for the Mega Drive as above:
+for the Mega Drive as above; General MIDI reads it as pc88, then through its
+MIDI (§ Song imports: the rhythm's sounds are their kit roles):
 
 - **Rhythm** G plays the chip's own sounds, a track each — BD on
   `rhythm1`, SD on `rhythm2`, TOP, HH, TOM and RIM on `rhythm3`–`rhythm6`,
@@ -1894,13 +1895,14 @@ with no squares to balance against, gets them at a full carrier (`loud-square`
 …, defined at the top of the score).
 
 **General MIDI** is the last Target of every chip song — VGM, NSF, DefleMask /
-Furnace, MDX, MGS. The song is read as its own machine's score (the rows are
+Furnace, MDX, MGS, mucom88. The song is read as its own machine's score (the rows are
 that machine's), and that score through its MIDI — the MIDI import's beat,
 repeats and bends, onto `ch1`… and `drum1`…. A GM instrument has none of the
 chip's sound, so each channel is given one: an instrument's name says it
 where the song names them (a tracker's "Bass", a ROM voice); otherwise its
-kind and range do — a low part a bass, a square the square lead, a wave the
-saw lead, an FM part an electric piano (strings where its notes are held).
+kind and range do — a part under C3 a bass, and so the song's lowest part a
+fifth under the rest; a square the square lead, a wave the saw lead, an FM
+part an electric piano (strings where its notes are held).
 The noise becomes drums by pitch — the higher a hat, the lower a snare — and
 the samples kit roles by their names (BD, snare, HH …) or their sound: the
 most played low one the kick, the other low ones toms, bright ones hats,

@@ -33,7 +33,9 @@ import { parse } from "./mmlisp-parser.js";
 const HELD_SEC = 0.4; // a note held this long or longer is a sustained one
 const TICKING_SEC = 0.25; // hits this close are a hat ticking along
 const RINGS_SEC = 0.8; // a top noise held this long is a crash
-const BASS_UNDER = 53; // a part whose middle note is under F3 is the bass
+const BASS_UNDER = 48; // a part whose middle note is under C3 is the bass,
+const LOW_UNDER = 55; //   and so is the song's lowest part under G3 when it
+const LOW_APART = 7; //    sits a fifth or more under the next
 
 // ── Programs ──────────────────────────────────────────────────────────────
 
@@ -58,15 +60,16 @@ const NAMED = [
 /**
  * The gm voice a track's voice plays as: a name GM knows as it is, a name
  * that says an instrument, else by the channel's kind and the notes' range
- * and lengths. `notes`: [{ key, length (s) }] of the notes it plays.
+ * and lengths. `notes`: [{ key, length (s) }] of the notes it plays;
+ * `lowest`: its track is the song's bass line by place (gmReading).
  */
-export function programFor(name, part, notes) {
+export function programFor(name, part, notes, { lowest = false } = {}) {
   if (name && programOf(name) != null) return name;
   const said = name && !numbered(name) && NAMED.find(([re]) => re.test(name.toLowerCase()))?.[1];
   if (said) return said;
   const mid = median(notes.map((n) => n.key));
   const kind = part?.kind;
-  if (mid != null && mid < BASS_UNDER) return kind === "fm" ? "gm-bass-finger" : "gm-bass-syn1";
+  if (mid != null && (mid < BASS_UNDER || (lowest && mid < LOW_UNDER))) return kind === "fm" ? "gm-bass-finger" : "gm-bass-syn1";
   if (kind === "fm") return median(notes.map((n) => n.length)) >= HELD_SEC ? "gm-strings1" : "gm-ep1";
   if (part?.name === "fc-tri") return "gm-flute";
   if (kind === "wave" || /saw/.test(part?.name ?? "")) return "gm-lead-saw";
@@ -271,7 +274,15 @@ export function gmReading(ir, { pcm = null, names = {} } = {}) {
     heard.set(sm.name, { role: sampleRole(f), zcr: f.zcr });
   }
   const drumTracks = []; // the sample tracks of drums: their roles are the song's, below
-  const tracks = ir.tracks.map((tr) => {
+  // The song's lowest melodic part, where it sits a fifth under the rest.
+  const mids = ir.tracks.map((tr) => {
+    const kind = target.partOf(tr.scoreChannel ?? tr.channel)?.kind;
+    const keys = tr.events.filter((e) => e.cmd === "NOTE_ON").map(keyOf);
+    return kind === "noise" || kind === "sample" || !keys.length ? null : median(keys);
+  });
+  const order = mids.map((m, i) => [m, i]).filter(([m]) => m != null).sort((a, b) => a[0] - b[0]);
+  const lowest = order.length > 1 && order[1][0] - order[0][0] >= LOW_APART ? order[0][1] : -1;
+  const tracks = ir.tracks.map((tr, ti) => {
     const head = tr.scoreChannel ?? tr.channel;
     const part = target.partOf(head);
     const events = tr.events.map((e) => ({ ...e, args: e.args && { ...e.args } }));
@@ -295,7 +306,7 @@ export function gmReading(ir, { pcm = null, names = {} } = {}) {
       drumTracks.push({ head, ons });
       return { ...tr, events };
     }
-    return { ...tr, events: voiced(events, part, head, said, sec, null, names[head]?.[0] ?? null) };
+    return { ...tr, events: voiced(events, part, head, said, sec, null, names[head]?.[0] ?? null, ti === lowest) };
   });
   // The drum samples' roles, across the song: a role's or a ROM sound's name
   // as it is, a name that says one, else what the sound is (or its place in
@@ -337,7 +348,7 @@ export function gmReading(ir, { pcm = null, names = {} } = {}) {
 // A melodic track's voices as gm voices: each voice (a note's `_voice`, a
 // change's `_voiceSet`; a sample's name on a sample track) read by
 // programFor over the notes it plays.
-function voiced(events, part, head, said, sec, sampleVoice, named = null) {
+function voiced(events, part, head, said, sec, sampleVoice, named = null, lowest = false) {
   // A note no voice names is the track's instrument's (`named`), if it has one.
   const voiceOf = (e) => (sampleVoice ? sampleVoice(e.args?.sample) : e._voice) ?? named ?? "";
   const follows = !sampleVoice && events.some((e) => e._voiceSet);
@@ -349,7 +360,7 @@ function voiced(events, part, head, said, sec, sampleVoice, named = null) {
     const v = follows ? now : voiceOf(e);
     (notesBy.get(v) ?? notesBy.set(v, []).get(v)).push({ key: keyOf(e), length: sec(e.args?.length ?? 0) });
   }
-  const gm = new Map([...notesBy].map(([v, notes]) => [v, programFor(v || null, part, notes)]));
+  const gm = new Map([...notesBy].map(([v, notes]) => [v, programFor(v || null, part, notes, { lowest })]));
   for (const e of events) {
     if (follows && e._voiceSet) e._voiceSet = gm.get(e._voiceSet) ?? programFor(e._voiceSet, part, []);
     else if (isOn(e) && !follows) e._voice = gm.get(voiceOf(e));

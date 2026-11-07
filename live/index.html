@@ -3304,6 +3304,14 @@
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
+    // The song converted for its target: midi reads it as the PC-8801's, then
+    // through its MIDI (readViaMidi), with no samples of its own.
+    async function convertMucom(song, datBytes, pcmBytes) {
+      if (song.target !== 'midi') return importMucom(song.bytes, datBytes, pcmBytes, { target: song.target });
+      const res = importMucom(song.bytes, datBytes, pcmBytes, { target: 'pc88' });
+      return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
+    }
+
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
       const song = _mucomSong; // the new document is this song's: a bank applied later re-converts it
       const done = loadImportedSource(source, warnings, fileName, label, { tag: 'mucom88', pcm, folder: song?.folder });
@@ -4176,8 +4184,8 @@
         summary: 'A MUCOM88 song, written for the YM2608. ' +
           (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
         fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0],
-          choices: MUCOM_TARGETS.map((t) => [t, `${targetProfile(t).system} (:target ${t})`]),
-          hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive' }],
+          choices: withMidi(MUCOM_TARGETS, 'pc88'),
+          hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
       });
       if (!got) return;
       try {
@@ -4190,7 +4198,7 @@
           pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
           folder,
         };
-        const res = importMucom(_mucomSong.bytes, _mucomSong.datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
+        const res = await convertMucom(_mucomSong, _mucomSong.datBytes, _mucomSong.pcmBytes);
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
         await loadMucomSource(res.source, res.warnings, file.name,
           `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
@@ -4235,7 +4243,7 @@
         if (toSong && _mucomSong) {
           _mucomSong.datBytes = datBytes;
           // Keep any PCM bank already applied — re-converting must not lose it.
-          const res = importMucom(_mucomSong.bytes, datBytes, _mucomSong.pcmBytes, { target: _mucomSong.target });
+          const res = await convertMucom(_mucomSong, datBytes, _mucomSong.pcmBytes);
           loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
@@ -4252,7 +4260,7 @@
     async function applyMucomPcmBank(bankName) {
       const song = _mucomSong;
       if (!song) return;
-      const res = importMucom(song.bytes, song.datBytes, song.pcmBytes, { target: song.target });
+      const res = await convertMucom(song, song.datBytes, song.pcmBytes);
       const n = res.pcm?.entries.length ?? 0;
       loadMucomSource(res.source, res.warnings, song.fileName, `Reloaded ${song.fileName} with PCM bank ${bankName} (mucom88) — ${n} samples decoded`, res.pcm);
     }
