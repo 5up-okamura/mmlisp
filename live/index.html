@@ -13373,7 +13373,7 @@
       // (Chosen again after it failed, it tries again.)
       if (isGmOut(_midiOutName) && _gm?.source === _midiOutName && !_gm.failed && !reload) { renderMidiOutMenu(); return; }
       stopMidiOutRun();
-      _gm?.output.close();
+      if (_gm) { _gm.output.close(); clearScope(); }
       _gm = null;
       if (port) {
         startMidiOutRun({
@@ -15200,6 +15200,15 @@
     }
     function resetScopeTriggers() {
       _scopeTriggers?.forEach((t) => t.reset());
+    }
+    // The lanes emptied: the GM output closed on a `:target midi` score,
+    // whose lanes nothing else fills, would leave its last waves standing.
+    function clearScope() {
+      for (const r of _scopeRings) r.fill(0);
+      _scopePeaks.fill(0);
+      _scopeLastLevel.fill(NaN);
+      resetScopeTriggers();
+      _scopeDrawnKey = null; // drawn again, empty
     }
 
     // `giveBack` returns the batch's buffers to the worklet that posted it:
