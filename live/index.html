@@ -14431,6 +14431,9 @@
     let _vizRaf = null;
     let _vizColors = null;
     const VIZ_MIN_CELL_W = 360;   // min cell width (px); cols = floor(editorW / this), capped at 3
+    // …unless the cells come out flat (a phone's width, many channels): then
+    // more columns, down to VIZ_NARROW_CELL_W, until a cell is about 2:1.
+    const VIZ_FLAT_ASPECT = 4, VIZ_AIM_ASPECT = 2, VIZ_NARROW_CELL_W = 160;
 
     function vizPpqn() {
       return (player?._ir ?? _lastGoodIR)?.ppqn || 96;
@@ -15282,7 +15285,10 @@
       const cells = _vizNotes.filter((cl) => cl.notes.length);
       if (!cells.length) return;
       const C = cells.length;
-      const cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
+      let cols = Math.max(1, Math.min(3, C, Math.floor(W / VIZ_MIN_CELL_W)));
+      const aspect = (n) => (W / n) / (H / Math.ceil(C / n));
+      if (aspect(cols) > VIZ_FLAT_ASPECT)
+        while (cols < Math.min(3, C) && W / (cols + 1) >= VIZ_NARROW_CELL_W && aspect(cols) > VIZ_AIM_ASPECT) cols++;
       const rows = Math.ceil(C / cols);
       const cellW = W / cols, cellH = H / rows;
       const latest = _scopeAbs;
