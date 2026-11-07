@@ -305,7 +305,7 @@
             <button class="menu-item" data-needs="sound" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
             <button class="menu-item" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
             <button class="menu-item" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
-            <button class="menu-item" data-needs="sound" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
+            <button class="menu-item" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
             <button class="menu-item" onclick="exportMucomPcmWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Imported…</span></button>
@@ -7564,6 +7564,13 @@
         }
       }
       if (!(await initAudio())) return;
+      // A `:target midi` score is heard on the GM output: ready before the
+      // recorder takes its node (soundingNodes); a MIDI port's sound is not
+      // the page's to record.
+      if (midiSound(_lastGoodIR)) {
+        if (_gm) await gmReadyFor(_lastGoodIR);
+        else log('Video: a :target midi score is heard on MMLisp > MIDI > Output > GM — the video has no sound otherwise', 'warn');
+      }
 
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = VIDEO_SIZE;
