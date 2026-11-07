@@ -72,13 +72,13 @@ export function mixerStrips(ir) {
 
 /** A strip soloed (or not) on `player`, as the mixer's S does: by voice, else by track. */
 export function soloStrip(player, strip, on = true) {
-  if (strip.voice) player.soloVoice(strip.voice, on);
+  if (strip.voice) player.soloVoice?.(strip.voice, on); // a player without voices (DrvPlayer)
   else if (strip.trackIndex != null) player.soloTrack(strip.trackIndex, on);
 }
 
 /** A strip muted (or not) on `player`, as the mixer's M does. */
 export function muteStrip(player, strip, on = true) {
-  if (strip.voice) player.muteVoice(strip.voice, on);
+  if (strip.voice) player.muteVoice?.(strip.voice, on);
   else if (strip.trackIndex != null) player.muteTrack(strip.trackIndex, on);
 }
 

@@ -237,6 +237,14 @@ const exported = (src) => {
   assert.ok(o.notes.some((n) => /no GM program for lead/.test(n)), o.notes.join(" | "));
 }
 
+{ // A sample that is no kit role: on the drums at its written note, said;
+  // a track of none is melodic, said.
+  const { out: o } = exported('(def-pcm kick :file "k.wav")\n(def-pcm clap-x :file "c.wav")\n(pcm1 :len 4 kick c clap-x d)\n(pcm2 :len 4 clap-x c clap-x e)');
+  assert.deepEqual(o.tracks.map((t) => [t.name, t.drums, t.notes.map((n) => n.key)]), [["pcm1", true, [36, 62]], ["pcm2", false, [60, 64]]]);
+  assert.ok(o.notes.some((n) => /^pcm1: clap-x: no kit role/.test(n)), o.notes.join(" | "));
+  assert.ok(o.notes.some((n) => /^pcm2: clap-x: no kit role, so the hits are notes/.test(n)), o.notes.join(" | "));
+}
+
 // ── The import reads it back ──────────────────────────────────────────────
 const a = analyzeMidi(parsed);
 assert.equal(60e6 / a.tempos[0].usPerQ, 120, "the importer's tempo");

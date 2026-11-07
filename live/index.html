@@ -13315,7 +13315,8 @@
       if (!_midiOutRun) return;
       // No player (Stop drops it), or the MMLispDRV backend's, which has no
       // IR clock to follow: the run sees a stop and lets everything go.
-      if (!audioCtx || typeof player?.loadedIr !== 'function') { _midiOutRun.pass(null, audioCtx?.currentTime ?? 0); return; }
+      // An effect's run (its tracks the def-se's) plays nothing on MIDI.
+      if (!audioCtx || typeof player?.loadedIr !== 'function' || _runSe != null) { _midiOutRun.pass(null, audioCtx?.currentTime ?? 0); return; }
       // Context time → the page's performance clock, where the audio is heard.
       const ts = audioCtx.getOutputTimestamp?.();
       if (ts?.performanceTime > 0) _perfAt = (t) => ts.performanceTime + (t - ts.contextTime) * 1000;
@@ -13323,8 +13324,8 @@
         const lead = audioCtx.outputLatency || audioCtx.baseLatency || 0, now = performance.now(), ct = audioCtx.currentTime;
         _perfAt = (t) => now + (t - ct + lead) * 1000;
       }
-      // An IR the player runs that no plan was asked for (a compile that did
-      // not come through applyCompile): ask now; the run waits for it.
+      // An IR the player runs that no plan was asked for (the output turned
+      // on mid-run): ask now; the run waits for it.
       const ir = player.isPlaying() ? player.loadedIr() : null;
       if (ir && !_midiOutAsked.has(ir)) requestMidiPlan(ir);
       _midiOutRun.pass(player, audioCtx.currentTime);
@@ -13336,14 +13337,17 @@
     function requestMidiPlan(ir) {
       if (!_midiOutRun) return;
       _midiOutAsked.add(ir);
-      const src = _irSource.get(ir) ?? _lastGoodSrc;
+      // Only an IR the editor compiled has a plan: its own source, never
+      // another's that happens to use the same channels.
+      const src = _irSource.get(ir);
       if (src == null) return;
+      const failed = (why) => { if (!_midiOutAsked.has(ir)) return; log(`MIDI output: no plan for this score (${why}); nothing is sent for it`, 'warn'); };
       compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
-        if (!r?.plan) return;
+        if (!r?.plan) return failed('it did not compile');
         const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
-        if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return;
+        if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return failed('its tracks differ');
         _midiOutRun?.setPlan(r.plan, ir);
-      }).catch(() => {});
+      }).catch((e) => failed(e?.message ?? e));
     }
 
     // A slider moved: the plan made again, the output going on from where it is.

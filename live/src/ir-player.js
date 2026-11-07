@@ -420,7 +420,7 @@ export class IRPlayer {
    */
   loadJSON(irObj, { se = null } = {}) {
     this._loadIR(songOrEffectIr(irObj, se));
-    this._irGiven = irObj; // the IR as given (loadedIr), not its song's copy
+    this._irGiven = se == null ? irObj : null; // the IR as given (loadedIr), not its song's copy; an effect's run its own
     return this;
   }
 
@@ -892,6 +892,11 @@ export class IRPlayer {
    */
   loadedIr() {
     return this._irGiven ?? this._ir ?? null;
+  }
+
+  /** Whether the run goes round its loop (setLoop), or stops at the jump. */
+  loopEnabled() {
+    return !!this._loop;
   }
 
   /** Counts play() and seek() calls: a run that began again (a seek while playing). */

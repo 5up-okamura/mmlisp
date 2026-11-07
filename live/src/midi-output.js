@@ -179,6 +179,8 @@ export class MidiOutRun {
       this.planIr = ir;
       this.sayskipped();
     }
+    // The preview's loop off: the song stops at its jump, and so does this.
+    this.loops = player.loopEnabled?.() ?? true;
     const swap = player.pendingSwapTime();
     if (swap != null) this.swapAt = swap;
     const horizon = Math.min(now + Math.max(0.15, player.lookaheadSec()), swap ?? Infinity);
@@ -254,7 +256,7 @@ export class MidiOutRun {
       if (tb >= endTick) for (; i < ev.length && ev[i].tick <= endTick; i++) out(ev[i], a + (endTick - ta));
       if (segEnd <= a) break;
       a = segEnd;
-      if (loopStart == null && a >= endTick) break;
+      if ((loopStart == null || !this.loops) && a >= endTick) break;
     }
   }
 
@@ -262,7 +264,7 @@ export class MidiOutRun {
   tickOf(raw) {
     const { endTick, loopStart } = this.plan;
     if (raw < endTick) return raw;
-    if (loopStart == null) return null;
+    if (loopStart == null || !this.loops) return null;
     return loopStart + ((raw - loopStart) % (endTick - loopStart));
   }
 
@@ -272,7 +274,7 @@ export class MidiOutRun {
   chaseTo(t, raw, now) {
     const { endTick, loopStart } = this.plan;
     const tick = this.tickOf(raw) ?? endTick;
-    const round = raw >= endTick && loopStart != null;
+    const round = raw >= endTick && loopStart != null && this.loops;
     const last = new Map();
     const take = (e) => { const k = chaseKey(e.bytes); if (k) last.set(k, e.bytes); };
     for (const e of t.events) {

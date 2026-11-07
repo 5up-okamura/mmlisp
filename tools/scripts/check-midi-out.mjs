@@ -255,6 +255,16 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
   const at96 = plan.tracks[0].events.filter((e) => e.tick === 96 && (e.bytes[0] & 0xf0) === 0xb0);
   assert.ok(at96.length && at96.every((e) => !e.once), "fm1's CC11 at the loop point is its body's");
 }
+{ // The preview's loop off (IRPlayer loopEnabled): nothing round the loop.
+  const { ir, plan } = both("(fm1 :tempo 120 :len 4 #top c d (go top))");
+  const p = standIn(ir);
+  p.loopEnabled = () => false;
+  const sent = [];
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }) });
+  run.setPlan(plan, ir);
+  drive(run, p, 0, 1.6);
+  assert.deepEqual(sent.filter((m) => isOn(m.b)).map((m) => m.b[1]), [60, 62], "once through, no second pass");
+}
 { // A plan that comes late: what fell due since the run began goes at once.
   const { ir, plan } = both(SONG);
   const p = standIn(ir);

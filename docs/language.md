@@ -2509,9 +2509,11 @@ the channel plays, which a jump back leaves as it was — and so is a
 voice named for an instrument: a melodic role (`piano`, `flute` …, the
 `fm-roles` set's or the ROM's) is the gm voice `fm-roles` copied, and the
 VRC7's own ROM voices the nearest (`wurly` an electric piano, `fretless`
-the fretless bass, `sweep` the sweep pad …). A track
-whose every note is a kit role's sample (`kick`, `snare`, `hat` …) plays on
-channel 10 at the role's GM note, its faders in the velocity. A def-val is
+the fretless bass, `sweep` the sweep pad …). A track of samples, one of
+them a kit role's (`kick`, `snare`, `hat` …), plays on channel 10, each role
+at its GM note and a sample that is no role at its written note (said once),
+its faders in the velocity; a track of samples none of which is a role is
+melodic, each hit a note at its pitch (said once). A def-val is
 its init and what the score writes to it. A voice named for no instrument
 has no program (said once: the player's sound plays it). The rest is a
 machine's own — FM operators written inline, duty, waves, noise modes, the

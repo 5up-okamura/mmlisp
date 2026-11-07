@@ -1461,8 +1461,10 @@ bends, sent a little ahead on the preview's clock so it lands with the
 sound. A tempo dialled in, a seek, the loop going round, a mute or solo, a
 Dynamic Parameters slider and an edit's swap at the bar all follow; a seek
 sends each channel's program and controllers first, and a stop lets every key
-go. Tracks past fifteen channels are the file's second port and are not sent.
-The chosen output is remembered by its name.
+go. Tracks past fifteen channels are the file's second port and are not sent,
+and an effect played alone (a `def-se`) is not sent. While the output is on,
+each edit compiles the score once more for its plan. The chosen output is
+remembered by its name.
 
 ---
 

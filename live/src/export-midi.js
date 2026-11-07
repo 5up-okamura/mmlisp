@@ -501,8 +501,9 @@ function trackEvents(events, ctx, chan, drums, notes) {
     const off = held ? Infinity : ev.tick + gate;
     const end = Math.min(held ? Infinity : off, nextOn, ctx.endTick);
     if (end <= ev.tick) continue;
-    const key = drums ? GM_DRUM_NOTE[a.sample] : snapNote(pitchToMidi(a.pitch ?? "c4"), lineAt(snap, ev.tick) | 0);
-    if (key == null) continue;
+    const role = ev.cmd === "PCM_NOTE_ON" ? GM_DRUM_NOTE[a.sample] : undefined;
+    if (ev.cmd === "PCM_NOTE_ON" && role == null) ctx.odd?.add(a.sample);
+    const key = drums ? role ?? pitchToMidi(a.pitch ?? "c4") : snapNote(pitchToMidi(a.pitch ?? "c4"), lineAt(snap, ev.tick) | 0);
     list.push({
       ev, a, on: ev.tick, off, end, limit: nextOn, key: Math.max(0, Math.min(127, key)), base: pitchToMidi(a.pitch ?? "c4"),
       voice: followsVoices ? voiceNow : ev._voice, voiceAt,
@@ -776,9 +777,12 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
 
   // Channels: score order, 10 for the drums, fifteen a port.
   const MELODIC = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15];
+  // The drums: a track of samples, one a kit role at least; a sample that is
+  // no role plays at its written note there (said). A track of samples none
+  // of which is a role is melodic, each hit a note at its pitch (said).
   const kit = (events) => {
     const pcm = events.filter((e) => e.cmd === "PCM_NOTE_ON");
-    return pcm.length > 0 && !events.some((e) => e.cmd === "NOTE_ON") && pcm.every((e) => GM_DRUM_NOTE[e.args?.sample] != null);
+    return pcm.length > 0 && !events.some((e) => e.cmd === "NOTE_ON") && pcm.some((e) => GM_DRUM_NOTE[e.args?.sample] != null);
   };
   let melodic = 0;
   const assigned = played.map((events, i) => {
@@ -810,8 +814,13 @@ export function midiPlan(ir, { vals: given = {} } = {}) {
     const track = songTracks[t.i];
     const name = track.scoreChannel ?? track.channel ?? `track ${t.i + 1}`;
     const evNotes = [];
-    const local = { ...ctx, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, note: (s) => note(`${name}: ${s}`) };
+    const local = { ...ctx, ownLoop: flat[t.i].hasLoop ? flat[t.i].loopStartTick : null, odd: new Set(), note: (s) => note(`${name}: ${s}`) };
     const events = trackEvents(t.events, local, t.channel, t.drums, evNotes);
+    if (local.odd.size) {
+      const odd = [...local.odd].sort().join(", ");
+      local.note(t.drums ? `${odd}: no kit role (kick, snare …), so on channel 10 at the written note`
+        : `${odd}: no kit role, so the hits are notes at their written pitch, with no program`);
+    }
     events.push({ tick: 0, order: ORDER.meta, bytes: meta(0x03, text(name)) });
     if (ports > 1) events.push({ tick: 0, order: ORDER.meta, bytes: meta(0x21, [t.port]) });
     // A label and a trig, on the first pass.
