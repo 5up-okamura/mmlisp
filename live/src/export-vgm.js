@@ -353,7 +353,7 @@ export function configurePcmRate(player, pcm) {
  */
 export function renderVgm(player, meta = {}, pcm = null) {
   const target = player._target ?? targetProfile();
-  if (target.sound === false)
+  if (target.sound === "midi")
     throw new Error(`the ${target.system} (:target ${target.name}) has no chip to log: File > Export > MIDI… writes it`);
   // The PC Engine's DDA: the samples as frames, which the player writes as
   // the chip's own register writes (the log carries them).

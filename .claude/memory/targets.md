@@ -112,8 +112,12 @@ The names themselves are guide.md §25; the reasons:
   YM2612), a first-party SF2 player (import-sf2.js parses drum kits only).
   Renders (gm-render.js): MidiOutRun on a clock from the plan's tempo map
   into the same GmSynth (gm-synth.js), a loop's later passes on the first
-  pass's timing as the chips' WAV tiles its writes; `soundFont: true` on the
-  target lets WAV / Stems in (targetHas 'render').
+  pass's timing as the chips' WAV tiles its writes. One flag says whose the
+  machine's sound is, `sound: "chips" | "midi"` (targets.js profile; the
+  user's review 2026-11-07 found it split in two, `sound: false` and
+  `soundFont`, and the export reading channels off head names): WAV / Stems
+  are on every machine, VGM / video / Instruments / Audio as FM Voice on a
+  chip's; the export takes a track's channel from the channel table.
 - Measured (headless Chromium; an iPhone, iOS 18.7, Safari 26.6, 48 kHz):
   bank parse 50–60 ms, ready 75–110 ms; the worklet module 140 ms /
   918 ms on the iPhone; the sf3's fetch 4.2 s there (the network). Samples

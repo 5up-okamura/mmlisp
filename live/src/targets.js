@@ -43,6 +43,11 @@ function profile(def) {
   const parts = [...new Set(heads.map((h) => def.channels[h].part))];
   return {
     ...def,
+    // Whose the machine's sound is: "chips", its own (Live's worklet, the
+    // WAV, the VGM), or "midi", a MIDI output's — a port, or the GM SoundFont
+    // in the page, which its WAV renders on; no VGM, no video, no voices or
+    // samples of its own to import.
+    sound: def.sound ?? "chips",
     channelNames: heads,
     parts,
     // How far the toolchain has the target: every chip encoded (the register

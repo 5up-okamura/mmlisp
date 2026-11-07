@@ -20,7 +20,7 @@
  */
 
 import { encodeWav } from "./export-wav.js";
-import { GM_KIT_ROLES } from "./export-midi.js";
+import { GM_KIT_ROLES } from "./gm-names.js";
 
 const KIT_RATE = 22050;
 

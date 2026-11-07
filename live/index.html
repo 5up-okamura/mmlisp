@@ -303,8 +303,8 @@
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
             <button class="menu-item" data-needs="sound" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
-            <button class="menu-item" data-needs="render" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
-            <button class="menu-item" data-needs="render" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
+            <button class="menu-item" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
+            <button class="menu-item" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
             <button class="menu-item" data-needs="sound" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
@@ -6689,13 +6689,13 @@
         log(`Opened ${entry.file.name}`, 'info');
       }
 
-      // A machine with no sound of its own (`:target midi`) has no voices or
-      // samples to insert: its instruments are its programs (:prog).
-      const noSound = targetProfile(_lastGoodIR?.metadata?.target).sound === false;
+      // A machine whose sound is a MIDI output's (`:target midi`) has no
+      // voices or samples to insert: its instruments are its programs (:prog).
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
       for (const { entry, kind } of kinds) {
         if (entry === opened?.entry) continue;
-        if (noSound && kind !== 'score') {
-          log(`${entry.file.name}: a ${targetProfile(_lastGoodIR?.metadata?.target).system} score has no voices or samples of its own — an instrument is :prog N, or a GM name (gm-piano, flute …)`, 'warn');
+        if (machine.sound === 'midi' && kind !== 'score') {
+          log(`${entry.file.name}: a ${machine.system} score has no voices or samples of its own — an instrument is :prog N, or a GM name (gm-piano, flute …)`, 'warn');
           continue;
         }
         // One bad file must not abort the rest of the drop.
@@ -7187,7 +7187,7 @@
         offline.loadJSON(ir);
         const machine = targetProfile(ir.metadata?.target);
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
-        const gmBank = machine.soundFont ? await gmBankForRender() : null;
+        const gmBank = await gmBankForRender(machine);
         ({ bytes, pcmCount, durationSec } = await renderWav(offline, {
           lpfOn: analogLpfOn, pcm, rhythmRom, gmBank, gmReverb: gmReverb(),
           onProgress: (f) => { line.textContent = `${stamp} Rendering WAV… ${Math.floor(f * 100)}%`; },
@@ -7245,7 +7245,7 @@
         const stamp = line.textContent.slice(0, line.textContent.indexOf(']') + 1);
         const machine = targetProfile(ir.metadata?.target);
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
-        const gmBank = machine.soundFont ? await gmBankForRender() : null;
+        const gmBank = await gmBankForRender(machine);
         set = await renderStems(ir, () => new IRPlayer(() => {}).loadJSON(ir), {
           lpfOn: analogLpfOn, pcm, rhythmRom, gmBank, gmReverb: gmReverb(),
           onProgress: (f) => { line.textContent = `${stamp} Rendering stems… ${Math.floor(f * 100)}%`; },
@@ -9137,16 +9137,21 @@
       if (what === 'part') return target.hasPart(arg);
       if (what === 'word') return target.hasWord(arg);
       if (what === 'driver') return target.driver === 'mmlispdrv';
-      // A sound of its own to record (not `:target midi`'s, whose sound is a MIDI output's).
-      if (what === 'sound') return target.sound !== false;
-      // A sound to render: its own, or a GM SoundFont's (`:target midi`, gm-render.js).
-      if (what === 'render') return target.sound !== false || !!target.soundFont;
+      // A sound of its own, its chips' (not `:target midi`'s, a MIDI output's).
+      if (what === 'sound') return target.sound === 'chips';
       return !!target[what];
+    }
+    // A score whose sound is a MIDI output's (`:target midi`, targets.js
+    // `sound`): what the page does by it — the GM output's oscilloscope, the
+    // Channels meters off its notes, its WAV on the SoundFont, no voice or
+    // sample import — reads this one.
+    function midiSound(ir) {
+      return targetProfile(ir?.metadata?.target).sound === 'midi';
     }
     function applyTargetUi(ir) {
       const target = targetProfile(ir?.metadata?.target);
-      // A score with no sound of its own scopes the GM output's channels.
-      _gm?.output.scope(!!target.soundFont);
+      // A score whose sound is a MIDI output's scopes the GM output's channels.
+      _gm?.output.scope(target.sound === 'midi');
       for (const el of document.querySelectorAll('[data-needs]')) {
         const has = targetHas(target, el.dataset.needs);
         if (el.classList.contains('menu-item')) el.disabled = !has;
@@ -9410,8 +9415,8 @@
           if (se == null) await gmReadyFor(_lastGoodIR);
           if (!current()) return;
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
-          // A score with no sound of its own sounds on a MIDI output only.
-          if (targetProfile(_lastGoodIR.metadata?.target).sound === false && !_midiOutName)
+          // A score whose sound is a MIDI output's sounds on one only.
+          if (midiSound(_lastGoodIR) && !_midiOutName)
             log('This machine has no sound of its own: choose MMLisp > MIDI > Output (GM, or a MIDI port) to hear it', 'warn');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
@@ -13392,7 +13397,7 @@
       } else if (isGmOut(_midiOutName)) {
         const source = _midiOutName;
         _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont, reverb: gmReverb(), onLate: gmLate, onScope: onScopeBatch }) };
-        _gm.output.scope(!!targetProfile(_lastGoodIR?.metadata?.target).soundFont);
+        _gm.output.scope(midiSound(_lastGoodIR));
         // Chosen from the menu (a tap), the context can start and the bank
         // load now, not under the first Play; restored at launch, it waits.
         if (!quiet && !audioCtx) initAudio().then(() => startGmOutput());
@@ -13495,9 +13500,11 @@
       if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);
       return res.arrayBuffer();
     }
-    // The SoundFont a `:target midi` render plays on: the one the GM output
+    // The SoundFont a render plays on where the machine's sound is a MIDI
+    // output's (`:target midi`; null for a chip's): the one the GM output
     // plays (the user's, when that is the output chosen), else the bundled.
-    async function gmBankForRender() {
+    async function gmBankForRender(machine) {
+      if (machine.sound !== 'midi') return null;
       const own = _midiOutName === SF_OUT;
       log(`Rendering on ${own ? `SoundFont ${loadPref('soundFont', '')}` : 'GM (FluidR3Mono)'}`, 'info');
       return own ? loadUserSoundFont() : fetchGmBank();
@@ -14503,8 +14510,8 @@
     const VU_RANGE_DB = 40;       // bar spans [-VU_RANGE_DB, 0] dB
     const VU_RELEASE = 0.9;       // displayed-level decay per VU tick
     const _vuLevels = new Map();  // head → displayed level
-    // A machine with no taps (`:target midi`: its sound is a MIDI output's or
-    // the GM SoundFont's) meters its notes instead — the note sounding at the
+    // A machine with no taps (`:target midi`: its sound is a MIDI output's,
+    // a port's or the GM SoundFont's) meters its notes instead — the note sounding at the
     // track's playhead, at its :vel (2 dB a step) under the strip's fader and
     // the master's, nothing muted — not a level heard. A note's start is its
     // peak; held, it settles under it (a hit, a drum's, falls away).
@@ -14523,7 +14530,7 @@
       return fresh ? level : n.sample ? 0 : level * NOTE_VU_HELD;
     }
     function updateChannelVu() {
-      const byNotes = !!targetProfile(_lastGoodIR?.metadata?.target).soundFont;
+      const byNotes = midiSound(_lastGoodIR);
       for (const [head, el] of _chVuEls) {
         const k = byNotes ? null : scopeChannelOf(head);
         const peak = k != null ? _scopePeaks[k] : 0;

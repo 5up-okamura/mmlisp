@@ -33,7 +33,7 @@ import { renderPcmDac, configurePcmRate } from "./export-vgm.js";
 import { RHYTHM_BIT } from "./chips/ym2608.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 
-/** Why a target with no sound of its own (`:target midi`) renders no WAV without a SoundFont. */
+/** Why a target whose sound is a MIDI output's (`:target midi`) renders no WAV without a SoundFont. */
 export const noSound = (target) => `the ${target.system} (:target ${target.name}) has no sound of its own: a WAV of it needs a SoundFont (opts.gmBank); File > Export > MIDI… writes it, and MMLisp > MIDI > Output plays it`;
 
 const DEFAULT_SAMPLE_RATE = 48000; // match live AudioContext (and the LPF coeff)
@@ -291,9 +291,9 @@ export async function renderWavSamples(player, opts = {}) {
   if (why) throw new Error(why);
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
-  // No sound of its own (`:target midi`): rendered on a GM SoundFont, its
-  // bytes `opts.gmBank` (gm-render.js, loaded only for it).
-  if (player._target?.sound === false) {
+  // A sound that is a MIDI output's (`:target midi`): rendered on a GM
+  // SoundFont, its bytes `opts.gmBank` (gm-render.js, loaded only for it).
+  if (player._target?.sound === "midi") {
     if (!opts.gmBank) throw new Error(noSound(player._target));
     const { renderGmSamples } = await import("./gm-render.js");
     return renderGmSamples(player, { bank: opts.gmBank, reverb: opts.gmReverb, sampleRate, fadeSec, onProgress: opts.onProgress ?? null });

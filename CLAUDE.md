@@ -44,7 +44,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `voice-estimate.js` (+ `voice-estimate-worker.js`, `fm-model.js`) | File > Import > Audio as FM Voice: a patch searched for one recorded note, on a fast model of one YM2612 channel held to Nuked (`tools npm run check:voice-estimate`) |
 | `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
 | `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
-| `export-midi.js`                | File > Export > MIDI: the score's portable core as a Standard MIDI File, on every target (`tools npm run check:export-midi`) |
+| `export-midi.js` (+ `gm-names.js`) | File > Export > MIDI: the score's portable core as a Standard MIDI File, on every target (`tools npm run check:export-midi`); `gm-names.js` General MIDI's names as the language has them — the programs, the voices named for one, the drum keys' roles — read by the MIDI chip, the export and the imports |
 | `stems.js`                      | The mixer's strips (`mixerStrips`, the panel's model without its look, and its S / M rules), and File > Export > Stems: a WAV a strip, soloed and rendered as the WAV export, the chip's floor taken out, each into the ZIP as it is made (`tools npm run check:stems`) |
 | `ab-snapshots.js`               | Edit > A/B Compare: two working copies of the score, each with its own undo history (`tools npm run check:ab-snapshots`) |
 | `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |

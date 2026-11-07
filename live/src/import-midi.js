@@ -40,7 +40,7 @@ import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimate
   assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
 import { DEFAULT_TARGET, targetProfile } from "./targets.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
-import { GM_PROGRAMS, GM_KIT_ROLES } from "./export-midi.js";
+import { GM_PROGRAMS, GM_KIT_ROLES } from "./gm-names.js";
 
 // presets/gm, in program order (README.md), the MIDI export's table. The
 // bank's note offsets live on the voices themselves, as `:key` — a key is

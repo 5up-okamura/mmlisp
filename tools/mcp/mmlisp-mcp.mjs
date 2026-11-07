@@ -634,7 +634,7 @@ const TOOLS = [
       }
       // :target midi: no chip to play; its SoundFont's (gm-render.js).
       let gmBank = null;
-      if (target.soundFont) {
+      if (target.sound === "midi") {
         const b = fs.readFileSync(path.resolve(ROOT, args.soundFont ?? "live/soundfonts/FluidR3Mono_GM.sf3"));
         gmBank = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
       }

@@ -10,10 +10,9 @@ export default {
   name: "midi",
   system: "MIDI",
   driver: null,
-  // No sound of its own: no VGM or video; its WAV and stems are rendered on a
-  // GM SoundFont (export-wav.js → gm-render.js).
-  sound: false,
-  soundFont: true,
+  // Its sound a MIDI output's (targets.js `sound`): a port, or the GM
+  // SoundFont, which its WAV and stems render on (export-wav.js → gm-render.js).
+  sound: "midi",
   chips: { midi },
   channels: {
     ...Object.fromEntries([...Array(16).keys()].filter((v) => v !== 9).map((v) => [`ch${v + 1}`, on(midiChannel, v, v)])),
