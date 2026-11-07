@@ -19,6 +19,12 @@ SpessaLog.setLogLevel(false, false, false);
 // every sample).
 const DECODED_BUDGET = 96 * 2 ** 20;
 
+// The reverb at its fullest (level 1): eight times the bank's own return.
+// FluidR3Mono's at GM's send (CC91 40) is 31 dB under the dry sound, where
+// Off, Half and Full could not be told apart (the user's, 2026-11-07);
+// eight times is 13 dB under, Half (four times) 19 dB.
+const REVERB_FULL = 8;
+
 export class GmSynth {
   constructor(sampleRate) {
     this.sampleRate = sampleRate;
@@ -32,15 +38,15 @@ export class GmSynth {
     this.wheel = new Array(16).fill(0);
     this.range = new Array(16).fill(2);
     this.rpn = new Array(16).fill(-1);
-    // The reverb's level, 0–1 (each channel's send is its CC91): the bank's
-    // own until the caller says (gm-output.js GM_REVERB_DEFAULT).
-    this.reverb = 1;
+    // The reverb's level, 0–1 (each channel's send is its CC91), until the
+    // caller says (gm-output.js GM_REVERB_DEFAULT).
+    this.reverb = 0;
   }
 
-  /** The reverb's level, 0 (none) to 1 (the bank's, as a channel's CC91 sends to it). */
-  setReverb(gain) {
-    this.reverb = Math.max(0, Math.min(1, Number(gain)));
-    this.synth?.setSystemParameter("reverbGain", this.reverb);
+  /** The reverb's level, 0 (none) to 1 (REVERB_FULL), as a channel's CC91 sends to it. */
+  setReverb(level) {
+    this.reverb = Math.max(0, Math.min(1, Number(level)));
+    this.synth?.setSystemParameter("reverbGain", this.reverb * REVERB_FULL);
   }
 
   /** A SoundFont's bytes loaded (the buffer is kept); resolves { presets }. */
@@ -55,7 +61,7 @@ export class GmSynth {
     this.synth?.destroy();
     this.synth = synth;
     this.bank = bank;
-    synth.setSystemParameter("reverbGain", this.reverb);
+    synth.setSystemParameter("reverbGain", this.reverb * REVERB_FULL);
     return { presets: bank.presets.length };
   }
 

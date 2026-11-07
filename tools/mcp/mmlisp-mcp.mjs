@@ -600,7 +600,7 @@ const TOOLS = [
         lpf: { type: "boolean", description: "Apply the Mega Drive analog low-pass (default off)." },
         rhythmRom: { type: "string", description: "pc88: the path of the user's YM2608 rhythm ROM (8 KB); without it the score's kit stands in, and a role with no :file is silent." },
         soundFont: { type: "string", description: "midi: the path of an .sf2 / .sf3 to render on; without it the bundled FluidR3Mono GM (live/soundfonts/)." },
-        reverb: { type: "number", description: "midi: the SoundFont's reverb level, 0 (none) to 1 (the bank's own); 0 (none) by default, as Live's; a channel's send is its :cc91." },
+        reverb: { type: "number", description: "midi: the SoundFont's reverb level, 0 (none) to 1 (Live's Full, 13 dB under the dry sound; 0.5 its Half); 0 by default, as Live's; a channel's send is its :cc91." },
       },
     },
     async run(args) {
