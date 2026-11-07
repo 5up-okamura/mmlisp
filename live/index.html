@@ -8849,21 +8849,34 @@
 
     // ── Sound behind another app (iOS) ─────────────────────────────────────
     // Safari on iPhone and iPad stops a hidden page's Web Audio unless a media
-    // element of the page is playing: there the synth plays through an <audio>
-    // fed from a MediaStreamAudioDestinationNode instead of the context's own
-    // output, and the lock screen's controls reach the page through the Media
-    // Session. The element starts inside the Play tap, before anything awaits.
-    let _bgAudio = null, _bgDest = null;
+    // element of the page is playing: there an <audio> fed from a
+    // MediaStreamAudioDestinationNode plays from the Play tap (before anything
+    // awaits), and the lock screen's controls reach the page through the Media
+    // Session. The synth goes through it only while the page is hidden: the
+    // element's stream is resampled at a varying rate to hold its buffer, so a
+    // late quantum is heard there as the pitch bending (the user's iPhone,
+    // 2026-11-07). In front, the synth plays to the context's own output and
+    // the element plays silence, keeping the session a playback one.
+    let _bgAudio = null, _bgDest = null, _outBus = null;
     function synthOutput() {
       if (!isIOS()) return audioCtx.destination;
-      if (!_bgDest) {
+      if (!_outBus) {
         _bgDest = audioCtx.createMediaStreamDestination();
         _bgAudio = document.createElement('audio');
         _bgAudio.setAttribute('playsinline', '');
         _bgAudio.srcObject = _bgDest.stream;
         document.body.appendChild(_bgAudio);
+        _outBus = audioCtx.createGain();
+        routeSynthOutput();
+        document.addEventListener('visibilitychange', routeSynthOutput);
+        // Sound with the ring / silent switch on, as the element's was.
+        try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
       }
-      return _bgDest;
+      return _outBus;
+    }
+    function routeSynthOutput() {
+      _outBus.disconnect();
+      _outBus.connect(document.hidden ? _bgDest : audioCtx.destination);
     }
     function startBackgroundAudio() {
       if (!isIOS() || !audioCtx) return;
