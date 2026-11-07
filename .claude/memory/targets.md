@@ -131,8 +131,8 @@ takes them; the dropped-words list is what the rules say.
 All built: score-port.js + check, the MDX dialog's Target x68k / md / pc88 /
 midi with rows (guide.md § Song imports), Edit > Convert to Machine… (the
 import dialog reused; msx, pce, fc, gb offered midi only; guide.md
-§ Converting to another machine). Open: a dropped MDX part is logged by its
-x68k channel (`fm7`), not its part name (FM G).
+§ Converting to another machine). The log names a source channel by the
+caller's `names` (an MDX's FM A–H, PCM n).
 
 Built (score-port.js, `check:score-port`): `portRows(text, to)` gives the
 dialog its rows ({key, head, kind, notes, to, choices}; x68k fm8's noise

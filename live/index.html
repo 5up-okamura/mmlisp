@@ -3685,7 +3685,7 @@
         if (plan.error) return [];
         return plan.rows.map((r) => ({
           key: r.key,
-          label: r.key === 'fm8/noise' ? `${partOf.fm8 ?? 'FM H'} · its noise notes` : partOf[r.head] ?? r.head,
+          label: r.key === 'fm8/noise' ? `${partOf.fm8} · its noise notes` : partOf[r.head] ?? r.head,
           value: r.to,
           choices: r.choices,
         }));
@@ -3705,7 +3705,7 @@
       if (hasPcm && !pdx) log(`${fileName}: the ADPCM needs ${mdx.pdxName || 'its PDX'}, picked (or dropped) with the MDX — its tracks are left out`, 'warn');
       if (target === 'midi') return readViaMidi(res, { fileName, tag: 'MDX', own: 'x68k' });
       if (target === 'x68k') return res;
-      const out = portScore(res.source, target, { rows: got.rows, header: false });
+      const out = portScore(res.source, target, { rows: got.rows, header: false, names: partOf });
       if (out.error) throw new Error(out.error);
       const source = out.text.replace(/^(; Imported from .*?) \(MDX\)/, `$1 (MDX, read as x68k, then onto ${target})`);
       return { ...res, source, warnings: [...res.warnings, ...out.said] };
@@ -4108,8 +4108,9 @@
     // `rowsFor(value)`, when given, rebuilds the rows when a field with
     // `rebuildsRows` changes (an import's target: its channels). A field with
     // `onlyFor(target)` is shown on the targets it holds for, from `target` on.
-    function showImportDialog({ title, summary = '', fields = [], target = null, rows = [], rowsFor = null }) {
+    function showImportDialog({ title, summary = '', fields = [], target = null, rows = [], rowsFor = null, okLabel = 'Import' }) {
       const modal = document.getElementById('importModal');
+      document.getElementById('importOk').textContent = okLabel;
       document.getElementById('importModalTitle').textContent = title;
       document.getElementById('importSummary').textContent = summary;
       const fieldBox = document.getElementById('importFields');
@@ -4400,6 +4401,10 @@
     // General MIDI through its MIDI (import-to-midi.js). The whole text is
     // replaced as one undo step; what was dropped or approximated is logged.
     window.convertMachineAction = async () => {
+      if (currentIrURL && !_lastGoodIR) {
+        log('Convert to Machine needs editable MMLisp source.', 'err');
+        return;
+      }
       const view = editorView;
       const text = view.state.doc.toString();
       const from = scoreTargetOf(text);
@@ -4417,7 +4422,8 @@
         if (plan.error) return [];
         return plan.rows.map((r) => ({
           key: r.key,
-          label: `${r.key === 'fm8/noise' ? 'fm8 · its noise notes' : r.head} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
+          // A note-less form is a patch (fm3's beside its operator tracks).
+          label: `${r.key === 'fm8/noise' ? 'fm8 · its noise notes' : r.head} · ${r.notes ? `${r.notes} note${r.notes === 1 ? '' : 's'}` : 'no notes'}`,
           value: r.to,
           choices: r.choices,
         }));
@@ -4432,6 +4438,7 @@
             : 'General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
         rows: rowsFor(choices[0][0]),
         rowsFor,
+        okLabel: 'Convert',
       });
       if (!got) return;
       const to = got.fields.target;

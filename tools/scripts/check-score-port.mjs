@@ -119,6 +119,9 @@ for (const file of files) {
     assert.ok(r.said.some((s) => /'voice-02' plays without :dt2-1 :dt2-2/.test(s)), `MDX → ${to}: DT2 said`);
     assert.deepEqual([r.map.fm7, r.map.fm8], ["fm3", "fm4"], "fm7 and fm8, past the OPN's six, on the FM channels the song leaves free");
   }
+  // The log calls a part by the song's name for it.
+  const named = portScore(chip.source, "md", { rows: { fm7: "drop" }, names: { fm7: "FM G" } });
+  assert.ok(named.said.includes("FM G (4 notes) is not converted"), named.said.join("\n"));
 }
 
 // ── The rules ──

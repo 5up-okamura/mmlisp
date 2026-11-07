@@ -248,10 +248,11 @@ function planRows(s, from, to) {
  * @param {{rows?: Record<string,string>, imports?: Map<string,string>, header?: boolean}} [opts]
  *   rows: a row's key → its channel or 'drop', over the defaults (portRows);
  *   imports: the score's imports' texts, path → text (its voices and samples);
- *   header: the `; Converted from` line at the top (default true)
+ *   header: the `; Converted from` line at the top (default true);
+ *   names: a channel → the name the log calls it by (an MDX's parts)
  * @returns {{text: string, map: Record<string,string>, said: string[]} | {error: string}}
  */
-export function portScore(text, toName, { rows = {}, imports = null, header = true } = {}) {
+export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {} } = {}) {
   const plan = portRows(text, toName, { imports });
   if (plan.error) return plan;
   const from = TARGETS[plan.from];
@@ -273,11 +274,12 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
   }
   if (to.name === "md" && Object.values(map).some((h) => /^pcm/.test(h)) && Object.values(map).includes("fm6"))
     return { error: "fm6 is the Mega Drive's DAC while the score plays PCM: send that row to another channel" };
-  return new Porter(text, from, to, map, imports).run(header);
+  return new Porter(text, from, to, map, imports, names).run(header);
 }
 
 class Porter {
-  constructor(text, from, to, map, imports) {
+  constructor(text, from, to, map, imports, names) {
+    this.names = names;
     this.text = text;
     this.from = from;
     this.to = to;
@@ -295,6 +297,9 @@ class Porter {
   }
 
   say(line) { this.said.add(line); }
+  // A source channel as the log names it: the song's own name for it where
+  // the caller has one (an MDX's FM G for fm7), else the channel.
+  nameOf(head) { return head === NOISE_SPLIT ? this.nameOf("fm8") : this.names[head] ?? head; }
 
   span(node) {
     const from = this.starts[node.line - 1] + node.column - 1;
@@ -532,14 +537,14 @@ class Porter {
       const fm = this.map.fm8 === "drop" ? null : this.oneForm(n, this.ctx("fm8", { split: "tone", state: { ...state } }));
       const noise = this.map[NOISE_SPLIT] === "drop" ? null : this.oneForm(n, this.ctx(NOISE_SPLIT, { split: "noise", state: { ...state } }));
       if (fm == null && noise == null) {
-        this.say(`fm8 (${notes(this.s.heads.get("fm8").notes)}) is not converted`);
+        this.say(`${this.nameOf("fm8")} (${notes(this.s.heads.get("fm8").notes)}) is not converted`);
         return null;
       }
       return [fm, noise].filter((x) => x != null).join("\n");
     }
     if (this.map[head] === "drop" || this.map[head] == null) {
       const why = head === "fm3-csm-rate" ? `: the ${this.to.system} has no CSM` : "";
-      this.say(`${head} (${notes(this.s.heads.get(head)?.notes ?? 0)}) is not converted${why}`);
+      this.say(`${this.nameOf(head)} (${notes(this.s.heads.get(head)?.notes ?? 0)}) is not converted${why}`);
       return null;
     }
     return this.oneForm(n, this.ctx(head));
@@ -561,13 +566,13 @@ class Porter {
     if (first && ctx.srcPart.kind !== "fm" && ctx.destPart.kind === "fm") {
       const v = this.standIn();
       lead.push(v);
-      this.say(`${ctx.head} plays on ${ctx.dest} as ${v} (a stand-in for its square)`);
+      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} as ${v} (a stand-in for its square)`);
     }
     if (ctx.srcPart.kind === "fm" && ctx.destPart.kind !== "fm" && ctx.destPart.kind !== "noise")
-      this.say(`${ctx.head === NOISE_SPLIT ? "fm8" : ctx.head} plays on ${ctx.dest}, a square, without its voice`);
-    if (ctx.split === "noise") this.say(`fm8's :mode noise notes play on ${ctx.dest}, its tone notes on ${this.map.fm8}`);
-    if (ctx.opN) this.say(`${ctx.head} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
-    if (ctx.head === "fm3-csm" && ctx.dest !== "fm3-csm") this.say(`fm3-csm plays its notes on ${ctx.dest}: the ${this.to.system} has no CSM`);
+      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, a square, without its voice`);
+    if (ctx.split === "noise") this.say(`${this.nameOf("fm8")}'s :mode noise notes play on ${ctx.dest}, its tone notes on ${this.map.fm8}`);
+    if (ctx.opN) this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
+    if (ctx.head === "fm3-csm" && ctx.dest !== "fm3-csm") this.say(`${this.nameOf("fm3-csm")} plays its notes on ${ctx.dest}: the ${this.to.system} has no CSM`);
     if (lead.length) after.set(at, [...lead, ...(after.get(at) ?? [])]);
     return this.renderList(n, outs, after);
   }
@@ -634,11 +639,11 @@ class Porter {
     if (base === ":mode") return this.modeRule(val, ctx);
     if (base === ":csm-rate") {
       if (ctx.dest === "fm3-csm" || !ctx.head) return KEEP;
-      this.say(`:csm-rate on ${ctx.head}: the ${this.to.system} has no CSM; taken out`);
+      this.say(`:csm-rate on ${this.nameOf(ctx.head)}: the ${this.to.system} has no CSM; taken out`);
       return DROP;
     }
     if ((base === ":pitch" || base === ":semi") && ctx.destPart?.kind === "sample" && !ctx.destPart.pitch && ctx.srcPart?.pitch) {
-      this.say(`${kw} on ${ctx.head}: the ${ctx.destPart.label} cannot bend a sample; taken out`);
+      this.say(`${kw} on ${this.nameOf(ctx.head)}: the ${ctx.destPart.label} cannot bend a sample; taken out`);
       return DROP;
     }
     const w = canonicalTarget(base);
@@ -650,13 +655,13 @@ class Porter {
     // was the shared patch's, which this channel does not play.
     const op = /\d$/.test(w) && /^FM_/.test(w) ? Number(w.at(-1)) : null;
     if (ctx.opN && op && op !== ctx.opN) {
-      this.say(`${kw} on ${ctx.head} was the FM3 patch's operator ${op}; taken out`);
+      this.say(`${kw} on ${this.nameOf(ctx.head)} was the FM3 patch's operator ${op}; taken out`);
       return DROP;
     }
     if (ctx.destPart ? ctx.destPart.words(w) : this.to.hasWord(w)) return KEEP;
     if (w === "PAN" && (val.value === "center" || val.value === "0")) return DROP; // as a channel with none plays
     const label = ctx.srcPart?.words(w) ? ctx.srcPart.label : owners.find((p) => this.from.parts.includes(p))?.label ?? owners[0].label;
-    this.say(`${base} (the ${label}'s): ${where} has none; taken out`);
+    this.say(`${base} (the ${label}'s)${ctx.head ? ` on ${this.nameOf(ctx.head)}` : ""}: ${where} has none; taken out`);
     return DROP;
   }
 
@@ -666,7 +671,7 @@ class Porter {
     // A song's word steps in a note's macro only on a part that says so
     // (the SSG's noise rate).
     if (ctx.macro && this.to.hasWord(w) && !ctx.destPart?.songMacros?.(w)) {
-      this.say(`${kw} in a macro on ${ctx.head}: on the ${this.to.system} it is the song's, not a note's; taken out`);
+      this.say(`${kw} in a macro on ${this.nameOf(ctx.head)}: on the ${this.to.system} it is the song's, not a note's; taken out`);
       return DROP;
     }
     if (this.to.hasWord(w)) return KEEP;
@@ -687,7 +692,7 @@ class Porter {
         this.say(`:noise-rate ${n} (${Math.round(NOISE_CLOCK / n)} Hz) reads as :mode white${white} (${WHITE_HZ[white]} Hz)`);
         return { replace: `:mode white${white}` };
       }
-      this.say(`:noise-rate ${n ?? "(a sweep)"} on ${ctx.head ?? "a def"}: the ${this.to.system}'s noise has no rate${ctx.destPart?.kind === "noise" ? " sweep" : " but its track's :mode"}; taken out`);
+      this.say(`:noise-rate ${n ?? "(a sweep)"} on ${ctx.head ? this.nameOf(ctx.head) : "a def"}: the ${this.to.system}'s noise has no rate${ctx.destPart?.kind === "noise" ? " sweep" : " but its track's :mode"}; taken out`);
       return DROP;
     }
     this.say(`${kw}: the ${this.to.system} has none; taken out`);
@@ -709,10 +714,10 @@ class Porter {
       if (r?.write) return { replace: r.as };
       if (ctx.destPart?.kind === "noise" && this.to.hasWord("NOISE_RATE") && RATE_OF_WHITE[val.value])
         return { replace: `:noise-rate ${RATE_OF_WHITE[val.value]}` };
-      if (r?.none) { this.say(`:mode ${val.value} on ${ctx.head}: ${r.none}; taken out`); return DROP; }
+      if (r?.none) { this.say(`:mode ${val.value} on ${this.nameOf(ctx.head)}: ${r.none}; taken out`); return DROP; }
     }
     const what = ctx.srcPart?.kind === "tone" ? " (the SSG's mixer: its notes play as tone)" : ctx.srcPart?.kind === "noise" ? " (it plays the noise the machine has)" : "";
-    this.say(`:mode ${val.kind === "atom" ? val.value : `[${syms.join(" ")}]`} on ${ctx.head}: ${ctx.dest} has no such mode${what}; taken out`);
+    this.say(`:mode ${val.kind === "atom" ? val.value : `[${syms.join(" ")}]`} on ${this.nameOf(ctx.head)}: ${ctx.dest} has no such mode${what}; taken out`);
     return DROP;
   }
 
@@ -740,7 +745,7 @@ class Porter {
           const v = items[i].value;
           if (v === ":tempo") { tempo ??= this.slice(items[i + 1]); i++; continue; }
           if (this.s.voices.has(v)) { if (!voice) voice = v; else if (v !== voice) later.push(v); continue; }
-          if (typeof v === "string" && /^:/.test(v) && !/^:(len|oct|gate)$/.test(v)) { this.say(`${v} on ${head} (the FM3 patch): taken out with the patch`); i++; continue; }
+          if (typeof v === "string" && /^:/.test(v) && !/^:(len|oct|gate)$/.test(v)) { this.say(`${v} on ${this.nameOf(head)} (the FM3 patch): taken out with the patch`); i++; continue; }
         }
       }
     if (later.length) this.say(`the FM3 patch's later voices (${[...new Set(later)].join(" ")}) are not followed: the operator tracks keep ${voice}'s`);
