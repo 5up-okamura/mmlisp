@@ -95,8 +95,8 @@ lessons.
 
 ## Deferred editing ideas
 
-- **Target conversion** (an open score's `:target` changed; a song import
-  onto another machine is built): retain as an idea, lower priority.
+- **Target conversion**: planned, targets.md § Machine conversion (the
+  user wants it, 2026-11-07, after "lower priority" on 2026-11-03).
 - **Hiding source by kind** (user's idea, 2026-11-06; still being thought
   over — do not build until the user decides): e.g. hide every `:vel` so a
   dense score (VGM / NSF imports) reads easily. A view setting only: Save,

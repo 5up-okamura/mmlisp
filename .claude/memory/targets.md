@@ -82,6 +82,55 @@ Open:
 - A program a hot-swap brings mid-play decodes on the audio thread (decode
   off it and `setAudioData` if it is heard).
 
+## Machine conversion (planned 2026-11-07; not yet built)
+
+A score of one 4-op FM machine on another — x68k, md, pc88 — at the words'
+level, not through its VGM (the user: what the composer wrote — `:gate`, a
+glide, a `:pitch+` curve, the voice defs, the loop — must survive; the VGM
+road rebuilds them from registers). Two faces of one module, `score-port.js`:
+- **An MDX's Target** (its dialog gets rows as the VGM's: FM A–H, PCM 1–8 →
+  the target's channels / drop; Target x68k / md / pc88 / midi). MGS stays
+  x68k-far: midi only.
+- **Edit > Convert to Machine…**: the open score onto another, the same
+  dialog, one undo step; midi offered there too (chipScoreToMidi). A line
+  `; Converted from :target x68k` at the top, and the log lists every
+  word dropped or approximated.
+- Near = both machines have 4-op FM. msx (FM-PAC), pce, fc, gb: not
+  offered (stand-ins all over); their road is midi.
+
+What the compiler already does, measured on an x68k score with `:target`
+swapped: DT2 is a W_TARGET warning (played without); `:mode whiteN` on an
+SSG reads as `:noise-rate` (targets' `readsAs`); every other mismatch is
+E_TARGET, the whole list below.
+
+Rules (word-level; the VGM importer's readings, which live at register level
+in vgmToMmlisp and cannot be called from here):
+| from → to | rule |
+| --- | --- |
+| x68k fm7/fm8 → md/pc88 | sqr1/sqr2 as square stand-ins (presets/waveforms, `loud-*` as import-song.js), or drop: the rows decide |
+| x68k fm8's `:mode noise` notes → md/pc88 | to `noise`: md the nearest `:mode whiteN` by Hz (125 kHz / n vs the PSG's rates, import-vgm nearestWhite), pc88 `:noise-rate` by Hz; its tone notes stay on the FM channel |
+| `:lfo-freq N` (OPM) → OPN | `:lfo-rate 1–8` nearest in Hz; `:lfo-wave :lfo-pmd :lfo-amd` dropped (depth is already `:fms`/`:ams`) |
+| OPN `:lfo-rate` → x68k | `:lfo-freq` nearest in Hz |
+| md sqr1–3 → x68k | fm7/fm8 as square stand-ins (two; the third drops), rows decide |
+| md noise → x68k | fm8 `:mode noise` under a voice, `:noise-rate` by Hz |
+| md fm3-1…fm3-4, fm3-csm → x68k | fm3 one of them, the rest drop (the rows show them) |
+| pc88 sqr `:mode both` / `:env` / `:env-rate` → md | `:mode tone`, the envelope dropped and said (no reading on the PSG); `:mode env` notes dropped |
+| pc88 rhythm1–6 (kit roles) ↔ md pcm1–3 (kit-role samples) | by role: a rhythm track is a pcm track playing `kick` … under the RX5 import, and back where the samples are roles (the import writes both so) |
+| pcm: x68k pcm1–8 / md pcm1–3 / pc88 pcm1 | rows, first come; `:fx`, `:rate`, `:file` as they are |
+| x68k fm `:pan` ↔ md/pc88 | as is (both have it) |
+Levels: the voices' TL as written (the composer's balance); only stand-ins
+take `loud-*` where there are no squares to sit beside.
+
+Checks (`check:score-port`): the MDX fixture (check-import-to-midi.mjs
+builds one) → md and pc88 compile clean and keep every melodic note (midiPlan
+keys, as check-import-to-midi compares); tools/tests' md, pc88 and x68k
+scores each onto the other two compile clean, notes kept where a channel
+takes them; the dropped-words list is what the rules say.
+
+Order: score-port.js + check → the MDX dialog's rows → Edit > Convert to
+Machine… (the import dialog reused, `showImportDialog`) → guide.md (§ Song
+imports, § Edit) and the CLAUDE.md map. ~1–2 days.
+
 ## The PC Engine (pce; built 2026-10-27)
 
 - **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,
