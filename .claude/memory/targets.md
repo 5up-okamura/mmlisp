@@ -53,89 +53,34 @@ The names themselves are guide.md §25; the reasons:
 
 ## MIDI (midi; built 2026-11-07)
 
-- **No chords, by ruling** (the user, 2026-11-07): a channel plays one note
-  at a time, as every machine's; a chord is several channels. Notes that
-  start and stop together could be written, others could not, so none are.
-- **The drums are eight tracks** (`drum1`–`drum8`, all channel 10; the user,
-  2026-11-07: numbered from 1 and singular, as `sqr1` and `rhythm1` are, and
-  eight, above the YM2608 rhythm's six), so hits sound together.
-- **No `def-midi`**: an instrument is `:prog` (and `:bank`; abbreviated as
-  `:cc` is, the user's ruling), a patch a
-  `def` of words; a voice named for an instrument (gm-*, the roles, the
-  VRC7's ROM names) writes its program — built in, as the OPLL's ROM is.
-- **No sound of its own**: Live's Play runs the clock silent (synth-midi.js)
-  and the MIDI output sounds it (a port or the GM output); its WAV, stems
-  and MCP render are the GM SoundFont's (gm-render.js); no VGM or video.
-- **`:vel` stays the language's 16 steps** (2 dB), read as a GM level; a
-  finer velocity waits for a score that needs it.
-- **A CC a word writes is the word's** (the user, 2026-11-07: both would be
-  ideal, but not at the cost of reconciling them): `:cc7` is refused for
-  `:vol`, `:cc10` `:pan`, `:cc0`/`:cc32` `:bank`, `:cc6`/`38`/`100`/`101`
-  `:bend-range`, `:cc11` a `:vel` macro (chips/midi.js NAMED_CC). The mode
-  messages `:cc120`–`:cc127` are not restricted.
-- **The mixer's faders scale the MIDI output's velocities** (the user,
-  2026-11-07), on every target: the strip's and the master's dB on GM's
-  curve; the score's CC7 is left as written, and the score is not edited.
-- Open: the on-screen keyboard and a MIDI keyboard's preview notes go to the
+Rulings, not to re-propose:
+- **No chords** (the user): a channel plays one note at a time, as every
+  machine's; a chord is several channels.
+- **The drums are eight tracks**, `drum1`–`drum8` on channel 10 (the user:
+  singular and from 1, as `sqr1`; eight, above the YM2608 rhythm's six).
+- **No `def-midi`**: an instrument is `:prog` / `:bank`, a patch a `def` of
+  words.
+- **`:vel` stays the language's 16 steps**; a finer velocity waits for a
+  score that needs it.
+- **A CC a word writes is the word's** (the user: both would be ideal, not
+  at the cost of reconciling them); the mode messages are not restricted.
+- **The faders scale the MIDI output's velocities**; the score is not
+  edited.
+- **The GM output is a node of its own** (spessasynth_core, FluidR3Mono or
+  the user's SF2 / SF3). Turned down: GM in the chips' worklet, an FM GM
+  (libOPNMIDI's bank), a first-party SF2 player.
+
+Measured (an iPhone, iOS 18.7, 48 kHz): the worklet module 918 ms, the
+sf3's fetch 4.2 s; a sample decodes on first use on the audio thread (a
+block's worst 39–61 ms against a 2.9 ms budget), so a plan's programs and
+keys are preloaded (141 ms); decoded memory +26 MiB for every program once,
++175 MiB for every sample; CPU 2–9 % for a five-part demo.
+
+Open:
+- The on-screen keyboard and a MIDI keyboard's preview notes go to the
   silent synth, not to the MIDI output.
-- **A MIDI file imports onto `:target midi` by default** (the user,
-  2026-11-07: as a VGM imports onto its own chips; import-midi.js
-  MIDI_DEFAULT_TARGET). The Channels meters on midi show its notes (each
-  note's :vel under the faders, a peak at its start) — not a level heard,
-  which the user accepted as a meter that need not be a VU.
-- **GM Reverb** (MMLisp > MIDI, Off / Half / Full: spessasynth's reverbGain
-  ×0 / ×4 / ×8 — the bank's own, ×1, is 31 dB under the dry sound and the
-  steps could not be told apart; Off by default, the user's ruling
-  2026-11-07 — an earlier "too wet" was heard through the iOS <audio>
-  bridge)
-  is the user's setting, on the GM output's playing and its renders; a
-  channel's send is its `:cc91` (unwritten, the bank's own per-instrument
-  send). Crackles were reported on the GM output (2026-11-07), not
-  reproduced headless (2 late quanta at the bank's load, none playing); the
-  worklet now says when quanta run late (gm-worklet.js 'late'), which tells
-  an underrun from a sound of the bank's. A pitch that sags early in a
-  played song (the user, 2026-11-07; its WAV clean) is taken for the phone's
-  output stream starving while the bank loaded and voices decoded on the
-  audio thread under the first Play: Play now waits for both (gmReadyFor),
-  and choosing GM from the menu loads it in that tap. Open until heard.
-  The low noise the user heard on midi with no output (an iPhone, Chrome's
-  home-screen app, i.e. WebKit): the worklet's scope scratch, for a synth
-  of no lanes (synth-midi.js), threw on every block after the first, so no
-  block was rendered (worklet.js _scopeScratchFor; fixed). A floor under
-  midi's silence (the chips' never sit at zero: md's DAC rests at DC
-  0.023) was tried and taken out again with the fix in, to tell which one
-  the iPhone needs. Open until heard.
-- **A SoundFont as its sound** (the user's go, 2026-11-07). Built: the GM
-  output (gm-output.js, gm-worklet.js; MMLisp > MIDI > Output, any browser),
-  spessasynth_core in an AudioWorklet of its own fed MidiOutRun's bytes at
-  audio time, on FluidR3Mono (live/soundfonts/, fetched on first choice,
-  never precached) or the user's SF2 / SF3 (ROM 'soundfont'). Turned down: a
-  built-in GM in the chips' worklet (it is a node of its own, so it serves
-  every target's output for nothing), an FM GM (libOPNMIDI's bank on the
-  YM2612), a first-party SF2 player (import-sf2.js parses drum kits only).
-  Renders (gm-render.js): MidiOutRun on a clock from the plan's tempo map
-  into the same GmSynth (gm-synth.js), a loop's later passes on the first
-  pass's timing as the chips' WAV tiles its writes. One flag says whose the
-  machine's sound is, `sound: "chips" | "midi"` (targets.js profile; the
-  user's review 2026-11-07 found it split in two, `sound: false` and
-  `soundFont`, and the export reading channels off head names): WAV / Stems
-  are on every machine, VGM / video / Instruments / Audio as FM Voice on a
-  chip's; the export takes a track's channel from the channel table.
-- Measured (headless Chromium; an iPhone, iOS 18.7, Safari 26.6, 48 kHz):
-  bank parse 50–60 ms, ready 75–110 ms; the worklet module 140 ms /
-  918 ms on the iPhone; the sf3's fetch 4.2 s there (the network). Samples
-  decode on first use on the audio thread: a block's worst 39–61 ms against a
-  2.67–2.9 ms budget, 9–14 blocks over (heard as nothing on the iPhone, but
-  it is the risk). `preset.preload(lo, hi)` of the programs and keys a plan
-  plays, before Play: 141 ms (iPhone) – 173 ms, against 733 ms for every key.
-  Decoded memory: every program once +26 MiB, every sample +175 MiB (cap it
-  with `decodedSampleBudget`); the iPhone did not reload with every program
-  decoded. CPU: a five-part demo 2–9 % of real time, every program 11.6 %
-  (iPhone).
-- Open: decoding a program a hot-swap brings mid-play stalls the audio
-  thread (decode off it and `setAudioData` if it is heard); the budget's
-  figure. The oscilloscope on midi is the GM output's (spessasynth's
-  `channelOutputs`, dry, a lane a MIDI channel; drums share channel 10's).
+- A program a hot-swap brings mid-play decodes on the audio thread (decode
+  off it and `setAudioData` if it is heard).
 
 ## The PC Engine (pce; built 2026-10-27)
 

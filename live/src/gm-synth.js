@@ -21,7 +21,7 @@ const DECODED_BUDGET = 96 * 2 ** 20;
 
 // The reverb at its fullest (level 1): eight times the bank's own return.
 // FluidR3Mono's at GM's send (CC91 40) is 31 dB under the dry sound, where
-// Off, Half and Full could not be told apart (the user's, 2026-11-07);
+// Off, Half and Full could not be told apart;
 // eight times is 13 dB under, Half (four times) 19 dB.
 const REVERB_FULL = 8;
 

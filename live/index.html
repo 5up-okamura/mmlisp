@@ -8858,7 +8858,7 @@
     // context's own output, hidden or not: through the element its sound was
     // resampled at a varying rate to hold the element's buffer — a late
     // quantum heard as the pitch bending — and moving it there and back on
-    // each hide and show broke the sound off (the user's iPhone, 2026-11-07).
+    // each hide and show broke the sound off.
     let _bgAudio = null, _bgDest = null, _outBus = null;
     function synthOutput() {
       if (!isIOS()) return audioCtx.destination;

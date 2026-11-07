@@ -21,7 +21,7 @@ const DRUM_CH = 9;
 
 /**
  * The reverb's level when none is chosen (MMLisp > MIDI > GM Reverb, a
- * render's): none, the channels dry (the user's, 2026-11-07). Here, not in
+ * render's): none, the channels dry. Here, not in
  * gm-synth.js, so the page does not load the synthesizer to read it.
  */
 export const GM_REVERB_DEFAULT = 0;
