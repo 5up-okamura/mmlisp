@@ -2712,8 +2712,8 @@ done.
 
 Under **Machines** is a tour of each machine, only what it has and the others
 lack (the Mega Drive's FM3 operators, CSM and PCM voices, the PC-8801's SSG
-envelope and ROM rhythm, the Famicom's expansion chips …), each step a score
-for that machine; Start Lesson and Next keep to the lessons, and a tour is
+envelope and ROM rhythm, the Famicom's expansion chips, MIDI's programs,
+controllers and drums …), each step a score for that machine; Start Lesson and Next keep to the lessons, and a tour is
 picked from the list, or opened from **File ▸ New…**. Under **Tools** the
 app's own tools are told the same way, a step each: the Logical Editor (with a
 Try), Tap Tempo, folders and archives, export and share. The lessons' texts

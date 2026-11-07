@@ -1,0 +1,6 @@
+; Any controller is :cc and its number, 0–127, written, swept or stepped by
+; a note's macro as a chip's registers are: :cc1 the modulation wheel, :cc74
+; the brightness, :cc64 the sustain pedal. :vol is CC7 and :pan CC10.
+; Try: open the lead's brightness over the bar, :cc74 (linear 20..110 :len 1).
+(def-score :target midi)
+(ch1 gm-lead-saw :oct 4 :len 8 c e g > c < g e c e)

@@ -1,0 +1,6 @@
+; The drums are channel 10, as eight tracks, drum1–drum8, so hits sound
+; together. The kit's roles are built in, each at its GM key: kick, snare,
+; hat, hat-open, crash, ride, the toms …
+; Try: add the hats on a track of their own, (drum2 hat :len 8 c c c c c c c c).
+(def-score :target midi)
+(drum1 :len 4 kick c snare c kick c snare c)

@@ -119,5 +119,15 @@
     "steps": [
       {"file": "01-wave", "title": "Wave channel", "check": {"velsMin": 2}, "answer": "(def-score :target gb)\n(def-wave saw :wave (saw -128..127))\n(wave saw :oct 3 c e g e :vel 8 c e g e)"}
     ]
+  },
+  {
+    "id": "midi",
+    "group": "Machines",
+    "title": "MIDI",
+    "steps": [
+      {"file": "01-programs", "title": "Programs", "check": {"match": "\\(ch2[^)]*(gm-bass|:prog\\s+3[2-9])"}, "answer": "(def-score :target midi)\n(ch1 gm-flute :oct 5 :len 4 c e g e)\n(ch2 gm-bass-finger :oct 2 :len 2 c g)"},
+      {"file": "02-controllers", "title": "Controllers", "check": {"match": ":cc\\d+\\s+\\("}, "answer": "(def-score :target midi)\n(ch1 gm-lead-saw :oct 4 :len 8 :cc74 (linear 20..110 :len 1) c e g > c < g e c e)"},
+      {"file": "03-drums", "title": "Drums", "check": {"tracksMin": 2}, "answer": "(def-score :target midi)\n(drum1 :len 4 kick c snare c kick c snare c)\n(drum2 hat :len 8 c c c c c c c c)"}
+    ]
   }
 ]
