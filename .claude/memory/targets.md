@@ -157,6 +157,77 @@ key) the same. Where it went past the table above, or off it:
 - A song word in a macro is dropped where the part has no `songMacros`
   (the SSG's `:noise-rate` steps; the OPM's does not).
 
+## Machine conversion, stage 2: PSG and 2-op FM (planned 2026-11-08; not yet built)
+
+Widen score-port.js from md / pc88 / x68k to msx, fc and gb — their squares
+(SSG, 2A03, Game Boy, 5B, MMC5, VRC6), their noises, the 2-op FM (FM-PAC,
+VRC7) and their kits / samples — every pair both ways. Wave memory (msx's
+SCC, pce, fc's FDS / N163, gb's wave) is stage 3: those channels drop and
+are said; pce, all waves, stays midi-only for now.
+
+The user's policy (2026-11-08): **a voice that is a role plays the machine's
+voice for that role; any other voice is read as one of presets/waveforms.**
+- A role: the fifteen names of presets/fm-roles — the OPLL's ROM names too
+  (piano, organ, guitar … synth-bass); a `gm-*` is the role whose gm voice
+  it is (gen-fm-roles ROLES) else its GM family's (piano → piano, organ,
+  guitar, bass → synth-bass / acoustic-bass, strings → violin, brass →
+  trumpet / horn, reed → oboe / clarinet, pipe → flute, lead → synth). On
+  the OPLL / VRC7 the role is the ROM voice (the VRC7's names differ:
+  VRC7_ROM_NAMES — map by role index where the name does not match); on a
+  4-op machine `(import "presets/fm-roles/set.mmlisp")` and the name as is.
+- Not a role: the nearest of the four waveforms (wave-sine / triangle / saw /
+  square), weighed as nearestRomVoice weighs (import-fm-voices.js: attack,
+  hold, fall, brightness) against the waveforms' own 4-op defs — on a 4-op
+  machine that def; on the OPLL its ROM stand-in (import-song.js
+  ROM_STAND_IN: square → clarinet, saw → synth, triangle / sine → flute).
+  So no conversion ever writes an OPLL user voice: the chip has one for
+  every channel at once (W_TARGET two user voices), and the ROM avoids it.
+- OPLL → 4-op: a ROM voice is its role (above); a user `def-fm` goes exactly
+  — the 2-op chain as alg 4 with op3 / op4 at TL 127, AR / DR / TL / KS
+  scaled, EG 0 as SR = RR (voiceAs4op's reading, on words) — with `:ws`
+  (rectified), `:ksl`, `:sus` dropped and said, `:vib` as `:fms 1` and the
+  OPN's `:lfo-rate` nearest the OPLL's 6.4 Hz, `:am` kept.
+- A square on an FM channel: wave-square as now (loud-* where no squares sit
+  beside); a square's `:duty` is the waveform's name only (wave-square).
+
+Channels (rows, defaults; the same planner, its kinds widened):
+| from → to | rule |
+| --- | --- |
+| squares ↔ squares (sqr1–3, fc sqr1–2, gb sqr1–2, 5b-sqr, mmc5-sqr, vrc6-sqr) | by order; fc's and gb's `:duty` dropped onto SN / SSG / 5B (said: a 50 % square); nothing to write the other way |
+| a square past the count | a free FM channel under wave-square (as now); on fc, `tri` (said: one level, no `:vel`) then the expansions' pulses only when the rows pick them (fc `listsExpansions`: defaults on board, as import-song's onBoard) |
+| a track whose stand-in has a channel of its shape | fc's `tri` for triangle / sine, `vrc6-saw` for saw, when free and the rows agree |
+| noise ↔ noise | SN modes ↔ SSG / 5B / OPM rates by Hz (as now); ↔ 2A03 / gb: the rate is the note's pitch — a mode becomes `:mode white` / `periodic` and the notes the pitch whose rate is nearest (import-vgm's fc tables); back, each note's pitch the nearest `:mode whiteN` / `periodicN` (inline, per change) or `:noise-rate n` (the SSG's, inline) |
+| SSG `:env` / `:env-rate` / `:env-semi` / `:env-detune` ↔ 5B | kept (both have them); elsewhere dropped (as now) |
+| FM (4-op) → OPLL / VRC7 | fm1–6 → fm1–6 (msx: fm1–9 so x68k's fm7, fm8 fit; vrc7-fm1–6); the voice by the policy; inline op words: op1's where the 2-op has them, op3 / op4's dropped, any on a ROM-voice track dropped (the ROM is fixed), said |
+| OPLL / VRC7 → 4-op | fm1–6 → fm1–6, msx fm7–9 past six → free FM / squares as x68k's fm7, fm8 are |
+| kits | the FM-PAC's rhythm1–5 ↔ pc88's rhythm1–6 ↔ pcm tracks of kit roles (as now, by role: kick snare hat tom4 ride / rim where the kit has them) |
+| samples | fc pcm1 (DPCM) ↔ others' pcm by rows (its loop rule as the ADPCM-B's: the range is the loop); gb none; pce's DDA with stage 3 |
+| `:pan` | gb's pulses / noise and the OPN / OPM / ADPCM-B have it; fc, msx none: dropped and said (centre unsaid, as now) |
+| `:lfo-rate` / `:fms` / `:ams` → OPLL user voice | `:vib` / `:am` per operator (fixed rates), said; on a ROM voice dropped |
+Defaults when a machine is short (gb: two pulses, a noise): the rows most
+notes first keep their channels, the rest drop — a change from the table's
+order now; or keep the table's order (open, ask).
+
+Checks (`check:score-port`, widened): tools/tests' msx, fc, gb scores onto
+md / pc88 / x68k and back, drv/tests' md scores onto msx / fc / gb — compile
+clean, notes kept on the channels the rows name; the policy: a role's name
+kept (fm-roles imported on 4-op), a non-role voice the said waveform, an
+OPLL user voice back as its 4-op def, a VGM-imported msx song (its ROM
+voices) onto md and back to the same ROM names.
+
+UI: PORT_TARGETS widened, Convert to Machine's near list follows; the MDX
+dialog's Target adds msx / fc / gb; the MGS dialog (msx) gets Target md /
+pc88 / x68k / fc / gb with rows (its SCC parts drop and are said until
+stage 3). guide.md § Converting to another machine and § Song imports.
+
+Order: the voice policy as one module (`voice-port.js`: roleOf, waveformOf,
+opllAs4op; its own check) → score-port's kinds and rules → the noise's
+pitch ↔ rate → the dialogs → docs. ~2 days.
+
+Seen on the way: p3-se-noise.mmlisp swapped onto pce throws in the compiler
+(`null.modes`: a def-se noise part on a machine with no `noise` channel) —
+a compiler bug to fix apart.
+
 ## The PC Engine (pce; built 2026-10-27)
 
 - **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,
