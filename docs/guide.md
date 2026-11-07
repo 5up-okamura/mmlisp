@@ -1463,7 +1463,9 @@ in every browser (an iPhone's too, which has no Web MIDI): **GM
 (FluidR3Mono)**, a General MIDI SoundFont fetched the first time it is chosen
 (22.5 MB), and **SoundFont: …**, an `.sf2` or `.sf3` of your own that **Load
 SoundFont…** keeps in the browser. Either plays a `:target midi` score in
-Live with nothing else connected. `Choose Output…` asks the browser once,
+Live with nothing else connected, and its **File ▸ Export ▸ WAV…** and
+**Stems…** render on that SoundFont (FluidR3Mono unless yours is the output
+chosen). `Choose Output…` asks the browser once,
 then lists the MIDI ports; `Off` stops. What goes out is what
 **File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its
 channel, its notes, its `gm-*` or role voice's program, its levels, pan and

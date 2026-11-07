@@ -2484,13 +2484,15 @@ those chips cannot do is a compile error, not a different sound.
 | `pce` | NEC PC Engine: the HuC6280's six wave channels, two of them noise | VGM, WAV |
 | `gb` | Nintendo Game Boy: the LR35902's two pulses, wave and noise | VGM, WAV |
 | `fc` | Nintendo Famicom: the 2A03's two pulses, triangle, noise and DPCM, and the expansion chips a score names: the VRC6 (two pulses, a saw), the Disk System's wavetable (FDS), the MMC5's two pulses, the Sunsoft 5B's SSG, the VRC7's FM, the N163's wavetables | VGM (without the VRC6, the MMC5 and the N163), WAV |
-| `midi` | A General MIDI instrument: fifteen melodic channels and the drums (`drum1`–`drum8`) | MIDI (the file, and Live's MIDI output); no sound of its own |
+| `midi` | A General MIDI instrument: fifteen melodic channels and the drums (`drum1`–`drum8`) | MIDI (the file, and Live's MIDI output); WAV on a GM SoundFont |
 
 **`midi` is a General MIDI instrument**, a machine with no sound of its own:
 its score is a Standard MIDI File (File ▸ Export ▸ MIDI…), and while Live plays
 it the sound is a MIDI output's (MMLisp ▸ MIDI ▸ Output: a MIDI port, or
-the page's GM SoundFont, FluidR3Mono or your own); it has no WAV, VGM,
-stems or video. Its channels are `ch1`–`ch16` but `ch10`, each the MIDI channel
+the page's GM SoundFont, FluidR3Mono or your own). Its WAV and stems are
+rendered on that SoundFont, as the GM output plays it (the bundled
+FluidR3Mono unless your own is the output chosen); it has no VGM or video.
+Its channels are `ch1`–`ch16` but `ch10`, each the MIDI channel
 it names, and the drums, channel 10, as eight tracks — `drum1`–`drum8` — so
 hits sound together, as a ROM rhythm's tracks do. A track plays one note
 at a time, as on every machine: a chord is several channels.

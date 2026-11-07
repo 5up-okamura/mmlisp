@@ -588,7 +588,8 @@ const TOOLS = [
       "Render a score to a 48 kHz stereo WAV the user can listen to, through its machine's chips as the editor plays them (same DSP as the " +
       "editor's WAV export): md's FM + PSG through the Nuked cores, PCM through the driver's engine; pc88 through ymfm's YM2608, its " +
       "rhythm from the user's ROM, else the kit's :files cut to the ROM's lengths; x68k through ymfm's YM2151 and PCM8 on the MSM6258; " +
-      "msx through ymfm's SSG and YM2413 (the FM-PAC) and its own SCC; pce, fc (with its expansions) and gb through their own chip models. " +
+      "msx through ymfm's SSG and YM2413 (the FM-PAC) and its own SCC; pce, fc (with its expansions) and gb through their own chip models; " +
+      "midi on a General MIDI SoundFont (the bundled FluidR3Mono, or soundFont) as Live's GM output plays it. " +
       "A looping song plays intro + 2 loops + 4 s fade. " +
       "Returns the file path and levels (peak/RMS, clipping, silence) — a sanity check, since you cannot hear it.",
     inputSchema: {
@@ -598,6 +599,7 @@ const TOOLS = [
         out: { type: "string", description: "Output .wav path (default: a file in the system temp dir)." },
         lpf: { type: "boolean", description: "Apply the Mega Drive analog low-pass (default off)." },
         rhythmRom: { type: "string", description: "pc88: the path of the user's YM2608 rhythm ROM (8 KB); without it the score's kit stands in, and a role with no :file is silent." },
+        soundFont: { type: "string", description: "midi: the path of an .sf2 / .sf3 to render on; without it the bundled FluidR3Mono GM (live/soundfonts/)." },
       },
     },
     async run(args) {
@@ -629,7 +631,13 @@ const TOOLS = [
           if (kind === "adpcm") rhythmRom ??= bakeRhythmStandIn(ir, blobs)?.rom ?? null;
         }
       }
-      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom });
+      // :target midi: no chip to play; its SoundFont's (gm-render.js).
+      let gmBank = null;
+      if (target.soundFont) {
+        const b = fs.readFileSync(path.resolve(ROOT, args.soundFont ?? "live/soundfonts/FluidR3Mono_GM.sf3"));
+        gmBank = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+      }
+      const wav = await renderWav(player, { lpfOn: !!args.lpf, pcm, rhythmRom, gmBank });
       const out = args.out
         ? path.resolve(ROOT, args.out)
         : path.join(os.tmpdir(), "mmlisp-mcp", path.basename(name).replace(/\.mmlisp$/, "") + ".wav");

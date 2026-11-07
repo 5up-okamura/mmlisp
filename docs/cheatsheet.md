@@ -334,7 +334,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `:vol` is CC7, `:pan` CC10, `:bank` CC0/32, `:bend-range` CC6/38/100/101,
   a `:vel` macro CC11). A patch is a `def`:
   `(def lead :prog 81 :cc74 40)`. No sound of its own: File ▸ Export ▸
-  MIDI… writes it, MMLisp ▸ MIDI ▸ Output plays it; no WAV or VGM.
+  MIDI… writes it, MMLisp ▸ MIDI ▸ Output plays it (a MIDI port, or a GM
+  SoundFont in the page); its WAV renders on that SoundFont; no VGM.
 - `:vel 0` is quiet, not silent — a rest is `_`, a mute is `:vol 0`.
 - Tracks drift silently: end bars with `|` and compare lengths across tracks
   (the MCP `mmlisp_check` prints every track's length with its loops unrolled).

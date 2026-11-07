@@ -96,13 +96,13 @@ goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
 | `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
 | `gb` | Game Boy | LR35902's APU: two pulses, wave, noise | its own | VGM, WAV |
 | `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
-| `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a GM SoundFont (FluidR3Mono, or your own), or a MIDI output | MIDI |
+| `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a GM SoundFont (FluidR3Mono, or your own), or a MIDI output | MIDI, WAV (on the SoundFont) |
 
 Every machine also exports MIDI (File > Export > MIDI…) and plays to a MIDI
 output (MMLisp > MIDI > Output) beside its chips — a MIDI port, or a GM
 SoundFont the page plays itself (FluidR3Mono, or an `.sf2` / `.sf3` of your
-own), in any browser; `midi` has no sound of its own, so it plays only there
-and has no WAV or VGM.
+own), in any browser; `midi` has no sound of its own, so it plays only there,
+and its WAV and stems are rendered on that SoundFont (no VGM).
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each

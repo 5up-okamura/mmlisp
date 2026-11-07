@@ -64,8 +64,8 @@ The names themselves are guide.md §25; the reasons:
   `def` of words; a voice named for an instrument (gm-*, the roles, the
   VRC7's ROM names) writes its program — built in, as the OPLL's ROM is.
 - **No sound of its own**: Live's Play runs the clock silent (synth-midi.js)
-  and the MIDI output sounds it (a port or the GM output); WAV, VGM, stems
-  and video are refused until step 3 below.
+  and the MIDI output sounds it (a port or the GM output); its WAV, stems
+  and MCP render are the GM SoundFont's (gm-render.js); no VGM or video.
 - **`:vel` stays the language's 16 steps** (2 dB), read as a GM level; a
   finer velocity waits for a score that needs it.
 - **A CC a word writes is the word's** (the user, 2026-11-07: both would be
@@ -86,9 +86,10 @@ The names themselves are guide.md §25; the reasons:
   built-in GM in the chips' worklet (it is a node of its own, so it serves
   every target's output for nothing), an FM GM (libOPNMIDI's bank on the
   YM2612), a first-party SF2 player (import-sf2.js parses drum kits only).
-  Next (step 3): the WAV / stems / MCP render driving the same MidiOutRun on
-  the render's clock (no register log), and `sound` true for midi once a bank
-  is there.
+  Renders (gm-render.js): MidiOutRun on a clock from the plan's tempo map
+  into the same GmSynth (gm-synth.js), a loop's later passes on the first
+  pass's timing as the chips' WAV tiles its writes; `soundFont: true` on the
+  target lets WAV / Stems in (targetHas 'render').
 - Measured (headless Chromium; an iPhone, iOS 18.7, Safari 26.6, 48 kHz):
   bank parse 50–60 ms, ready 75–110 ms; the worklet module 140 ms /
   918 ms on the iPhone; the sf3's fetch 4.2 s there (the network). Samples

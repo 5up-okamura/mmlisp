@@ -13,6 +13,9 @@
 //                decodes a plan's voices, a close ends the processor
 //   preload      a plan preloaded again sends nothing; a key past what was
 //                decoded sends that voice alone, its range widened
+//   a render     `:target midi`'s WAV (export-wav.js → gm-render.js): a loop
+//                twice and the fade, a one-shot to its release's end, a solo
+//                its track alone, and none without a SoundFont
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,8 +23,11 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { midiPlan } from "../../live/src/export-midi.js";
 import { planVoices, GmOutput } from "../../live/src/gm-output.js";
+import { IRPlayer } from "../../live/src/ir-player.js";
+import { renderWavSamples } from "../../live/src/export-wav.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
+const near = (a, b, eps, what) => assert.ok(Math.abs(a - b) <= eps, `${what}: ${a.toFixed(3)} vs ${b}`);
 const bankBytes = () => { const b = readFileSync("live/soundfonts/FluidR3Mono_GM.sf3"); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
 
 // ── planVoices ──────────────────────────────────────────────────────────
@@ -58,7 +64,7 @@ tell({ type: "bank", bytes: bankBytes() });
 const ready = await replied("ready");
 assert.equal(ready?.type, "ready", ready?.message);
 assert.ok(ready.presets > 128, "every GM program and the kits");
-for (const x of voices) assert.ok(gm.bank.getPreset({ program: x.program, bankMSB: x.bankMSB, bankLSB: x.bankLSB, isGMGSDrum: x.drums }, "gs"), `a preset for ${JSON.stringify(x)}`);
+for (const x of voices) assert.ok(gm.gm.bank.getPreset({ program: x.program, bankMSB: x.bankMSB, bankLSB: x.bankLSB, isGMGSDrum: x.drums }, "gs"), `a preset for ${JSON.stringify(x)}`);
 tell({ type: "preload", voices });
 const pre = await replied("preloaded");
 assert.equal(pre?.type, "preloaded");
@@ -96,14 +102,14 @@ assert.ok(Math.max(...peaks.slice(at(0.05))) > 0.02, "the strings sound");
 tell({ type: "off" });
 peaks = render(0.3);
 // No voice is left; what is heard is the reverb's tail, near −60 dB.
-assert.equal(gm.synth.voiceCount, 0, "an off leaves no voice");
+assert.equal(gm.gm.synth.voiceCount, 0, "an off leaves no voice");
 assert.ok(Math.max(...peaks.slice(at(0.05))) < 5e-3, `an off silences them: ${Math.max(...peaks.slice(at(0.05))).toFixed(4)}`);
 
 // A close lets the bank go and ends the processor (process() false), so a
 // node switched away from is collected, not kept playing silence.
 tell({ type: "close" });
 assert.equal(gm.process([], [[L, R]]), false, "a closed processor ends");
-assert.equal(gm.bank, null, "and holds no bank");
+assert.equal(gm.gm.bank, null, "and holds no bank");
 
 // ── GmOutput.preload: only what no plan before asked for ───────────────
 {
@@ -119,4 +125,30 @@ assert.equal(gm.bank, null, "and holds no bank");
   assert.deepEqual(sent[1].voices.map((x) => [x.program, x.lo, x.hi]), [[0, 60, 84]], "only that voice, its range widened");
 }
 
-console.log(`check:gm-output ok — ${voices.length} voices from the plan, ${ready.presets} presets, timing, clear and off in the worklet (preload ${pre.ms} ms)`);
+// ── A render (export-wav.js → gm-render.js): the WAV export's length ──
+{
+  const render = async (src, solo = null) => {
+    const r = compileMMLisp(src, "render.mmlisp");
+    const player = new IRPlayer(() => {}).loadJSON(r.ir);
+    if (solo != null) player.soloTrack(solo, true);
+    return renderWavSamples(player, { gmBank: bankBytes() });
+  };
+  const peak = (x, a, b) => { let m = 0; for (let i = Math.floor(a); i < Math.min(x.length, b); i++) m = Math.max(m, Math.abs(x[i])); return m; };
+  // 120 BPM: a bar is 2 s. A loop of one bar: intro (none) + 2 passes + the 4 s fade.
+  const loop = await render("(def-score :target midi)\n(ch1 gm-piano :tempo 120 :len 4 #top c e g e (go top))");
+  near(loop.durationSec, 2 + 2 + 4, 0.01, "a looping score: its loop twice and the fade");
+  assert.ok(peak(loop.L, 2.05 * 48000, 3.9 * 48000) > 0.05, "the second pass sounds");
+  assert.ok(peak(loop.L, loop.L.length - 480, loop.L.length) < 0.01, "and fades out");
+  // A one-shot: to where its last voice has faded, past its last note.
+  const once = await render("(def-score :target midi)\n(ch1 gm-piano :tempo 120 :len 4 c e g > c)");
+  assert.ok(once.durationSec > 2 && once.durationSec < 2 + 8, `a one-shot ends after its release: ${once.durationSec.toFixed(2)} s`);
+  // A solo (a stem's strip): only its track sounds. ch1 the first bar, drum1 the second.
+  const two = "(def-score :target midi)\n(ch1 gm-piano :tempo 120 :len 4 c e g e _1)\n(drum1 :len 1 _ :len 4 kick c c c c)";
+  const piano = await render(two, 0), drums = await render(two, 1);
+  assert.ok(peak(piano.L, 0, 1.9 * 48000) > 0.05 && peak(piano.L, 3 * 48000, 3.9 * 48000) < 0.01, "ch1 soloed: the piano, not the kick");
+  assert.ok(peak(drums.L, 0, 1.9 * 48000) < 0.01 && peak(drums.L, 2.05 * 48000, 3.9 * 48000) > 0.05, "drum1 soloed: the kick, not the piano");
+  // No SoundFont, no render: it says why.
+  await assert.rejects(renderWavSamples(new IRPlayer(() => {}).loadJSON(compileMMLisp("(def-score :target midi)\n(ch1 c)", "x.mmlisp").ir), {}), /needs a SoundFont/);
+}
+
+console.log(`check:gm-output ok — ${voices.length} voices from the plan, ${ready.presets} presets, the worklet's timing, clear, off and close, the render's length and solo (preload ${pre.ms} ms)`);

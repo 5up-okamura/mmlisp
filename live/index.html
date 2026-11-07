@@ -303,8 +303,8 @@
             <div class="menu-sep"></div>
             <div class="menu-label">Recording</div>
             <button class="menu-item" data-needs="sound" onclick="exportVgm();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-queue_music"/></svg><span>VGM…</span></button>
-            <button class="menu-item" data-needs="sound" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
-            <button class="menu-item" data-needs="sound" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
+            <button class="menu-item" data-needs="render" onclick="exportWav();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-audio_file"/></svg><span>WAV…</span></button>
+            <button class="menu-item" data-needs="render" onclick="exportStems();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-inventory_2"/></svg><span>Stems…</span></button>
             <button class="menu-item" data-needs="sound" onclick="openVideoExport();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-movie"/></svg><span>Video…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Samples</div>
@@ -7180,8 +7180,9 @@
         offline.loadJSON(ir);
         const machine = targetProfile(ir.metadata?.target);
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
+        const gmBank = machine.soundFont ? await gmBankForRender() : null;
         ({ bytes, pcmCount, durationSec } = await renderWav(offline, {
-          lpfOn: analogLpfOn, pcm, rhythmRom,
+          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank,
           onProgress: (f) => { line.textContent = `${stamp} Rendering WAV… ${Math.floor(f * 100)}%`; },
         }));
       } catch (e) {
@@ -7237,8 +7238,9 @@
         const stamp = line.textContent.slice(0, line.textContent.indexOf(']') + 1);
         const machine = targetProfile(ir.metadata?.target);
         const rhythmRom = machine.hasPart('rhythm') ? rhythmRomFor(ir, machine, await pcmSampleBlobsForMmb(ir)) : null;
+        const gmBank = machine.soundFont ? await gmBankForRender() : null;
         set = await renderStems(ir, () => new IRPlayer(() => {}).loadJSON(ir), {
-          lpfOn: analogLpfOn, pcm, rhythmRom,
+          lpfOn: analogLpfOn, pcm, rhythmRom, gmBank,
           onProgress: (f) => { line.textContent = `${stamp} Rendering stems… ${Math.floor(f * 100)}%`; },
         }, ({ index, head, bytes }) => zip.add(stemName(index, head), bytes));
       } catch (e) {
@@ -9130,6 +9132,8 @@
       if (what === 'driver') return target.driver === 'mmlispdrv';
       // A sound of its own to record (not `:target midi`'s, whose sound is a MIDI output's).
       if (what === 'sound') return target.sound !== false;
+      // A sound to render: its own, or a GM SoundFont's (`:target midi`, gm-render.js).
+      if (what === 'render') return target.sound !== false || !!target.soundFont;
       return !!target[what];
     }
     function applyTargetUi(ir) {
@@ -13429,6 +13433,13 @@
       const res = (await globalThis.caches?.match(GM_BANK_URL).catch(() => null)) ?? await fetch(GM_BANK_URL);
       if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);
       return res.arrayBuffer();
+    }
+    // The SoundFont a `:target midi` render plays on: the one the GM output
+    // plays (the user's, when that is the output chosen), else the bundled.
+    async function gmBankForRender() {
+      const own = _midiOutName === SF_OUT;
+      log(`Rendering on ${own ? `SoundFont ${loadPref('soundFont', '')}` : 'GM (FluidR3Mono)'}`, 'info');
+      return own ? loadUserSoundFont() : fetchGmBank();
     }
     async function loadUserSoundFont() {
       const bytes = _keptSoundFont ?? await loadRom('soundfont');
