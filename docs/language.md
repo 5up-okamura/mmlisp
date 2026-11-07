@@ -2488,7 +2488,8 @@ those chips cannot do is a compile error, not a different sound.
 
 **`midi` is a General MIDI instrument**, a machine with no sound of its own:
 its score is a Standard MIDI File (File ▸ Export ▸ MIDI…), and while Live plays
-it the sound is a MIDI output's (MMLisp ▸ MIDI ▸ Output); it has no WAV, VGM,
+it the sound is a MIDI output's (MMLisp ▸ MIDI ▸ Output: a MIDI port, or
+the page's GM SoundFont, FluidR3Mono or your own); it has no WAV, VGM,
 stems or video. Its channels are `ch1`–`ch16` but `ch10`, each the MIDI channel
 it names, and the drums, channel 10, as eight tracks — `drum1`–`drum8` — so
 hits sound together, as a ROM rhythm's tracks do. A track plays one note

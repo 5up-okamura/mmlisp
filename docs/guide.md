@@ -1458,8 +1458,13 @@ A score for a MIDI instrument rather than a chip is `(def-score :target midi)`
 sounds only through the output below.
 
 `MMLisp > MIDI > Output` plays the preview to a MIDI output as well — a
-sound module, a DAW, a synthesizer beside the chips. `Choose Output…` asks
-the browser once, then lists the outputs; `Off` stops. What goes out is what
+sound module, a DAW, a synthesizer beside the chips. Two are the page's own,
+in every browser (an iPhone's too, which has no Web MIDI): **GM
+(FluidR3Mono)**, a General MIDI SoundFont fetched the first time it is chosen
+(22.5 MB), and **SoundFont: …**, an `.sf2` or `.sf3` of your own that **Load
+SoundFont…** keeps in the browser. Either plays a `:target midi` score in
+Live with nothing else connected. `Choose Output…` asks the browser once,
+then lists the MIDI ports; `Off` stops. What goes out is what
 **File ▸ Export ▸ MIDI…** writes (`docs/language.md` §19): each track its
 channel, its notes, its `gm-*` or role voice's program, its levels, pan and
 bends, sent a little ahead on the preview's clock so it lands with the

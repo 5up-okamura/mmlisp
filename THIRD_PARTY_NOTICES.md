@@ -119,6 +119,30 @@ supplies.
 - Included: `live/vendor/codemirror.js`, a minified bundle of those packages
   built by `live/scripts/vendor/build.mjs` so the app runs offline.
 
+## spessasynth_core and stb-vorbis
+
+- Upstream: https://github.com/spessasus/spessasynth_core and
+  https://github.com/spessasus/stb-vorbis (the versions are in the bundle's
+  header comment).
+- Copyright (c) spessasus. stb-vorbis compiles Sean Barrett's `stb_vorbis.c`
+  (public domain, or MIT) to WebAssembly.
+- License: Apache-2.0, preserved in `live/vendor/LICENSE-spessasynth.txt`.
+- Included: `live/vendor/spessasynth.js`, a minified bundle of the SoundFont
+  synthesizer the GM output runs in its worklet (`live/src/gm-worklet.js`),
+  built by `live/scripts/vendor/build.mjs`. Not modified.
+
+## FluidR3Mono GM SoundFont
+
+- Upstream: the MuseScore 2 distribution, via Debian's
+  `fluidr3mono-gm-soundfont` 2.315 (`FluidR3Mono_GM.sf3`).
+- Copyright © 2014-2017 Michael Cowgill (the mono version), © 2000-2002, 2008
+  Frank Wen (Fluid R3 GM), © 2002 Ethan Winer (Temple Blocks), © 2016 Michael
+  Schorsch (Drumline Percussion).
+- License: MIT; the notice and the license, with Debian's provenance, in
+  `live/soundfonts/LICENSE-FluidR3Mono.txt`.
+- Included: `live/soundfonts/FluidR3Mono_GM.sf3`, unmodified — the GM output's
+  bank (`live/src/gm-output.js`), fetched when that output is first chosen.
+
 ## Open Sans
 
 - Upstream: https://github.com/googlefonts/opensans, via `@fontsource/open-sans`.

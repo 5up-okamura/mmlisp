@@ -44,7 +44,9 @@ goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
   MIDI File — its notes, voices as GM programs, levels, pans, bends and loop
   — and Live plays the same to a MIDI port (Web MIDI) in time with the
   chips, following tempo, loops, seeks, mute / solo and the mixer's faders:
-  a sound module, a DAW or a synth beside the emulation. `(def-score :target
+  a sound module, a DAW or a synth beside the emulation — or on a General
+  MIDI SoundFont it plays itself (FluidR3Mono, or your own), a phone's
+  browser included. `(def-score :target
   midi)` writes for a GM instrument itself — `ch1`–`ch16`, the drums as
   `drum1`–`drum8` on channel 10, `:prog` / `:bank`, any controller as
   `:cc74`, `:pressure`, `:bend-range` — swept and stepped by the same curves
@@ -94,11 +96,13 @@ goes out as a MIDI file, and Live sends it to a MIDI port while it plays.
 | `pce` | PC Engine | HuC6280: six wave channels, noise, LFO, DDA | its own | VGM, WAV |
 | `gb` | Game Boy | LR35902's APU: two pulses, wave, noise | its own | VGM, WAV |
 | `fc` | Famicom + its expansions | 2A03: two pulses, triangle, noise, DMC; VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 | its own, ymfm (5B, VRC7) | VGM (without the VRC6, MMC5, N163), WAV |
-| `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a MIDI output | MIDI |
+| `midi` | A General MIDI instrument | fifteen channels and the drums (channel 10) | a GM SoundFont (FluidR3Mono, or your own), or a MIDI output | MIDI |
 
 Every machine also exports MIDI (File > Export > MIDI…) and plays to a MIDI
-output (MMLisp > MIDI > Output) beside its chips; `midi` has no sound of its
-own, so it plays only there and has no WAV or VGM.
+output (MMLisp > MIDI > Output) beside its chips — a MIDI port, or a GM
+SoundFont the page plays itself (FluidR3Mono, or an `.sf2` / `.sf3` of your
+own), in any browser; `midi` has no sound of its own, so it plays only there
+and has no WAV or VGM.
 
 The Mega Drive has a driver for games (below); the other machines are
 composed in Live and delivered as VGM, which existing players run. Each
@@ -171,7 +175,7 @@ registers, the FM-PAC's two on msx — live from playback and editable while
 it runs; one slider per `def-val` and an XY pad; channel mute / solo; the
 on-screen keyboard and a MIDI keyboard to play and step-input, with MIDI Learn
 for a controller's knobs. MMLisp > MIDI > Output plays the score to a MIDI
-port as well, on the preview's clock.
+port as well, on the preview's clock, or on a GM SoundFont in the page.
 
 **Bringing sounds in** (File > Import, or drop the file):
 

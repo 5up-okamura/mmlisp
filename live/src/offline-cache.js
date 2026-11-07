@@ -12,7 +12,10 @@
 // fetched through the worker (sw.js), whose network-first handler stores it;
 // one already cached is only read for its references.
 
-const ROOTS = ['./', './index.html', './worklet.js', './manifest.webmanifest',
+// The GM output's worklet (src/gm-output.js loads it by URL) and, through it,
+// its synthesizer; not its 22.5 MB SoundFont, which the worker keeps once it
+// is first fetched.
+const ROOTS = ['./', './index.html', './worklet.js', './src/gm-worklet.js', './manifest.webmanifest',
   './presets/index.json', './snippets/index.json', './snippets/targets.json', './examples/index.json',
   './tutorial/lessons.json'];
 const TEXT = /\.(?:html|js|css|json|webmanifest|mmlisp)$|\/$/;

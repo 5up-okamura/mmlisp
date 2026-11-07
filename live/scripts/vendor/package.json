@@ -2,7 +2,7 @@
   "name": "mmlisp-live-vendor",
   "private": true,
   "type": "module",
-  "description": "Builds live/vendor/ (the CodeMirror bundle, Open Sans) — run when bumping them",
+  "description": "Builds live/vendor/ (the CodeMirror bundle, Open Sans, spessasynth_core) — run when bumping them",
   "scripts": {
     "build": "node build.mjs"
   },
@@ -15,6 +15,7 @@
     "@codemirror/view": "^6",
     "@lezer/highlight": "^1",
     "@fontsource/open-sans": "^5",
-    "esbuild": "^0.28"
+    "esbuild": "^0.28",
+    "spessasynth_core": "4.4.9"
   }
 }

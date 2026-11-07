@@ -1,7 +1,8 @@
-// Builds live/vendor/: the editor's CodeMirror packages as one ES module, and
-// the Open Sans faces the UI uses — so the app needs no CDN and can run
-// offline. Run `npm install && npm run build` here when bumping them, and
-// commit the output.
+// Builds live/vendor/: the editor's CodeMirror packages as one ES module, the
+// Open Sans faces the UI uses, and the GM output's SoundFont synthesizer
+// (spessasynth_core, its Vorbis decoder inside) — so the app needs no CDN and
+// can run offline. Run `npm install && npm run build` here when bumping them,
+// and commit the output.
 
 import { build } from 'esbuild';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -37,6 +38,29 @@ await build({
   logLevel: 'warning',
 });
 copyFileSync(mod('@codemirror/view/LICENSE'), join(out, 'LICENSE-codemirror.txt'));
+
+// The SoundFont synthesizer the GM output runs in its worklet (src/gm-worklet.js):
+// only what that worklet imports, so the bundle carries no MIDI-file tools.
+const SPESSA = ['SoundBankLoader', 'SpessaSynthProcessor', 'SpessaLog'];
+await build({
+  stdin: {
+    contents: `export { ${SPESSA.join(', ')} } from 'spessasynth_core';`,
+    resolveDir: here,
+    loader: 'js',
+  },
+  bundle: true,
+  format: 'esm',
+  minify: true,
+  legalComments: 'none',
+  platform: 'neutral',
+  mainFields: ['module', 'main'],
+  banner: {
+    js: `/* spessasynth_core ${version('spessasynth_core')} with stb-vorbis ${version('stb-vorbis')} (Apache-2.0, see LICENSE-spessasynth.txt) */`,
+  },
+  outfile: join(out, 'spessasynth.js'),
+  logLevel: 'warning',
+});
+copyFileSync(mod('spessasynth_core/LICENSE'), join(out, 'LICENSE-spessasynth.txt'));
 
 // Open Sans 400/600/700, latin + latin-ext — the subsets Google Fonts served.
 const ranges = JSON.parse(readFileSync(mod('@fontsource/open-sans/unicode.json'), 'utf8'));

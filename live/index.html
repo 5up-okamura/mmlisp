@@ -200,25 +200,25 @@
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
           <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" onclick="toggleMidi();closeMenus()"
+            <button class="menu-item" data-midi-in onclick="toggleMidi();closeMenus()"
                     title="Play the preview from a MIDI keyboard (and step-input with it while REC is on). Every connected input listens.">
               <svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>MIDI Input</span>
               <span class="menu-item-shortcut" id="midiCheck"></span>
             </button>
-            <button class="menu-item" onclick="toggleMidiVelocity();closeMenus()"
+            <button class="menu-item" data-midi-in onclick="toggleMidiVelocity();closeMenus()"
                     title="A key's velocity sets the preview's :vel, and step input writes :vel when it changes">
               <svg class="menu-icon" aria-hidden="true"><use href="#mi-speed"/></svg><span>Velocity</span>
               <span class="menu-item-shortcut" id="midiVelocityCheck"></span>
             </button>
-            <button class="menu-item" onclick="toggleMidiLearn();closeMenus()"
+            <button class="menu-item" data-midi-in onclick="toggleMidiLearn();closeMenus()"
                     title="Click a panel slider, then move a knob: that CC drives the slider. Delete removes the selected slider's CC; Esc ends.">
               <svg class="menu-icon" aria-hidden="true"><use href="#mi-knob"/></svg><span>MIDI Learn</span>
               <span class="menu-item-shortcut" id="midiLearnCheck"></span>
             </button>
-            <button class="menu-item" onclick="clearMidiAssignments();closeMenus()">
+            <button class="menu-item" data-midi-in onclick="clearMidiAssignments();closeMenus()">
               <svg class="menu-icon" aria-hidden="true"><use href="#mi-link_off"/></svg><span>Clear CC Assignments</span>
             </button>
-            <div class="menu-sep"></div>
+            <div class="menu-sep" data-midi-in></div>
             <div class="menu-label">Output</div>
             <div id="midiOutList"></div>
           </div>
@@ -1179,7 +1179,8 @@
     import { defTemplates, fmDefText } from './src/def-templates.js';
     import { precacheApp } from './src/offline-cache.js';
     import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
-    import { openMidiOutputs, MidiOutRun, midiPlanOf } from './src/midi-output.js';
+    import { openMidiOutputs, MidiOutRun, midiPlanOf, midiOutSupported } from './src/midi-output.js';
+    import { GmOutput, GM_BANK_URL } from './src/gm-output.js';
     import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom, loadDraftFiles, saveDraftFiles } from './src/recent-files.js';
     import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey, opmBankToMmlisp } from './src/import-fm-voices.js';
 
@@ -8953,6 +8954,7 @@
       workletNode.port.postMessage({ type: 'scope-enable', on: true });
       if (_rhythmRom) workletNode.port.postMessage({ type: 'rhythm-rom', rom: _rhythmRom });
       _workletReady = true;
+      startGmOutput(); // the GM output chosen before there was a context
     }
 
     // Mega Drive Model 1 analog output low-pass (~3 kHz). Switchable.
@@ -9394,8 +9396,8 @@
           if (!current()) return;
           log(se != null ? `Playing effect ${seName}` : 'Playing (compiled source)', 'info');
           // A score with no sound of its own sounds on a MIDI output only.
-          if (targetProfile(_lastGoodIR.metadata?.target).sound === false && !_midiOutRun)
-            log('This machine has no sound of its own: choose MMLisp > MIDI > Output to hear it', 'warn');
+          if (targetProfile(_lastGoodIR.metadata?.target).sound === false && !_midiOutName)
+            log('This machine has no sound of its own: choose MMLisp > MIDI > Output (GM, or a MIDI port) to hear it', 'warn');
         } else if (currentIrURL) {
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
@@ -13240,8 +13242,15 @@
     // score's: they describe the hardware on the desk, not the music.
     // -----------------------------------------------------------------------
     function initMidi() {
-      document.getElementById('menuMMLispMidi').hidden = !midiSupported;
-      if (!midiSupported) return;
+      // The Output list is every browser's (the GM output needs no Web MIDI,
+      // as on an iPhone); the input's items only where there is Web MIDI.
+      document.getElementById('menuMMLispMidi').hidden = false;
+      for (const el of document.querySelectorAll('[data-midi-in]')) el.hidden = !midiSupported;
+      if (!midiSupported) {
+        renderMidiOutMenu();
+        if (isGmOut(loadPref('midiOut', ''))) selectMidiOut(loadPref('midiOut', ''), true);
+        return;
+      }
       _midiVelocity = loadPref('midiVelocity', 'off') === 'on';
       const map = loadPref('midiCc', {});
       _midiCcMap = map && typeof map === 'object' ? map : {};
@@ -13255,14 +13264,19 @@
       document.addEventListener('keydown', onMidiLearnKeyDown);
       if (loadPref('midi', 'off') === 'on') enableMidi();
       renderMidiOutMenu();
-      if (loadPref('midiOut', '')) openMidiOut();
+      const out = loadPref('midiOut', '');
+      if (isGmOut(out)) selectMidiOut(out, true); // no MIDI access asked for
+      else if (out) openMidiOut();
     }
 
     // ── MIDI output (src/midi-output.js) ────────────────────────────────────
     // The preview played to a MIDI port as it plays: the MIDI export's plan of
     // the score the player runs, compiled off the page's thread (the compile
     // worker's 'midi'), sent ahead on the player's clock every 25 ms. The
-    // output is kept by name (pref 'midiOut'); Off is none.
+    // output is kept by name (pref 'midiOut'); Off is none. Two are the
+    // page's own (src/gm-output.js): the GM output on the bundled bank, and
+    // on the user's SoundFont (kept as ROM 'soundfont', its name pref
+    // 'soundFont'); they take the run once their bank is loaded.
     let _midiOuts = null;      // openMidiOutputs(), once access is given
     let _midiOutName = '';     // the chosen output's name, '' off
     let _midiOutRun = null;
@@ -13271,6 +13285,9 @@
     let _midiOutPortId = null; // the chosen output's id, while it is there
     let _midiOutReplanTimer = 0;
     let _perfAt = (t) => t * 1000;
+    const GM_OUT = 'mmlisp:gm', SF_OUT = 'mmlisp:soundfont';
+    const isGmOut = (name) => name === GM_OUT || name === SF_OUT;
+    let _gm = null; // { source: GM_OUT | SF_OUT, output: GmOutput }
 
     async function openMidiOut() {
       // A device plugged or a port opening on its first send changes the
@@ -13300,14 +13317,22 @@
         return b;
       };
       el.replaceChildren();
+      // The page's own: the GM output on the bundled bank, and on the user's.
+      const sfName = loadPref('soundFont', '');
+      el.append(item('Off', !_midiOutName, () => selectMidiOut('')),
+        item('GM (FluidR3Mono)', _midiOutName === GM_OUT, () => selectMidiOut(GM_OUT),
+          'Play the preview on a General MIDI SoundFont in the page (FluidR3Mono, 22.5 MB, fetched the first time)'),
+        ...(sfName ? [item(`SoundFont: ${sfName}`, _midiOutName === SF_OUT, () => selectMidiOut(SF_OUT),
+          'Play the preview on your SoundFont, kept in the browser')] : []),
+        item('Load SoundFont…', false, chooseSoundFont, 'An .sf2 or .sf3 of your own to play the preview on, kept in the browser'));
+      if (!midiOutSupported) return;
       if (!_midiOuts) {
         el.append(item('Choose Output…', false, openMidiOut,
           "Play the preview to a MIDI output too: the MIDI export's channels, notes, programs and controllers, as the song plays"));
         return;
       }
       const outs = _midiOuts.list();
-      el.append(item('Off', !_midiOutName, () => selectMidiOut('')),
-        ...outs.map((o) => item(o.name, o.name === _midiOutName, () => selectMidiOut(o.name))));
+      el.append(...outs.map((o) => item(o.name, o.name === _midiOutName, () => selectMidiOut(o.name))));
       if (!outs.length) {
         const none = document.createElement('div');
         none.className = 'menu-label';
@@ -13317,39 +13342,115 @@
     }
     window.openMidiOut = openMidiOut;
 
-    function selectMidiOut(name, quiet = false) {
+    function selectMidiOut(name, quiet = false, reload = false) {
       const was = _midiOutName;
       _midiOutName = name || '';
       savePref('midiOut', _midiOutName);
-      const out = _midiOutName && _midiOuts?.list().find((o) => o.name === _midiOutName);
+      const out = _midiOutName && !isGmOut(_midiOutName) && _midiOuts?.list().find((o) => o.name === _midiOutName);
       const port = out ? _midiOuts.output(out.id) : null;
       _midiOutPortId = out?.id ?? null;
+      // The GM output chosen again keeps its run; another output closes it.
+      if (isGmOut(_midiOutName) && _gm?.source === _midiOutName && !reload) { renderMidiOutMenu(); return; }
+      stopMidiOutRun();
+      _gm?.output.close();
+      _gm = null;
+      if (port) {
+        startMidiOutRun({
+          send: (bytes, ms) => { try { port.send(bytes, ms); } catch (e) { /* a port gone mid-run */ } },
+          clear: typeof port.clear === 'function' ? () => port.clear() : null,
+          perfAt: (t) => _perfAt(t),
+        });
+        if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
+      } else if (isGmOut(_midiOutName)) {
+        const source = _midiOutName;
+        _gm = { source, output: new GmOutput({ loadBank: source === GM_OUT ? fetchGmBank : loadUserSoundFont }) };
+        startGmOutput();
+      } else if (!quiet && was) log('MIDI output: off', 'info');
+      renderMidiOutMenu();
+    }
+    window.selectMidiOut = selectMidiOut;
+
+    function stopMidiOutRun() {
       if (_midiOutRun) { _midiOutRun.stop(audioCtx?.currentTime ?? 0); }
       clearInterval(_midiOutTimer);
       _midiOutTimer = 0;
       _midiOutRun = null;
       _midiOutAsked = new WeakSet();
-      if (port) {
-        _midiOutRun = new MidiOutRun({
-          send: (bytes, ms) => { try { port.send(bytes, ms); } catch (e) { /* a port gone mid-run */ } },
-          clear: typeof port.clear === 'function' ? () => port.clear() : null,
-          perfAt: (t) => _perfAt(t),
-          onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
-          // A key's velocity follows the mixer: the track's strip (not a
-          // ROM rhythm's sounds, which share their tracks) and the master.
-          fadersOf: (ti) => {
-            const entry = _chStripModel.find((e) => e.trackIndex === ti && !e.rhythmTracks);
-            return [entry ? _channelVol.get(entry.head) ?? 31 : 31, _masterVolUi];
-          },
-        });
-        _midiOutTimer = setInterval(midiOutTick, 25);
-        // The score as it stands, planned ahead of its Play.
-        if (_lastGoodIR) requestMidiPlan(_lastGoodIR);
-        if (!quiet || was !== _midiOutName) log(`MIDI output: ${_midiOutName}`, 'info');
-      } else if (!quiet && was) log('MIDI output: off', 'info');
-      renderMidiOutMenu();
     }
-    window.selectMidiOut = selectMidiOut;
+
+    // A run to an output: `send`, `clear` and `perfAt`, MidiOutRun's.
+    function startMidiOutRun(io) {
+      _midiOutRun = new MidiOutRun({
+        ...io,
+        onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
+        // A key's velocity follows the mixer: the track's strip (not a
+        // ROM rhythm's sounds, which share their tracks) and the master.
+        fadersOf: (ti) => {
+          const entry = _chStripModel.find((e) => e.trackIndex === ti && !e.rhythmTracks);
+          return [entry ? _channelVol.get(entry.head) ?? 31 : 31, _masterVolUi];
+        },
+      });
+      _midiOutTimer = setInterval(midiOutTick, 25);
+      // The score as it stands, planned ahead of its Play.
+      if (_lastGoodIR) requestMidiPlan(_lastGoodIR);
+    }
+
+    // The GM output takes the run once there is a context (on a phone, the
+    // first Play: ensureWorkletNode calls this) and its bank is loaded; a
+    // run already playing picks it up from there, as an output turned on
+    // mid-run does. Its bytes go stamped with their audio time.
+    function startGmOutput() {
+      const gm = _gm;
+      if (!gm || !audioCtx || gm.attaching) return;
+      gm.attaching = true;
+      const what = gm.source === GM_OUT ? 'GM (FluidR3Mono)' : `SoundFont ${loadPref('soundFont', '')}`;
+      log(`MIDI output: ${what}, loading…`, 'info');
+      const t0 = performance.now();
+      gm.output.attach(audioCtx, synthOutput()).then((r) => {
+        if (_gm !== gm) return;
+        startMidiOutRun({
+          send: (bytes, ms) => gm.output.send(bytes, ms / 1000),
+          clear: () => gm.output.clear(),
+          perfAt: (t) => t * 1000,
+        });
+        log(`MIDI output: ${what}, ${r.presets} presets, ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`, 'info');
+      }).catch((e) => {
+        if (_gm !== gm) return;
+        log(`MIDI output: ${what} failed: ${e?.message ?? e}`, 'err');
+      });
+    }
+
+    async function fetchGmBank() {
+      const res = await fetch(GM_BANK_URL);
+      if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);
+      return res.arrayBuffer();
+    }
+    async function loadUserSoundFont() {
+      const bytes = _keptSoundFont ?? await loadRom('soundfont');
+      if (!bytes) throw new Error('no SoundFont kept in this browser: MMLisp > MIDI > Load SoundFont…');
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    }
+
+    // MMLisp > MIDI > Load SoundFont…: an .sf2 / .sf3 kept in the browser
+    // (as the YM2608 rhythm ROM is) and played on.
+    function chooseSoundFont() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.sf2,.sf3';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const kept = await saveRom('soundfont', bytes);
+        if (!kept) { log('SoundFont: this browser keeps nothing (a private window?); it plays until the page closes', 'warn'); }
+        savePref('soundFont', file.name);
+        if (!kept) _keptSoundFont = bytes;
+        selectMidiOut(SF_OUT, false, true);
+      };
+      input.click();
+    }
+    let _keptSoundFont = null; // a SoundFont the browser would not keep, for this page
+    window.chooseSoundFont = chooseSoundFont;
 
     function midiOutTick() {
       if (!_midiOutRun) return;
@@ -13387,6 +13488,9 @@
         const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
         if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return failed('its tracks differ');
         _midiOutRun?.setPlan(r.plan, ir);
+        // The GM output decodes the plan's programs and keys now, not on
+        // their first notes, where the audio thread would stall.
+        _gm?.output.preload(r.plan).catch(() => {});
       }).catch((e) => failed(e?.message ?? e));
     }
 

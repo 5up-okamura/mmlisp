@@ -122,9 +122,9 @@ order, waits for its use:
 2. **A plugin** — the machines as instruments in a DAW, held until someone
    needs it: a chip VSTi has makers already (a plugin that plays a score, its
    def-vals the DAW's automation, is the one MMLisp would bring).
-3. **`:target midi`'s own preview** — today it sounds only through a MIDI
-   output (and not in Safari, which has no Web MIDI); a SoundFont player
-   would give it WAV, stems and a sound in every browser.
+3. **`:target midi`'s WAV, stems and MCP render** — it sounds in every
+   browser now, on the GM output's SoundFont (MMLisp > MIDI > Output); its
+   renders would run the same SoundFont on the render's clock.
 
 ## Future vision
 
