@@ -1615,7 +1615,9 @@ names, or open the score's folder with `File > Open Folder…`.
 
 Drop files anywhere on the window. They are routed by extension — the same
 formats `File > Import` accepts, where `Song…` opens a song as a new document
-and `Instruments…` inserts voices and drum kits at the cursor:
+and `Instruments…` inserts voices and drum kits at the cursor (not on a
+`:target midi` score, whose instruments are its `:prog` programs; a voice or
+a sample dropped on one is turned away):
 
 | Dropped                            | Result                                                    |
 | ---------------------------------- | --------------------------------------------------------- |
@@ -1833,8 +1835,8 @@ hand to match).
 
 ### An FM voice from a recording
 
-`File > Import > Audio as FM Voice…` estimates a YM2612 patch for one note of
-a recording — a bass, a piano, a bell, a pluck — in WAV or any format the
+`File > Import > Audio as FM Voice…` (on a machine with FM) estimates a
+YM2612 patch for one note of a recording — a bass, a piano, a bell, a pluck — in WAV or any format the
 browser decodes. FM has no way back from a
 sound to its patch, so this searches: candidate patches are played on a fast
 model of the chip, compared with the recording, and moved towards it. The

@@ -277,12 +277,12 @@
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" onclick="importSongMenu();closeMenus()"
                     title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-music_note"/></svg><span>Song…</span></button>
-            <button class="menu-item" onclick="importInstrumentsMenu();closeMenus()"
+            <button class="menu-item" data-needs="sound" onclick="importInstrumentsMenu();closeMenus()"
                     title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>Instruments…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
             <button class="menu-item" data-needs="formants" onclick="importResynth();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-record_voice_over"/></svg><span>Audio as Formants…</span></button>
-            <button class="menu-item" onclick="importAudioAsFmVoice();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-sine"/></svg><span>Audio as FM Voice…</span></button>
+            <button class="menu-item" data-needs="kind:fm" onclick="importAudioAsFmVoice();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-sine"/></svg><span>Audio as FM Voice…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">ROMs</div>
             <button class="menu-item" data-needs="part:rhythm" onclick="chooseRhythmRom();closeMenus()"
@@ -6689,8 +6689,15 @@
         log(`Opened ${entry.file.name}`, 'info');
       }
 
+      // A machine with no sound of its own (`:target midi`) has no voices or
+      // samples to insert: its instruments are its programs (:prog).
+      const noSound = targetProfile(_lastGoodIR?.metadata?.target).sound === false;
       for (const { entry, kind } of kinds) {
         if (entry === opened?.entry) continue;
+        if (noSound && kind !== 'score') {
+          log(`${entry.file.name}: a ${targetProfile(_lastGoodIR?.metadata?.target).system} score has no voices or samples of its own — an instrument is :prog N, or a GM name (gm-piano, flute …)`, 'warn');
+          continue;
+        }
         // One bad file must not abort the rest of the drop.
         try {
           if (kind === 'score') await insertImportLine(entry);
