@@ -32,8 +32,9 @@ const now = () => globalThis.performance?.now?.() ?? Date.now();
 const LATE_EVERY_SEC = 2;
 const SCOPE_LANES = 16; // the MIDI channels
 const SCOPE_FLUSH = 1024; // samples a batch, as worklet.js's (index.html's rings take it whole)
-// A channel's dry sound (−1..1, the bank's level) into the chips' lane units,
-// where a full channel is 1/16 of the mix (index.html SCOPE_DISPLAY_GAIN).
+// A channel's dry sound (−1..1, the bank's level) into the chips' lane units
+// (index.html SCOPE_DISPLAY_GAIN takes 0.1 as a pane's half height): a GM
+// channel at its usual level fills a pane as a chip's channel does.
 const SCOPE_SCALE = 1 / 4;
 
 class GmProcessor extends AudioWorkletProcessor {

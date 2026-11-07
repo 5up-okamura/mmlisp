@@ -13464,9 +13464,6 @@
       });
     }
 
-    // The bank as the service worker keeps it, else the network's (which the
-    // worker then keeps): its network-first fetch would store 22.5 MB again
-    // on every launch. The file is never changed in place, only renamed.
     // The audio thread could not keep up with the GM output: said once in a
     // while, with what lightens it.
     function gmLate({ count, worst, budget }) {
@@ -13483,6 +13480,9 @@
     }
     window.setGmReverb = setGmReverb;
 
+    // The bank as the service worker keeps it, else the network's (which the
+    // worker then keeps): its network-first fetch would store 22.5 MB again
+    // on every launch. The file is never changed in place, only renamed.
     async function fetchGmBank() {
       const res = (await globalThis.caches?.match(GM_BANK_URL).catch(() => null)) ?? await fetch(GM_BANK_URL);
       if (!res.ok) throw new Error(`the SoundFont did not load (${res.status})`);

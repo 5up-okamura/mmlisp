@@ -25,7 +25,13 @@ export class GmSynth {
     this.synth = null;
     this.bank = null;
     this.queue = []; // [bytes, time], in time order (a tie keeps its order)
-    this.keys = new Array(16).fill(0); // each channel's latest key held, 0 none: its pitch for the scope
+    // Each channel's pitch for the oscilloscope: its latest key held (0 none),
+    // its wheel (−8192..8191) over its bend range (semitones, RPN 0; 2 until
+    // set), and the RPN its CC6 would set.
+    this.keys = new Array(16).fill(0);
+    this.wheel = new Array(16).fill(0);
+    this.range = new Array(16).fill(2);
+    this.rpn = new Array(16).fill(-1);
     // The reverb's level, 0–1 (each channel's send is its CC91): the bank's
     // own until the caller says (gm-output.js GM_REVERB_DEFAULT).
     this.reverb = 1;
@@ -76,9 +82,13 @@ export class GmSynth {
     return Date.now() - t;
   }
 
-  /** Each channel's latest key held as a frequency (Hz), 0 none: the oscilloscope's trigger. */
+  /**
+   * Each channel's pitch (Hz) — its latest key held, bent by its wheel — or 0
+   * for none and for channel 10, whose keys are drums: the oscilloscope's
+   * trigger and the piano roll's trace.
+   */
   freqs() {
-    return this.keys.map((k) => (k ? 440 * 2 ** ((k - 69) / 12) : 0));
+    return this.keys.map((k, ch) => (k && ch !== 9 ? 440 * 2 ** ((k - 69 + (this.range[ch] * this.wheel[ch]) / 8192) / 12) : 0));
   }
 
   /** What is not yet due, dropped. */
@@ -90,6 +100,7 @@ export class GmSynth {
   off() {
     this.queue = [];
     this.keys.fill(0);
+    this.wheel.fill(0);
     this.synth?.stopAll(true);
   }
 
@@ -98,6 +109,21 @@ export class GmSynth {
     this.queue = [];
     this.synth?.destroy();
     this.synth = this.bank = null;
+  }
+
+  // The pitch's state, from a message as it goes to the synth (freqs).
+  follow(bytes) {
+    const kind = bytes[0] & 0xf0, ch = bytes[0] & 0x0f, a = bytes[1], b = bytes[2];
+    if (kind === 0x90 && b > 0) this.keys[ch] = a;
+    else if ((kind === 0x80 || kind === 0x90) && this.keys[ch] === a) this.keys[ch] = 0;
+    else if (kind === 0xe0) this.wheel[ch] = ((b << 7) | a) - 8192;
+    else if (kind === 0xb0) {
+      if (a === 101) this.rpn[ch] = b === 127 ? -1 : (b << 7) | (this.rpn[ch] & 127);
+      else if (a === 100) this.rpn[ch] = b === 127 ? -1 : (this.rpn[ch] & ~127 & 0x3fff) | b;
+      else if (a === 6 && this.rpn[ch] === 0) this.range[ch] = b;
+      else if (a === 121) this.wheel[ch] = 0; // reset all controllers
+      else if (a >= 123) this.keys[ch] = 0; // all notes / sound off
+    }
   }
 
   /**
@@ -113,10 +139,7 @@ export class GmSynth {
     for (; n < this.queue.length && this.queue[n][1] < end; n++) {
       const [bytes, when] = this.queue[n];
       this.synth.processMessage(bytes, 0, { time: this.synth.currentTime + Math.max(0, when - now) });
-      const kind = bytes[0] & 0xf0, ch = bytes[0] & 0x0f;
-      if (kind === 0x90 && bytes[2] > 0) this.keys[ch] = bytes[1];
-      else if ((kind === 0x80 || kind === 0x90) && this.keys[ch] === bytes[1]) this.keys[ch] = 0;
-      else if (kind === 0xb0 && bytes[1] >= 120) this.keys[ch] = 0; // all sound / notes off
+      this.follow(bytes);
     }
     if (n) this.queue.splice(0, n);
     this.synth.process(L, R, at, count, channels);

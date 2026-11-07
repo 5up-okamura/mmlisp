@@ -13,7 +13,10 @@
 //                decodes a plan's voices, a close ends the processor, a
 //                quantum that runs four times its time is reported ('late')
 //   preload      a plan preloaded again sends nothing; a key past what was
-//                decoded sends that voice alone, its range widened
+//                decoded sends that voice alone, its range widened; two in
+//                flight are answered in order
+//   the pitches  a lane's frequency is its key under its wheel and bend
+//                range, the drums' none
 //   a render     `:target midi`'s WAV (export-wav.js → gm-render.js): a loop
 //                twice and the fade, a one-shot to its release's end, a solo
 //                its track alone, GM Reverb's level, and none without a
@@ -26,6 +29,7 @@ import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { midiPlan } from "../../live/src/export-midi.js";
 import { planVoices, GmOutput } from "../../live/src/gm-output.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
+import { GmSynth } from "../../live/src/gm-synth.js";
 import { renderWavSamples } from "../../live/src/export-wav.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
@@ -132,7 +136,7 @@ assert.equal(gm.gm.bank, null, "and holds no bank");
 {
   const sent = [];
   const out = new GmOutput({ loadBank: null });
-  out.node = { port: { postMessage: (m) => { sent.push(m); queueMicrotask(() => out.pending.get("preloaded")?.({ ms: 0 })); } } };
+  out.node = { port: { postMessage: (m) => { sent.push(m); queueMicrotask(() => out.pending.get("preloaded")?.shift()?.({ type: "preloaded", ms: 0 })); } } };
   await out.preload(plan);
   await out.preload(plan); // a slider's replan: nothing again
   assert.equal(sent.length, 1, "a plan preloaded again sends nothing");
@@ -140,6 +144,30 @@ assert.equal(gm.gm.bank, null, "and holds no bank");
   await out.preload(wider);
   assert.equal(sent.length, 2, "a key past the range preloads again");
   assert.deepEqual(sent[1].voices.map((x) => [x.program, x.lo, x.hi]), [[0, 60, 84]], "only that voice, its range widened");
+  // Two preloads in flight are answered in order, neither left hanging.
+  const two = new GmOutput({ loadBank: null });
+  const replies = [];
+  two.node = { port: { postMessage: (m) => { if (m.type === "preload") replies.push(m.voices.length); } } };
+  const a1 = two.preload(plan), a2 = two.preload(wider);
+  assert.equal(replies.length, 2, "both asked before either is answered");
+  two.pending.get("preloaded").shift()({ type: "preloaded", ms: 1 });
+  two.pending.get("preloaded").shift()({ type: "preloaded", ms: 2 });
+  assert.deepEqual(await Promise.all([a1, a2]), [1, 2], "each resolves with its own answer");
+}
+
+// ── The pitch each lane reports: the key under its bend, the drums none ──
+{
+  const gm = new GmSynth(48000);
+  gm.follow([0x90, 69, 100]);
+  gm.follow([0x99, 36, 100]);
+  const f = gm.freqs();
+  near(f[0], 440, 0.01, "a4 on ch1");
+  assert.equal(f[9], 0, "the drums' channel is unpitched");
+  gm.follow([0xb0, 101, 0]); gm.follow([0xb0, 100, 0]); gm.follow([0xb0, 6, 12]); // bend range 12
+  gm.follow([0xe0, 0, 0x60]); // wheel +4096 of 8192: half the range, +6 semitones
+  near(gm.freqs()[0], 440 * 2 ** 0.5, 0.01, "a4 bent up a tritone");
+  gm.follow([0x80, 69, 0]);
+  assert.equal(gm.freqs()[0], 0, "let go, none");
 }
 
 // ── A render (export-wav.js → gm-render.js): the WAV export's length ──

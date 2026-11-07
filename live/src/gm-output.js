@@ -74,7 +74,7 @@ export class GmOutput {
     this.node = null;
     this.attaching = null;
     this.batch = [];
-    this.pending = new Map(); // a reply's type → its resolver
+    this.pending = new Map(); // a reply's type → its resolvers, oldest first (the worklet answers in order)
     this.closed = false;
     this.preloaded = new Map(); // a voice's key → the keys decoded, [lo, hi]
   }
@@ -88,9 +88,12 @@ export class GmOutput {
       node.port.onmessage = ({ data }) => {
         if (data.type === "late") return this.onLate?.(data);
         if (data.type === "scope") return this.onScope?.(data, (ch) => node.port.postMessage({ type: "scope-return", ch }, ch));
-        const done = this.pending.get(data.type === "error" ? "ready" : data.type);
-        this.pending.delete(data.type === "error" ? "ready" : data.type);
-        done?.(data);
+        if (data.type === "error") { // whichever message it was: nothing waited on is left hanging
+          for (const [, waiting] of this.pending) for (const done of waiting) done(data);
+          this.pending.clear();
+          return;
+        }
+        this.pending.get(data.type)?.shift()?.(data);
       };
       const reply = this.reply("ready");
       node.port.postMessage({ type: "reverb", gain: this.reverbGain });
@@ -107,7 +110,10 @@ export class GmOutput {
   }
 
   reply(type) {
-    return new Promise((resolve) => this.pending.set(type, resolve));
+    return new Promise((resolve) => {
+      if (!this.pending.has(type)) this.pending.set(type, []);
+      this.pending.get(type).push(resolve);
+    });
   }
 
   /** A message due at `at` (audio time); a quantum's messages go as one. */
@@ -164,7 +170,9 @@ export class GmOutput {
     if (!voices.length) return 0;
     const reply = this.reply("preloaded");
     this.node.port.postMessage({ type: "preload", voices });
-    return (await reply).ms;
+    const r = await reply;
+    if (r.type === "error") throw new Error(r.message);
+    return r.ms;
   }
 
   close() {
