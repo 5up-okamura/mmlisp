@@ -386,7 +386,7 @@ const port = (src, to, rows) => {
   assert.notEqual(portRows(pce, "msx").rows.find((x) => x.key === "wave5").to, "wave5");
   assert.ok(port(pce, "msx", { wave6: "wave5" }).said.some((x) => /share one wave memory/.test(x)));
   // A loop that moves the noise's octave, or a split's :mode, written out pass by pass.
-  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d > :mode white0 c d > :mode white0 c\)/);
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d > :mode white0 c d > c\)/);
   // A macro's #sus / #rel in the loop are no labels: it is written out too.
   assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 (macro :vel [15 #sus 12 #rel 0]) c >) c)", "md").text, /\(noise \(macro :vel \[15 #sus 12 #rel 0\]\) :mode white2 c > \(macro/);
   // A (macro :wave …) off a wave channel with nothing else goes, and the waves only it named.
@@ -394,6 +394,18 @@ const port = (src, to, rows) => {
   assert.doesNotMatch(mac, /\(macro\)|def-wave saw/);
   const split = port("(def-score :target x68k)\n(fm8 :len 8 (x 2 c :mode noise c) c)", "md").text;
   assert.match(split, /\(noise :len 8 _ c c c c\)/);
+}
+
+{
+  // A loop that ends in the state its first noise note plays in writes it once.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 3 c c) d)", "md").text, /\(noise \(x 3 :mode white2 c c\) d\)/);
+  // …one that does not writes it at its start, so each pass plays as it should.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 c (x 2 c :oct 4 c :oct 2) c)", "md").text, /\(x 2 :mode white2 c :mode white0 c\) :mode white2 c\)/);
+  // A def left empty goes, with every place it is named.
+  const sec = port("(def chorus (fm7 c))\n(def-score :target x68k)\n(fm1 c chorus)\nchorus", "gb", { fm7: "drop" });
+  assert.doesNotMatch(sec.text, /chorus/);
+  const snip = port("(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(def half :wave (* saw 0.5))\n(wave1 half :len 4 c)", "md");
+  assert.doesNotMatch(snip.text, /half/);
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

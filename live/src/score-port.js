@@ -552,9 +552,42 @@ class Porter {
     out += this.text.slice(at);
     if (this.lfoTrack) out = `${out.replace(/\s*$/, "")}\n${this.lfoTrack}\n`;
     out = this.pruneVoices(out);
+    out = this.pruneEmptyDefs(out);
     out = this.placeLfo(out);
     out = this.addHeader(out, [...added.values()].flat(), header);
     return { text: out, map: this.map, said: [...this.said] };
+  }
+
+  // A def the conversion left empty — a section whose channels all went, a
+  // snippet of words the machine has not — goes, and every place that names
+  // it: it plays nothing there.
+  pruneEmptyDefs(out) {
+    let roots;
+    try { roots = parse(out); } catch { return out; }
+    const empty = new Set(roots.filter((n) => isList(n, "def") && n.items.length === 2 && n.items[1]?.kind === "atom").map((n) => n.items[1].value));
+    if (!empty.size) return out;
+    const starts = [0];
+    for (let i = 0; i < out.length; i++) if (out[i] === "\n") starts.push(i + 1);
+    const at = (line, col) => starts[line - 1] + col - 1;
+    const cuts = [];
+    const visit = (n, top) => {
+      if (isList(n, "def") && empty.has(n.items[1]?.value) && n.items.length === 2) {
+        const a = at(n.line, n.column), b = at(n.endLine, n.endColumn);
+        cuts.push([a, out[b] === "\n" ? b + 1 : b]);
+        return;
+      }
+      if (n?.kind === "atom" && empty.has(n.value)) {
+        const a = at(n.line, n.column), b = a + String(n.value).length;
+        // The name and a space after it; at a root its line.
+        cuts.push(top && out[b] === "\n" ? [a, b + 1] : out[b] === " " ? [a, b + 1] : out[a - 1] === " " ? [a - 1, b] : [a, b]);
+        return;
+      }
+      if (n?.kind === "list") n.items.forEach((m, i) => (i === 0 && n.bracket === "()" ? null : visit(m, false)));
+    };
+    roots.forEach((n) => visit(n, true));
+    for (const name of empty) this.say(`${name}: nothing of it is left on the ${this.to.system}; the def and the places it is named are taken out`);
+    for (const [a, b] of cuts.sort((x, y) => y[0] - x[0])) out = out.slice(0, a) + out.slice(b);
+    return out;
   }
 
   // The song's LFO, on for the OPLL's vibrato and tremolo read as :fms /
@@ -811,9 +844,7 @@ class Porter {
     const isForm = (x) => isList(x) && this.from.channelNames.includes(x.items[0]?.value);
     if (n.items.slice(2).some(isForm)) {
       for (let i = 2; i < n.items.length; i++) if (isForm(n.items[i])) outs[i] = this.form(n.items[i]);
-      // A section with nothing left stays, empty: its name is written where it plays.
-      if (n.items.slice(2).every((x, k) => !isForm(x) || outs[k + 2] === null))
-        this.say(`section ${n.items[1].value}: none of its channels is converted; it plays nothing`);
+      // A section with nothing left goes, with its name where it plays (pruneEmptyDefs).
       return this.renderList(n, outs);
     }
     // A snippet's voices are read as the FM's: across the FM families each
@@ -1022,24 +1053,24 @@ class Porter {
         this.say(`(glide …) on ${this.nameOf(ctx.head)}: ${ctx.dest} plays a sound at its own pitch; taken out`);
         outs[i] = null;
       } else if (isList(it) && DESCEND.has(it.items[0]?.value)) {
-        // A loop's next pass starts from where its last ended: the noise's
-        // state is written again inside it and after it.
-        if (ctx.noise) ctx.noise.last = null;
+        // A loop's next pass starts from where its last ended. A body that
+        // ends with the noise's state written as it began needs nothing more;
+        // one that does not is read again with its state written at its start.
         const isMacro = it.items[0].value === "macro";
         const oct = ctx.noise?.oct;
         const mode = ctx.state?.mode;
-        const inner = this.body(it.items, 1, it.items[0].value === "macro" ? { ...ctx, macro: true } : ctx);
-        if (ctx.noise) ctx.noise.last = null;
-        // A loop (x N …) whose body moves the octave ends N moves on; one that
-        // leaves the split's mode changed starts its next pass in that mode,
-        // which a split cannot follow note by note: said.
+        const saved = ctx.noise && { ...ctx.noise };
+        if (ctx.noise) ctx.noise.bodyFirst = undefined; // the state the body's first noise note plays in
+        let inner = this.body(it.items, 1, isMacro ? { ...ctx, macro: true } : ctx);
+        const bodyFirst = ctx.noise?.bodyFirst;
+        if (ctx.noise) ctx.noise.bodyFirst = saved.bodyFirst;
+        // A loop (x N …) whose body moves the octave or the split's mode is
+        // written out a pass after another, each from where the last ended —
+        // unless it holds a label or a (break), which a copy cannot: then its
+        // later passes are read as its first, said. (A macro's #sus / #rel
+        // are its steps' marks, not labels: a macro or a vector is not looked into.)
         const times = isList(it, "x") ? num(it.items[1]) : null;
         const moves = times > 1 && ((ctx.noise && ctx.noise.oct !== oct) || (ctx.split && ctx.state.mode !== mode));
-        // Such a loop is written out a pass after another, each from where
-        // the last ended — unless it holds a label or a (break), which a
-        // copy cannot: then its later passes are read as its first, said.
-        // (A macro's #sus / #rel are its steps' marks, not labels: a macro or
-        // a step vector is not looked into.)
         const fixed = (n) => (n?.kind === "atom" && /^#./.test(n.value)) || isList(n, "break")
           || (isList(n) && DESCEND.has(n.items[0]?.value) && n.items[0].value !== "macro" && n.items.some(fixed));
         if (moves && !it.items.slice(2).some(fixed)) {
@@ -1049,14 +1080,20 @@ class Porter {
             return this.renderList(it, outs2, r.after).slice(1, -1).trim();
           };
           const passes = [bodyText(inner)];
-          for (let k = 1; k < times; k++) {
-            if (ctx.noise) ctx.noise.last = null;
-            passes.push(bodyText(this.body(it.items, 2, ctx)));
-          }
-          if (ctx.noise) ctx.noise.last = null;
+          for (let k = 1; k < times; k++) passes.push(bodyText(this.body(it.items, 2, ctx)));
           if (ctx.split !== "noise") this.say(`a loop on ${this.nameOf(ctx.head)} whose passes ${ctx.split ? "change the :mode" : "move the noise's octave"} is written out pass by pass`);
           outs[i] = passes.join(" ");
           continue;
+        }
+        // Kept a loop: a body that does not end in the state its first noise
+        // note plays in is read again, its state written at its start, and
+        // written again after it.
+        if (ctx.noise && isList(it, "x") && bodyFirst !== undefined && ctx.noise.last !== bodyFirst) {
+          const end = { ...ctx.noise };
+          Object.assign(ctx.noise, saved, { last: null });
+          if (ctx.state) ctx.state.mode = mode;
+          inner = this.body(it.items, 1, ctx);
+          Object.assign(ctx.noise, { oct: end.oct, hz: end.hz, periodic: end.periodic, last: null });
         }
         if (moves && ctx.noise && ctx.noise.oct !== oct) ctx.noise.oct += (times - 1) * (ctx.noise.oct - oct);
         if (moves && ctx.split !== "noise")
@@ -1122,6 +1159,7 @@ class Porter {
       state = `:noise-rate ${Math.max(1, Math.min(31, Math.round(NOISE_CLOCK / n.hz)))}`;
     }
     if (!n.said) { n.said = true; this.say(`${this.nameOf(ctx.head)} on ${ctx.dest}: the noise's rate read note by note as the nearest ${n.to === "pitch" ? "pitch" : n.to === "mode" ? ":mode whiteN / periodicN" : ":noise-rate"} (Hz)`); }
+    if (n.bodyFirst === undefined) n.bodyFirst = state;
     if (state === n.last) return note;
     n.last = state;
     return `${state} ${note}`;
