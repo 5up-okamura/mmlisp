@@ -563,6 +563,25 @@ const port = (src, to, rows) => {
   assert.ok(fmPac.said.some((w) => /YM2608 Rhythm ROM/.test(w)));
   const ownKit = port('(def-score :target msx)\n(import "presets/tr808/set.mmlisp")\n(rhythm1 kick :len 2 c c)', "pc88");
   assert.doesNotMatch(ownKit.text, /presets\/rx5/, "the score's own kit stands in");
+  // The melody — the loudest part in a tune's note lengths, then the
+  // highest — is kept before parts of the machine's own kind: an MSX song's
+  // FM lead onto the PC Engine, whose waves the SCC's five would fill. A
+  // part like the rest (none louder, none higher) names none.
+  const msxSong = `(def-score :target msx)
+(import "presets/wavetable/set.mmlisp")
+(fm1 flute :vel 15 :oct 5 :len 8 e d c d e e e4 d d d4 e g g4 e d c d e e e e d d e d c2)
+(fm2 piano :vel 11 :oct 3 :len 2 c g a e f c f g c g a e f c f g)
+(wave1 square :vel 10 :oct 4 :len 16 c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e)
+(wave2 square :vel 10 :oct 4 :len 16 e g > c < g e g > c < g e g > c < g e g > c < g e g > c < g e g > c < g e g > c < g e g > c < g)
+(wave3 saw :vel 9 :oct 4 :len 4 c c c c c c c c c c c c c c c c)
+(wave4 saw :vel 9 :oct 4 :len 4 e e e e e e e e e e e e e e e e)
+(wave5 saw :vel 9 :oct 4 :len 4 g g g g g g g g g g g g g g g g)
+(sqr1 :vel 12 :oct 2 :len 4 c c g g a a e e f f c c f f g g)`;
+  const onPce = portScore(msxSong, "pce", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), msxSong) });
+  assert.notEqual(onPce.map.fm1, "drop", `the melody kept: ${JSON.stringify(onPce.map)}`);
+  assert.notEqual(onPce.map.sqr1, "drop", "the bass kept");
+  assert.ok(onPce.said.some((w) => /fm1 is the melody/.test(w)), onPce.said.join("\n"));
+  for (const t of ["gb", "fc"]) assert.notEqual(portScore(msxSong, t).map.fm1, "drop", `${t}: the melody kept`);
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

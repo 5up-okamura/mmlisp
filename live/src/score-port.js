@@ -266,6 +266,11 @@ const LIMIT_LIFT_DB = 3;
 // A song's bass line: the melodic part sitting this far (semitones) under
 // the next lowest, by the median note (import-to-midi.js LOW_APART).
 const BASS_APART = 7;
+// A melody: a part playing at least this share of the busiest part's notes,
+// its level read in steps of this many dB (a part 3 dB down is as loud).
+const MELODY_SHARE = 0.25;
+const MELODY_DB = 3;
+const MELODY_ABOVE = 3; // semitones over the next part as loud
 
 // The drums on a noise channel, where a machine has no sample channel (the
 // Game Boy): each a note — its clock, low for the kick, bright for the snare,
@@ -457,19 +462,59 @@ function planRows(s, from, to, loopOf = () => null) {
   // channel for a bass line (a `bass` part: the 2A03's triangle, the Game
   // Boy's wave), plays there.
   s.bass = null;
-  const bassRow = () => {
-    if (s.bass !== null) return s.bass || null;
-    s.bass = false;
-    const mids = [];
+  // Each melodic row as it plays: its notes, its middle note, its middle
+  // length (ticks) and its level (dB: :vel and the track's :vol, 2 dB a
+  // step each), off the compiled score.
+  let stats;
+  const statsOf = () => {
+    if (stats) return stats;
+    stats = new Map();
+    const middle = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
     for (const t of s.compiled()?.tracks ?? []) {
       const k = t.scoreChannel ?? t.channel;
       if (!keys.includes(k) || !melodic(k) || kindOf(from, k) === "noise") continue;
-      const notes = t.events.filter((e) => e.cmd === "NOTE_ON").map((e) => pitchToMidi(e.args.pitch)).sort((a, b) => a - b);
-      if (notes.length) mids.push([notes[Math.floor(notes.length / 2)], k]);
+      let vol = 31;
+      const keysOf = [], lens = [], levels = [];
+      for (const e of t.events) {
+        if (e.cmd === "PARAM_SET" && e.args?.target === "VOL") vol = Number(e.args.value) || 0;
+        if (e.cmd !== "NOTE_ON") continue;
+        keysOf.push(pitchToMidi(e.args.pitch));
+        lens.push(e.args.length ?? 0);
+        levels.push(((e.args.vel ?? 15) - 15) * VEL_DB_PER_STEP + (Math.min(31, vol) - 31) * VEL_DB_PER_STEP);
+      }
+      if (keysOf.length) stats.set(k, { notes: keysOf.length, mid: middle(keysOf), len: middle(lens), level: middle(levels) });
     }
-    mids.sort((a, b) => a[0] - b[0]);
+    return stats;
+  };
+  const bassRow = () => {
+    if (s.bass !== null) return s.bass || null;
+    s.bass = false;
+    const mids = [...statsOf()].map(([k, st]) => [st.mid, k]).sort((a, b) => a[0] - b[0]);
     if (mids.length > 1 && mids[1][0] - mids[0][0] >= BASS_APART) s.bass = mids[0][1];
     return s.bass || null;
+  };
+  // The song's melody: of the parts that move in a tune's note lengths (a
+  // sixth of a beat or longer — a sixteenth with its gate taken off, an MDX's
+  // 22 ticks — not an arpeggio's or a trill's run of 32nds)
+  // and play a part's worth of notes, the loudest, then the highest — the
+  // lead a song puts over the rest. Kept before the others but the bass.
+  s.melody = null;
+  const melodyRow = () => {
+    if (s.melody !== null) return s.melody || null;
+    s.melody = false;
+    const st = statsOf();
+    const most = Math.max(0, ...[...st.values()].map((x) => x.notes));
+    const ppqn = s.compiled()?.ppqn ?? 96;
+    const tunes = [...st].filter(([k, x]) => k !== bassRow() && x.len >= ppqn / 6 && x.notes >= most * MELODY_SHARE);
+    if (tunes.length < 2) return null; // one part, or none: nothing to tell apart
+    // It must stand out: the loudest alone, or of the loudest the one
+    // sitting MELODY_ABOVE over the next — parts alike (a doubled line, a
+    // song of equals) name none.
+    const bin = (x) => Math.round(x.level / MELODY_DB);
+    tunes.sort(([, a], [, b]) => bin(b) - bin(a) || b.mid - a.mid);
+    const [[k, top], [, next]] = tunes;
+    if (bin(top) > bin(next) || top.mid - next.mid >= MELODY_ABOVE) s.melody = k;
+    return s.melody || null;
   };
   const bassChannel = to.channelNames.find((h) => to.partOf(h)?.bass && !(to.listsExpansions && to.chipOf(h).optional));
   const isKitRow = (k) => kindOf(from, k) === "sample" && rolesHere(s.heads.get(k));
@@ -522,7 +567,8 @@ function planRows(s, from, to, loopOf = () => null) {
     const samples = (g) => g.every(isSampleRow);
     // The bass is kept before every other melodic part.
     const isBass = (g) => g.includes(bassRow());
-    const order = (a, b) => (isBass(a) - isBass(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    const isMelody = (g) => g.includes(melodyRow());
+    const order = (a, b) => (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
   }
@@ -721,6 +767,8 @@ class Porter {
       this.needsKit = true;
       this.say(`the ${to.system}'s rhythm plays from your YM2608 rhythm ROM (File > Import > YM2608 Rhythm ROM…); without it presets/rx5's samples stand in`);
     }
+    if (this.s.melody && this.map[this.s.melody] && this.map[this.s.melody] !== "drop")
+      this.say(`${this.nameOf(this.s.melody)} is the melody (the loudest and highest part in a tune's note lengths): kept, on ${this.map[this.s.melody]}`);
     if (this.s.bass && this.map[this.s.bass] && this.map[this.s.bass] !== "drop") {
       const h = this.map[this.s.bass];
       this.say(`${this.nameOf(this.s.bass)} is the bass (its notes sit a fifth or more under the rest): ${this.to.partOf(h)?.bass ? `it plays on ${h}, the ${this.to.system}'s bass channel` : `kept, on ${h}`}`);

@@ -2623,7 +2623,11 @@ machine's channels or dropped:
   loop's body as many times as it repeats. The song's bass — the part whose
   notes sit a fifth or more under every other's — is kept before them all,
   and on a machine with a channel for a bass line (the Famicom's triangle,
-  the Game Boy's wave) plays there; the log names it.
+  the Game Boy's wave) plays there. Then the melody — of the parts moving
+  in a tune's note lengths (not a run of 32nds), the loudest, or of the
+  loudest the one clearly highest — before every other part, even one of
+  the machine's own kind (an MSX song's FM lead onto the PC Engine, before
+  its SCC parts). Parts alike name no melody. The log names both.
 - Drums and samples past a machine's sample channels are not dropped: the
   beat's (the kick, the snare) keep a channel each, and the rest share one
   as `:prio` layers in the drums' order — a snare is kept before the hats

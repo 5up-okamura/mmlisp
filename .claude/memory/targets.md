@@ -428,7 +428,18 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   stand in — the conversion imported none. `userRom: true` on rhythmRom
   (chips/rhythm-rom.js, parts.js): rows onto such a kit whose roles the
   score has no samples for set needsKit → `(import "presets/rx5/set.mmlisp")`
-  as import-mucom does; said. Measured: silent without, −29 dBFS with. Inline operator words on such a
+  as import-mucom does; said. Measured: silent without, −29 dBFS with.
+- **The melody kept** (user: "MGS onto pce dropped the melody — hard to
+  tell?"). The "own kind first" pool order let an MSX song's five SCC
+  parts (waves, the PC Engine's own kind) fill pce before its FM lead.
+  planRows' `statsOf()` (per melodic row: notes, middle note, middle
+  length, middle level in dB from :vel and :vol), `melodyRow()`: rows with
+  middle length ≥ ppqn/6 (a gated 16th, MDX's 22 ticks; 32nd runs out) and
+  ≥ MELODY_SHARE (¼) of the busiest's notes, not the bass; the loudest by
+  3 dB bins, then the highest — named only if it stands out (alone in the
+  loudest bin, or MELODY_ABOVE 3 semitones over the next), else none. Pool
+  order: bass, melody, own kind, notes. DTWNB: fm4 / fm3 / none (05: two
+  parts alike) / fm3. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
