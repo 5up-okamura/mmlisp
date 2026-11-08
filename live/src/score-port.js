@@ -210,13 +210,16 @@ function walk(items, fn, times = 1) {
 // snare — before the toms, a rim, the cymbals and the hats): by the names
 // it plays, or for a name that says nothing (an MDX's `pdx-003`) by its
 // sound as heard (`heard`: name → role, import-to-midi.js heardRoles).
-const DRUM_RANKS = [[/kick|bd|bass-?drum/i, 1], [/snare|sd|clap/i, 2], [/tom/i, 3], [/rim|cow|perc/i, 4], [/crash|ride|cym|splash/i, 5], [/hat|hh/i, 6]];
+// A word of a name (letters on neither side: `909snare` and `tom4` are,
+// `bottom`, `chat`, `prime` are not).
+const word = (w) => new RegExp(`(?<![a-z])(?:${w})(?![a-z])`, "i");
+const DRUM_RANKS = [[word("kick|bd|bass-?drum"), 1], [word("snare|sd|clap"), 2], [word("tom"), 3], [word("rim|cowbell|cow|perc"), 4], [word("crash|ride|cymbal|cym|splash"), 5], [word("hat|hh|hihat|hi-hat"), 6]];
 const rankOfName = (n) => DRUM_RANKS.find(([re]) => re.test(n))?.[1];
 // A sample's place among the drums where its name or its sound tells it; null
 // for one that says nothing (a pad, a voice, a hit not heard).
 const knownRank = (n, heard) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(heard.get(n)) : undefined) ?? null;
 function drumRank(h, heard = null) {
-  const ranks = [...(h?.samples ?? [])].map((n) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(heard.get(n)) : null) ?? 4);
+  const ranks = [...(h?.samples ?? [])].map((n) => knownRank(n, heard) ?? 4);
   return ranks.length ? Math.min(...ranks) : 4;
 }
 
@@ -267,9 +270,12 @@ const LIMIT_LIFT_DB = 3;
 // the next lowest, by the median note (import-to-midi.js LOW_APART).
 const BASS_APART = 7;
 const BASS_TOGETHER = 2; // semitones: parts this near the lowest are one bass line
-// A melody: a part playing at least this share of the busiest part's notes,
-// its level read in steps of this many dB (a part 3 dB down is as loud).
-const MELODY_SHARE = 0.25;
+const BASS_UNDER = 55; // a bass sits under G3 (import-to-midi.js LOW_UNDER)
+// A bass or a melody: a part sounding at least this share of the time the
+// longest-sounding (of the parts in a tune's lengths, for the melody) does;
+// a melody's level read in steps of MELODY_DB (a part 3 dB down is as loud).
+const PART_SHARE = 0.25;
+const PART_NOTES = 4; // a line has notes to change: one held note is none
 const MELODY_DB = 3;
 const MELODY_ABOVE = 3; // semitones over the next part as loud
 
@@ -471,20 +477,26 @@ function planRows(s, from, to, loopOf = () => null) {
     if (stats) return stats;
     stats = new Map();
     const middle = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    // A channel's tracks (its :prio layers) together; a def-se's are the
+    // game's effects, not the song.
+    const raw = new Map();
     for (const t of s.compiled()?.tracks ?? []) {
       const k = t.scoreChannel ?? t.channel;
-      if (!keys.includes(k) || !melodic(k) || kindOf(from, k) === "noise") continue;
+      if (t.se || !keys.includes(k) || !melodic(k) || kindOf(from, k) === "noise") continue;
+      const r = raw.get(k) ?? raw.set(k, { keys: [], lens: [], levels: [] }).get(k);
       let vol = 31;
-      const keysOf = [], lens = [], levels = [];
       for (const e of t.events) {
         if (e.cmd === "PARAM_SET" && e.args?.target === "VOL") vol = Number(e.args.value) || 0;
         if (e.cmd !== "NOTE_ON") continue;
-        keysOf.push(pitchToMidi(e.args.pitch));
-        lens.push(e.args.length ?? 0);
-        levels.push(((e.args.vel ?? 15) - 15) * VEL_DB_PER_STEP + (Math.min(31, vol) - 31) * VEL_DB_PER_STEP);
+        r.keys.push(pitchToMidi(e.args.pitch));
+        r.lens.push(e.args.length ?? 0);
+        r.levels.push(((e.args.vel ?? 15) - 15) * VEL_DB_PER_STEP + (Math.min(31, vol) - 31) * VEL_DB_PER_STEP);
       }
-      if (keysOf.length) stats.set(k, { notes: keysOf.length, mid: middle(keysOf), len: middle(lens), level: middle(levels) });
     }
+    // `sounds`: the ticks its notes take (as written, a loop's body once) —
+    // how much of the song the part is, a held bass and a run of 32nds alike.
+    for (const [k, r] of raw)
+      if (r.keys.length) stats.set(k, { notes: r.keys.length, mid: middle(r.keys), len: middle(r.lens), level: middle(r.levels), sounds: r.lens.reduce((a, x) => a + x, 0) });
     return stats;
   };
   // The bass: the lowest parts — those within BASS_TOGETHER of the lowest,
@@ -495,11 +507,14 @@ function planRows(s, from, to, loopOf = () => null) {
     if (s.bass !== null) return s.bass || null;
     s.bass = false;
     const st = statsOf();
-    const mids = [...st].map(([k, x]) => [x.mid, k]).sort((a, b) => a[0] - b[0]);
+    // A line, not a held note: PART_NOTES notes or more, sounding PART_SHARE
+    // of the time the part sounding longest does.
+    const most = Math.max(0, ...[...st.values()].map((x) => x.sounds));
+    const mids = [...st].filter(([, x]) => x.notes >= PART_NOTES && x.sounds >= most * PART_SHARE).map(([k, x]) => [x.mid, k]).sort((a, b) => a[0] - b[0]);
     if (mids.length < 2) return null;
     const group = mids.filter(([m]) => m - mids[0][0] <= BASS_TOGETHER);
     const next = mids[group.length];
-    if (!next || next[0] - mids[0][0] < BASS_APART) return null;
+    if (!next || next[0] - mids[0][0] < BASS_APART || mids[0][0] >= BASS_UNDER) return null;
     s.bassGroup = group.map(([, k]) => k);
     s.bass = [...s.bassGroup].sort((a, b) => st.get(b).level - st.get(a).level || st.get(b).notes - st.get(a).notes)[0];
     return s.bass;
@@ -514,11 +529,14 @@ function planRows(s, from, to, loopOf = () => null) {
     if (s.melody !== null) return s.melody || null;
     s.melody = false;
     const st = statsOf();
-    const most = Math.max(0, ...[...st.values()].map((x) => x.notes));
+    if (st.size < 2) return null; // one part: nothing to tell apart
     const ppqn = s.compiled()?.ppqn ?? 96;
     bassRow();
-    const tunes = [...st].filter(([k, x]) => !s.bassGroup.includes(k) && x.len >= ppqn / 6 && x.notes >= most * MELODY_SHARE);
-    if (tunes.length < 2) return null; // one part, or none: nothing to tell apart
+    const inTune = [...st].filter(([k, x]) => !s.bassGroup.includes(k) && x.len >= ppqn / 6);
+    const most = Math.max(0, ...inTune.map(([, x]) => x.sounds));
+    const tunes = inTune.filter(([, x]) => x.notes >= PART_NOTES && x.sounds >= most * PART_SHARE);
+    if (!tunes.length) return null;
+    if (tunes.length === 1) { s.melody = tunes[0][0]; return s.melody; } // the one part in a tune's lengths
     // It must stand out: the loudest alone, or of the loudest the one
     // sitting MELODY_ABOVE over the next — parts alike (a doubled line, a
     // song of equals) name none.
@@ -563,6 +581,9 @@ function planRows(s, from, to, loopOf = () => null) {
   const drumNoise = !channelsOf(to, "sample", { board: true }).length && !roleKit && channelsOf(to, "noise", { board: true })[0];
   const noiseDrums = drumNoise ? keys.filter((k) => isSampleRow(k) && notesOf(k) && [...(s.heads.get(k)?.samples ?? [])].some((n) => knownRank(n, s.heard) != null)) : [];
   for (const k of noiseDrums) dest[k] = "noise-drum";
+  // The bass and the melody read before the pools' order asks for them.
+  bassRow();
+  melodyRow();
   for (const [inPool, room] of pools) {
     const groups = new Map();
     for (const k of keys.filter((k) => inPool(k) && !(k in dest && ["drop", "layer", "noise-drum"].includes(dest[k])))) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
@@ -780,7 +801,7 @@ class Porter {
     const roles = new Set(romRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])].map((n) => this.s.byEar?.get(n) ?? n)));
     if ([...roles].some((r) => !this.s.samples.has(r))) {
       this.needsKit = true;
-      this.say(`the ${to.system}'s rhythm plays from your YM2608 rhythm ROM (File > Import > YM2608 Rhythm ROM…); without it presets/rx5's samples stand in`);
+      this.say(`the ${to.system}'s ${romRows.length ? to.partOf(romRows[0][1]).label : "rhythm"} plays a ROM you bring (File > Import); without it presets/rx5's samples stand in for the roles the score has none of`);
     }
     if (this.s.melody && this.map[this.s.melody] && this.map[this.s.melody] !== "drop")
       this.say(`${this.nameOf(this.s.melody)} is the melody (the loudest and highest part in a tune's note lengths): kept, on ${this.map[this.s.melody]}`);
@@ -1480,7 +1501,7 @@ class Porter {
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} as ${v} (a stand-in for its square)`);
     }
     if (ctx.srcPart.kind === "fm" && ctx.destPart.kind === "tone")
-      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, a square, without its voice`);
+      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, the ${ctx.destPart.label}, without its voice`);
     if (ctx.split === "noise") {
       const tone = this.map[splitHead(ctx.head)];
       this.say(`${this.nameOf(ctx.head)}'s noise notes (:mode ${this.from.name === "x68k" ? "noise" : "noise / both"}) play on ${ctx.dest}${tone === "drop" ? "; its tone notes are not converted" : `, its tone notes on ${tone}`}`);

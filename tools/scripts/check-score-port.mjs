@@ -560,7 +560,7 @@ const port = (src, to, rows) => {
   const fmPac = port("(def-score :target msx)\n(fm1 piano :len 4 c e)\n(rhythm1 kick :len 2 c c)\n(rhythm2 hat :len 4 c c c c)", "pc88");
   assert.deepEqual([fmPac.map.rhythm1, fmPac.map.rhythm2], ["rhythm1", "rhythm2"]);
   assert.match(fmPac.text, /\(import "presets\/rx5\/set\.mmlisp"\)/, fmPac.text);
-  assert.ok(fmPac.said.some((w) => /YM2608 Rhythm ROM/.test(w)));
+  assert.ok(fmPac.said.some((w) => /plays a ROM you bring .*presets\/rx5's samples stand in/.test(w)), fmPac.said.join("\n"));
   const ownKit = port('(def-score :target msx)\n(import "presets/tr808/set.mmlisp")\n(rhythm1 kick :len 2 c c)', "pc88");
   assert.doesNotMatch(ownKit.text, /presets\/rx5/, "the score's own kit stands in");
   // The melody — the loudest part in a tune's note lengths, then the
@@ -597,6 +597,44 @@ const port = (src, to, rows) => {
   assert.notEqual(dbl.map.fm1, "drop", "the melody kept, not the loud bass in its place");
   assert.equal(dbl.map.wave1, "drop", "the bass's copy the first to go");
   assert.ok(dbl.said.some((w) => /fm1 is the melody/.test(w)) && dbl.said.some((w) => /fm6 is the bass/.test(w)), dbl.said.join("\n"));
+  // From a review of the bass and the melody (2026-11-08):
+  // the bass's copy goes first even as the pools first ask (the group read
+  // before them) —
+  const copyFirst = portScore(`(def-score :target msx)
+(fm1 :vel 9 :oct 2 :len 8 c c g g a a e e f f c c f f g g c c g g a a e e f f c c f f g g)
+(fm2 :oct 5 :len 1 c e g c)
+(fm3 :oct 5 :len 8 e d c d e e e4 d d d4 e g g4 e d c d e e e e d d e d c2)
+(fm6 :vel 15 :oct 2 :len 8 c c g g a a e e f f c c f f g g c c g g a a e e f f c c f f g g)`, "fc");
+  assert.equal(copyFirst.map.fm1, "drop", `the quiet copy goes: ${JSON.stringify(copyFirst.map)}`);
+  assert.notEqual(copyFirst.map.fm2, "drop", "a part of its own kept before the copy");
+  // a def-se on a channel is not its song part —
+  const withSe = portScore(bassSrc + "\n(def-se zap (fm1 :oct 7 :len 16 c d e))", "fc");
+  assert.equal(withSe.map.fm1, "tri", `the bass read off the song, not the effect: ${JSON.stringify(withSe.map)}`);
+  // a lead among 32nd runs is the melody (measured by the time it sounds) —
+  const leadAmongRuns = portScore(`(def-score :target msx)
+(fm1 :oct 5 :len 8 e d c d e e e4 d d d4 e g g4 e d c d e e e e d d e d c2)
+(fm2 :vel 13 :oct 4 :len 32 c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e c e g e)
+(fm3 :vel 13 :oct 4 :len 32 e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g e g)
+(fm4 :oct 2 :len 4 c c g g a a e e f f c c f f g g)`, "gb");
+  assert.notEqual(leadAmongRuns.map.fm1, "drop", `the lead kept among the runs: ${JSON.stringify(leadAmongRuns.map)}`);
+  // one low note is no bass —
+  const oneLow = portScore(`(def-score :target x68k)
+(fm1 :oct 1 :len 1 c)
+(fm2 :oct 4 :len 8 c d e f g a b > c < c d e f g a b > c)
+(fm3 :oct 4 :len 8 e f g a e f g a e f g a e f g a)
+(fm4 :oct 5 :len 16 e f g a e f g a e f g a e f g a e f g a e f g a)`, "fc");
+  assert.notEqual(oneLow.map.fm1, "tri", `a single low note is not the bass: ${JSON.stringify(oneLow.map)}`);
+  assert.equal(oneLow.map.fm1, "drop", "and, the fewest notes, it goes");
+  // a drum's name is a word of the name, not letters inside another —
+  const notDrums = portScore(`(def-score :target x68k)
+(def-pcm custom-lead :file "a.wav")
+(def-pcm bottom-bass :file "b.wav")
+(def-pcm chat-voice :file "c.wav")
+(def-pcm kick2 :file "d.wav")
+(fm1 :len 4 c e g c)
+(pcm1 :len 4 custom-lead c bottom-bass c chat-voice c kick2 c)`, "gb");
+  const nz = notDrums.text.slice(notDrums.text.indexOf("(noise"));
+  assert.match(nz, /\(noise :len 4 _ _ _ noise-kick :oct 4 :gate 5f a\)/, `only kick2 a drum: ${nz}`);
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

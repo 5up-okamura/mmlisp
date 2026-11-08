@@ -2642,9 +2642,10 @@ machine's channels or dropped:
   `noise-snare`, `noise-tom`, `noise-rim`, `noise-cymbal`, `noise-hat`). A
   sample whose name says nothing (an MDX's `pdx-003`) is told by its sound;
   one that sounds as no drum plays nothing there.
-- Drums onto the PC-8801's rhythm play from your YM2608 rhythm ROM; a
-  score with no samples for the roles it plays imports `presets/rx5` to
-  stand in without the ROM, as a mucom88 import does.
+- Drums onto the PC-8801's rhythm play from your YM2608 rhythm ROM;
+  without it a score's samples under the roles' names stand in, so where
+  the score has none for a role it plays, `presets/rx5` is imported for it,
+  as a mucom88 import does (the score's own samples stay its own).
 - A machine with no sample channel but a ROM rhythm (the MSX's FM-PAC)
   plays a drum track on it: each sample as the kit's role it is named or
   sounds as (an MDX's samples by their sound: kick, snare, tom, top

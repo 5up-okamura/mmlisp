@@ -447,7 +447,24 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   BASS_TOGETHER (2) of the lowest are one bass group: its loudest the bass,
   the others copies, dropped first (pool order: copy last kept, bass,
   melody, own kind, notes); the melody is never from the group. BF_4TH:
-  fm6 → tri / wave, fm1 kept on all three. Inline operator words on such a
+  fm6 → tri / wave, fm1 kept on all three.
+- **Review of bass / melody / noise drums / the rx5 kit** (2026-11-08),
+  fixed: bassRow / melodyRow read before the pools sort (the copy's rank
+  needs the group); statsOf skips def-se tracks and merges a channel's
+  :prio tracks; a part's weight is the time it sounds (`sounds`, notes ×
+  length), PART_SHARE of the longest-sounding and PART_NOTES (4) notes —
+  so a lead among 32nd runs is the melody, one held low note no bass; a
+  bass sits under BASS_UNDER (G3) too (two mid parts were taken for a
+  doubled bass); a lone part in a tune's lengths is the melody; drum
+  names are whole words (`(?<![a-z])…(?![a-z])`: `909snare`, `tom4` are,
+  `bottom`, `chat`, `prime` are not); FM onto a tone says its part's
+  label (the triangle is no square); rx5 is imported for the roles the
+  score lacks, its own samples winning (the compiler lets a score's def
+  override an import's). A sweep of the user's songs (19 MDX, BF_4TH.MGS,
+  4 mucom88) and VGMs of 9 test scores onto every machine — 198
+  conversions: no error, no warning, no named bass / melody dropped, no
+  kept channel empty; the one "drums gone" is DTWNB18's 12.7 s stream,
+  rightly no drum. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
