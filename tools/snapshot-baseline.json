@@ -815,6 +815,22 @@
   "vgm": "5b37f5727bc1eddd",
   "mid": "e6cac6cb23c2e307"
  },
+ "drv/tests/m4-csm-macro.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "743ebcfc30749caf",
+  "regs": "08fdb12c9863cf01",
+  "mmb": "9c314dd7eca68db8",
+  "vgm": "ed121b74f45cf4c7",
+  "mid": "ece407b13663d1bb"
+ },
+ "drv/tests/m4-csm-macro.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4cf6d10e24ba3eb3",
+  "regs": "5b2a36cd864c9fbd",
+  "mmb": "3502028284d55c4c",
+  "vgm": "124a538f98cb7fae",
+  "mid": "006b9ce7f0f1b1e3"
+ },
  "drv/tests/m4-csm-ops.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b8d1a75407f0fe16",

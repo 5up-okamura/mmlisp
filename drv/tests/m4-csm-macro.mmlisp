@@ -1,0 +1,8 @@
+; A macro on a CSM formant note runs as long as the note does: the note keys
+; nothing in $28 (Timer A keys CH3) yet counts as sounding, and the rate
+; track's time between rates passes as TIE, not a REST that would key CH3 off
+; (driver.md §9). The :pitch sweep moves the resonance through the bass's
+; harmonics, as the tutorial's CSM filter does.
+(def-fm res init-fm :alg 7 :tl1 0 :rr1 12 :tl2 127 :tl3 127 :tl4 127)
+(fm3-csm res :oct 4 :len 1 (macro :pitch (triangle 0..3600 :len 2/1)) c ~ c)
+(fm3-csm-rate :oct 2 :len 16 (x 4 c c > c < c d+ c > c < c))
