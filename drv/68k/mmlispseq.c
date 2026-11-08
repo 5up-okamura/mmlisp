@@ -640,8 +640,12 @@ static void key_on(MMLSeq *s, int ch) {
   if (c->vol_base == 0 || s->master == 0) return;
   /* CSM keys CH3 from Timer A's overflow, a key-on that lasts one sample and
    * falls back to $28. Held on through $28, the operators would see no edge
-   * and every retrigger would be lost — so the note keys nothing here. */
-  if (ch == 2 && (s->reg27 & 0x80)) return;
+   * and every retrigger would be lost — so the note writes no key, and is
+   * keyed 2: sounding (its macros run while it does) with nothing in $28. */
+  if (ch == 2 && (s->reg27 & 0x80)) {
+    c->keyed = 2;
+    return;
+  }
   c->keyed = 1;
   ym_key(s, (uint8_t)(0xf0 | chkey));
 }
@@ -649,9 +653,9 @@ static void key_off(MMLSeq *s, int ch) {
   MMLFmCh *c = &s->fm[ch];
   uint8_t port = ch >= 3 ? 1 : 0;
   uint8_t chkey = (uint8_t)((port << 2) | mod3(ch));
-  if (!c->keyed) return;
+  uint8_t was = c->keyed;
   c->keyed = 0;
-  ym_key(s, chkey);
+  if (was == 1) ym_key(s, chkey); /* a CSM note (2) has no key in $28 to lift */
 }
 static void channel_off(MMLSeq *s, int ch) {
   /* A tick-clocked release counts from the key-off's tick (§13.2). */

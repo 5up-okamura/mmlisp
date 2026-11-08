@@ -797,11 +797,17 @@ export function encodeMmb(ir, opts = {}) {
       (track.events ?? []).filter((e) => e.cmd === "JUMP").map((e) => e.args?.to),
     );
 
+    // A rest's opcode. The fm3-csm-rate track shares CH3 with the formant
+    // track and plays no note of its own: its time passes as TIE, which only
+    // waits, for a REST would key CH3 off — the formant's note and its macros
+    // with it (driver.md §9). Its rests that rest the buzz are CSM_RATE's gate
+    // form, not this.
+    const restOp = track.scoreChannel === "fm3-csm-rate" ? OPCODE.TIE : OPCODE.REST;
     // Synthesize RESTs for clock gaps (e.g. notes dropped by :prio layers).
     const syncClock = (tick) => {
       const t = tick ?? clock;
       if (t > clock) {
-        stream.u8(OPCODE.REST);
+        stream.u8(restOp);
         stream.raw(encodeDuration(t - clock));
         clock = t;
       } else if (t < clock) {
@@ -976,7 +982,7 @@ export function encodeMmb(ir, opts = {}) {
         case "TIE": {
           syncClock(ev.tick);
           const length = a.length ?? 0;
-          stream.u8(ev.cmd === "REST" ? OPCODE.REST : OPCODE.TIE);
+          stream.u8(ev.cmd === "REST" ? restOp : OPCODE.TIE);
           stream.raw(encodeDuration(length));
           clock += length;
           break;

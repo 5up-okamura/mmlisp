@@ -1013,7 +1013,14 @@ The rate of overflows is the pitch; where the operators ring is the formant.
   (or the gate's run form) sets it again. Leaving CSM ends the hold.
 - **A CSM note keys nothing.** Held on through `$28`, the operators would see
   no edge and every retrigger would be lost, so while CSM is on a note on CH3
-  writes no `$28` at all — neither key-on nor key-off.
+  writes no `$28` at all — neither key-on nor key-off. It still sounds: CH3 is
+  keyed 2 (sounding, nothing in `$28`), so its macros run until its key-off
+  as any note's do — a `:pitch` macro sweeps the formant — and that key-off
+  writes nothing either.
+- **The rate track's time is TIE.** `fm3-csm-rate` shares CH3 with the
+  formant track and plays no note: the exporter writes its gaps and rests as
+  TIE, which only waits, where a REST would key CH3 off and end the formant's
+  note and its macros. A rest that rests the buzz is CSM_RATE's gate form.
 - **A CSM note sets all four operators' pitch.** In this mode operators 1–3
   read their own F-numbers (`$A8`–`$AE`) and only operator 4 the channel's
   (`$A0`/`$A4`), so a note writes the same F-number to all four and each rings

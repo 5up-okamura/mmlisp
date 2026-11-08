@@ -814,8 +814,13 @@ export class DrvPlayer {
     // score's fader decides, not a :vol macro's level: a macro's 0 attenuates.
     if (regs.volBase === 0 || this._master === 0) return;
     // CSM keys CH3 from Timer A's overflow; held on through $28 the operators
-    // would see no edge and every retrigger would be lost.
-    if (ch === 2 && this._reg27 & 0x80) return;
+    // would see no edge and every retrigger would be lost: the note writes no
+    // key, and is keyed "csm": sounding (its macros run while it does) with
+    // nothing in $28 (the C's keyed 2).
+    if (ch === 2 && this._reg27 & 0x80) {
+      regs.keyed = "csm";
+      return;
+    }
     regs.keyed = true;
     this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
   }
@@ -823,9 +828,9 @@ export class DrvPlayer {
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
     const chKey = (port << 2) | (ch % 3);
-    if (!regs.keyed) return;
+    const was = regs.keyed;
     regs.keyed = false;
-    this._ymKey(chKey);
+    if (was === true) this._ymKey(chKey); // a CSM note has no key in $28 to lift
   }
   // A full-gate note meets the next note-on: the key-off it was holding fires
   // here, before that note's writes, so the FM envelope sees the transition it
