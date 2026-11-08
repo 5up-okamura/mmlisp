@@ -1759,8 +1759,10 @@ pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
 **For pc88.** A `.muc` is written for the YM2608, so the import dialog's
 **Target** starts at pc88 (the NEC PC-8801), which keeps what the chip has
 instead of reading it for the Mega Drive (language.md §19); md converts it
-for the Mega Drive as above; General MIDI reads it as pc88, then through its
-MIDI (§ Song imports: the rhythm's sounds are their kit roles):
+for the Mega Drive as above; any other machine takes the pc88 score as Edit ▸
+Convert to Machine… does (§ Converting to another machine); General MIDI
+reads it as pc88, then through its MIDI (§ Song imports: the rhythm's sounds
+are their kit roles):
 
 - **Rhythm** G plays the chip's own sounds, a track each — BD on
   `rhythm1`, SD on `rhythm2`, TOP, HH, TOM and RIM on `rhythm3`–`rhythm6`,
@@ -1872,7 +1874,7 @@ plays it as found, other notes retune it.
 ### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
 **A song import opens a dialog first** (an MGS has only its Target to
-choose; an MDX its Target and, onto md or pc88, its rows): what the file holds, the timing and
+choose; an MDX or MGS its Target and, onto another machine, its rows): what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
@@ -1883,10 +1885,9 @@ jingle).
 sets the rows to that machine's channels. A MIDI file is a General MIDI
 instrument's, so it starts on `midi` (a channel each, the drums on
 `drum1`…) and offers every other machine. A VGM, NSF or tracker module starts
-on the machine of its own chips, which keeps what they have; the Mega Drive
-is always offered, and so is any other machine whose channels hold at least
-half of the song's notes — a Game Boy song can be a PC Engine's or an X68000's,
-a Mega Drive song's FM parts the FM-PAC's (each voice becomes the nearest of
+on the machine of its own chips, which keeps what they have, and offers the
+Mega Drive and every other machine — the rows say what each keeps: a Game Boy
+song can be a PC Engine's or an X68000's, a Mega Drive song's FM parts the FM-PAC's (each voice becomes the nearest of
 its ROM voices, by attack, decay and brightness, since its one user voice would
 be every channel's at once) or, on a machine with no FM, plain notes on its
 squares and waves.
@@ -2356,7 +2357,7 @@ MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
 written for the song's own machine: an MDX as an `x68k` score, an MGS as an
 `msx` one (or, as its Target, General MIDI's: above). Either one's
-Target can also be another of `md`, `pc88`, `x68k`, `msx`, `fc` and `gb`.
+Target can also be any other machine: `md`, `pc88`, `x68k`, `msx`, `pce`, `fc` or `gb`.
 The song is then moved from its own machine's score onto that one at the
 words' level, as Edit ▸ Convert to Machine… moves a score (below). A row
 per part (an MDX's FM A–H and PCM, an MGS's PSG, SCC, FM and FM rhythm)

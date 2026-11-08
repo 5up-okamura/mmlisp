@@ -47,7 +47,8 @@ import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
 /** The machines a score can be converted between. */
-export const PORT_TARGETS = ["md", "pc88", "x68k", "msx", "pce", "fc", "gb"];
+/** The machines a score can be converted between: every one of chips (General MIDI's is its own road). */
+export const PORT_TARGETS = Object.keys(TARGETS).filter((t) => TARGETS[t].sound === "chips");
 
 const WAVEFORMS = "presets/waveforms/set.mmlisp";
 const RHYTHM_KIT = "presets/rx5/set.mmlisp"; // the ROM rhythm's roles, as the mucom88 import plays them
@@ -130,16 +131,17 @@ function survey(text, from, imports) {
   const heads = new Map();
   for (const f of forms) {
     const head = f.items[0].value;
-    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, samples: new Set(), voices: [], waves: new Set(), noiseMode: false };
+    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, noiseNotes: 0, mode: "tone", samples: new Set(), voices: [], waves: new Set(), noiseMode: false };
     heads.set(head, h);
     h.forms.push(f);
     walk(f.items.slice(1), (n, prev) => {
       if (n.kind !== "atom") return;
-      if (isNote(n.value)) h.notes++;
+      if (isNote(n.value)) { h.notes++; if (NOISY.has(h.mode)) h.noiseNotes++; }
       else if (samples.has(n.value) || kit.has(n.value)) h.samples.add(n.value);
       else if (voices.has(n.value)) h.voices.push(n.value);
       if (waveNames.has(n.value)) h.waves.add(n.value);
       if (prev?.value === ":mode" && NOISY.has(n.value)) h.noiseMode = true;
+      if (prev?.value === ":mode" && n.kind === "atom") h.mode = n.value; // the notes after it: tone or noise
     });
   }
   // The waves: the score's def-waves and its imports'.
@@ -265,7 +267,15 @@ function planRows(s, from, to) {
     ? to.channelNames.filter((h) => kitPart.takes(to.channels[h])) : [];
   for (const h of kitTakes) takenBy.set(to.voiceKey(h), "kit");
   const dest = {};
-  const notesOf = (k) => s.heads.get(splitHead(k))?.notes ?? 0;
+  // A split track's halves count their own notes: a part all noise has no
+  // tone half to give a channel.
+  const notesOf = (k) => {
+    const h = s.heads.get(splitHead(k));
+    if (!h) return 0;
+    if (isSplit(k)) return h.noiseNotes;
+    return keys.includes(splitKey(k)) ? h.notes - h.noiseNotes : h.notes;
+  };
+  for (const k of keys) if (notesOf(k) === 0 && keys.includes(splitKey(k))) dest[k] = "drop";
   // Rows that are one channel on both machines (fm3 and fm3-1…fm3-4, as
   // they are on pc88) need one channel between them.
   const groupOf = (k) => (!isSplit(k) && to.partOf(k)?.kind === kindOf(from, k) && keys.some((o) => o !== k && !isSplit(o) && from.voiceKey(o) === from.voiceKey(k)) ? from.voiceKey(k) : k);
@@ -367,7 +377,7 @@ function planRows(s, from, to) {
     key: k,
     head: splitHead(k),
     kind: kindOf(from, k),
-    notes: s.heads.get(splitHead(k))?.notes ?? 0,
+    notes: notesOf(k),
     to: dest[k],
     choices: choicesOf(k),
   }));

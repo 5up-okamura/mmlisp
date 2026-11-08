@@ -86,11 +86,6 @@ export const standInsImported = (names) => [...names].some((n) => /^(wave|loud)-
 export const loudDefs = (names) => [...names].filter((n) => n.startsWith("loud-"))
   .map((n) => `(def-fm ${n} ${n.replace(/^loud-/, "wave-")} ${LOUD_CARRIERS[n.slice(5)]})`);
 
-/** Whether a target's defaults `dest` ({row key or index: channel}) keep most of a song's `rows`' notes. */
-export function holdsSong(rows, dest) {
-  const notes = (list) => list.reduce((s, c) => s + c.notes, 0);
-  return notes(rows.filter((c) => (dest[c.key ?? c.index] ?? "drop") !== "drop")) * 2 >= notes(rows) && notes(rows) > 0;
-}
 const MD = destsFor(targetProfile("md"));
 export const FM_DESTS = MD.fm;
 export const PSG_DESTS = MD.psg;

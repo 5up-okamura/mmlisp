@@ -228,6 +228,20 @@ Decisions on the way:
   passes move the noise's octave or a split's :mode is written out pass by
   pass (not when it holds a label or a (break): said).
 
+## Every import onto every machine (2026-11-08)
+
+The user: with every machine converting to every other, no Target list is
+held short. PORT_TARGETS is TARGETS' machines of chips (score-port.js). VGM,
+NSF and DefleMask / Furnace offer every machine to their own writers (the
+holdsSong filter, which kept only machines holding half the notes, is gone:
+every machine's VGM onto every machine compiles clean, check:score-port);
+mucom88 writes pc88 and md itself (its md reading does more than a
+conversion: the SSG envelope as a level macro, the PCM fitted to the
+driver's bank) and every other machine as its pc88 score converted; MDX,
+MGS, MIDI and Convert to Machine already offered all. A split track's
+halves count their own notes: a part all noise gives no channel to an empty
+tone half.
+
 ## The PC Engine (pce; built 2026-10-27)
 
 - **pce is built** (language.md §19; chips/huc6280.js, targets/pce.js,

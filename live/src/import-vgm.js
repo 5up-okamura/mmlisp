@@ -58,10 +58,11 @@
 //
 //   parseVgm(bytes)                  → the file's chips and channels' events
 //   analyzeVgm(parsed)               → what the import dialog shows, and the
-//                                      targets it can write (md; x68k for a
-//                                      YM2151's file, pc88 for a YM2608's or
-//                                      YM2203's, msx for an AY-3-8910's or an
-//                                      SCC's, pce for a HuC6280's)
+//                                      targets it writes: its own chips'
+//                                      machine first (x68k for a YM2151's
+//                                      file, pc88 for a YM2608's or YM2203's,
+//                                      msx for an AY-3-8910's or an SCC's, pce
+//                                      for a HuC6280's …), md, then every other
 //
 // A wavetable chip's note (the SCC's, the HuC6280's, the FDS's) carries the
 // wave in its channel's memory as it starts (`wave`, 32 steps −128..127, the
@@ -76,7 +77,7 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
-  assignBends, PITCH_NONE, gcd, destsFor, holdsSong, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
+  assignBends, PITCH_NONE, gcd, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { TARGETS, targetProfile } from "./targets.js";
 import { envCycle } from "./chips/ssg.js";
 import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES } from "./chips/rp2a03.js";
@@ -2217,17 +2218,16 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   const pcmPoly = pcmPolyphony(parsed.pcmHits ?? []);
   // A file without a loop point says it does not loop (a jingle).
   const fileLoop = parsed.loopSample != null && parsed.loopSample < parsed.totalSamples;
-  // The machines it can be written for: the Mega Drive, the machine of
-  // its own chip — the X68000 for a YM2151's, the PC-8801 for a YM2608's or
-  // YM2203's, the MSX for an AY-3-8910's, an SCC's or a YM2413's — by
-  // default when that chip plays every channel.
+  // The machine of its own chip — the X68000 for a YM2151's, the PC-8801 for
+  // a YM2608's or YM2203's, the MSX for an AY-3-8910's, an SCC's or a
+  // YM2413's — first (the default when that chip plays every channel), then
+  // the Mega Drive, then every other.
   const tones = channels.filter((c) => c.kind !== "chip-pcm");
   const own = [["x68k", /^(YM2151|OKIM6258|OKIM6295|K053260|C140)/], ["pc88", /^YM2(608|203)/], ["msx", /^(AY-3-8910|K051649|YM2413)/], ["pce", /^HuC6280/], ["fc", /^(2A03|DPCM|FDS|5B|VRC6|VRC7|MMC5|N163)/], ["gb", /^GB/]]
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const mine = [...own.map(([t]) => t), "md"];
-  // And any other machine whose channels take most of the song.
-  const held = { channels, followPitch, fileLoop, pcmPoly };
-  const targets = [...mine, ...Object.keys(TARGETS).filter((t) => !mine.includes(t) && holdsSong(channels, defaultVgmOptions(held, t).dest))];
+  // And every other machine: the rows say what each one keeps.
+  const targets = [...mine, ...Object.keys(TARGETS).filter((t) => !mine.includes(t) && TARGETS[t].sound === "chips")];
   // (A file of PCM alone — a YM2608's ADPCM-B, an OKIM6258, or an arcade's
   // OKIM6295, which fits PCM8 — is its chip's machine's.)
   // (And it has to hold the song's PCM as well as the Mega Drive's three do: a

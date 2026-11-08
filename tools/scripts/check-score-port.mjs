@@ -22,6 +22,10 @@ import { pitchToMidi } from "../../live/src/ir-utils.js";
 import { midiPlan } from "../../live/src/export-midi.js";
 import { TARGETS } from "../../live/src/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
+import { importMucom, MUCOM_TARGETS } from "../../live/src/import-mucom.js";
+import { IRPlayer } from "../../live/src/ir-player.js";
+import { renderVgm } from "../../live/src/export-vgm.js";
+import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
 import { WAVEFORM_WORDS, waveformOf } from "../../live/src/voice-port.js";
 import { shapeOf } from "../../live/src/wave-port.js";
@@ -406,6 +410,29 @@ const port = (src, to, rows) => {
   assert.doesNotMatch(sec.text, /chorus/);
   const snip = port("(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(def half :wave (* saw 0.5))\n(wave1 half :len 4 c)", "md");
   assert.doesNotMatch(snip.text, /half/);
+}
+
+// ── Every import onto every machine (2026-11-08) ──
+{
+  // mucom88: pc88 and md its own writers, any other machine the pc88 score converted.
+  const muc = new TextEncoder().encode("#title test song\n\nA t120 o4 l8 cdefgab>c\nB o3 l4 c g c g\nD o5 l8 v13 eg>c<g eg>c<g\nE l16 P2 w5 v12 c c c c c c c c\nG l8 v15 @1c @8c @2c @8c\n");
+  for (const target of MUCOM_TARGETS) {
+    const r = importMucom(muc, null, null, { target });
+    assert.deepEqual(compile(r.source, join(repo, "tools/tests/t.mmlisp")).bad, [], `mucom88 onto ${target} compiles clean`);
+  }
+  assert.deepEqual(MUCOM_TARGETS.slice().sort(), PORT_TARGETS.slice().sort(), "mucom88 offers every machine");
+  // A VGM of each machine offers every machine, each written clean.
+  for (const sf of ["drv/tests/ab-core.mmlisp", "tools/tests/x68k/fm.mmlisp", "tools/tests/msx/scc.mmlisp", "tools/tests/gb/apu.mmlisp"]) {
+    const file = join(repo, sf);
+    const vgm = renderVgm(new IRPlayer(() => {}).loadJSON(compile(readFileSync(file, "utf8"), file).ir), { title: "t" }).bytes;
+    const parsed = await parseVgm(vgm);
+    const a = analyzeVgm(parsed);
+    assert.deepEqual(a.targets.slice().sort(), PORT_TARGETS.slice().sort(), `${sf}'s VGM offers every machine`);
+    for (const t of a.targets) {
+      const out = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, t), target: t, structure: true, fileName: "t.vgm" }, a);
+      assert.deepEqual(compile(out.source, join(repo, "tools/tests/t.mmlisp")).bad, [], `${sf}'s VGM onto ${t} compiles clean`);
+    }
+  }
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

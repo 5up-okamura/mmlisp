@@ -3580,7 +3580,7 @@
       const fields = [];
       fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
         choices: withMidi(a.targets, a.target),
-        hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine (md always, the rest where they hold most of its notes) reads the channels for its own; General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
+        hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine reads the channels for its own (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
           hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
@@ -3620,7 +3620,7 @@
       // A file of one machine's chip can be that machine's score, the Mega Drive's, or General MIDI's.
       fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
         choices: withMidi(a.targets, a.target),
-        hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine (md always, the rest where they hold most of its notes) reads them for its own; General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
+        hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine reads them for its own (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       );
@@ -4242,7 +4242,7 @@
           (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
         fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0],
           choices: withMidi(MUCOM_TARGETS, 'pc88'),
-          hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
+          hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive (the SSG’s envelope a level macro, the PCM fitted to the driver’s bank); any other machine takes the pc88 score as Edit > Convert to Machine… does; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
       });
       if (!got) return;
       try {
@@ -4453,7 +4453,8 @@
         view.focus();
         return;
       }
-      const near = PORT_TARGETS.includes(from) ? PORT_TARGETS.filter((t) => t !== from) : [];
+      // Every machine of chips takes every other's score (score-port.js).
+      const near = PORT_TARGETS.filter((t) => t !== from);
       const choices = [...near.map((t) => [t, `${sys(t)} (:target ${t})`]), ['midi', `General MIDI (:target midi) — read as the ${sys(from)}’s`]];
       const imports = _importSources;
       const rowsFor = (target) => {
@@ -4470,12 +4471,9 @@
       };
       const got = await showImportDialog({
         title: 'Convert to Machine',
-        summary: `The score is the ${sys(from)}’s (:target ${from}).` +
-          (near.length ? '' : ' Its chips are its own: it converts onto General MIDI.'),
+        summary: `The score is the ${sys(from)}’s (:target ${from}).`,
         fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, choices,
-          hint: near.length
-            ? 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
-            : 'General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
+          hint: 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
         rows: rowsFor(choices[0][0]),
         rowsFor,
         okLabel: 'Convert',

@@ -57,7 +57,7 @@
 // x68k's fm8. Each chip's column in its own steps (3 dB, the SCC's linear).
 // ---------------------------------------------------------------------------
 
-import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, GLIDE_NONE, FM_DESTS, PSG_DESTS, destsFor, holdsSong, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
+import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, GLIDE_NONE, FM_DESTS, PSG_DESTS, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { TARGETS, targetProfile } from "./targets.js";
 import { OPLL_ROM_NAMES, romVoicesAs4op } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
@@ -78,8 +78,7 @@ const CHANNEL_KINDS = {
 };
 // The chip families (the readers' `chip`) each target plays as its own. A
 // module offers the targets whose chips play its notes, the one playing the
-// most first (a tie: this order), md always, and any other whose channels
-// take most of its notes.
+// most first (a tie: this order), md, then every other machine.
 const TARGET_CHIPS = {
   pce: ["pce"], fc: ["nes", "vrc6", "fds"], gb: ["gb"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
   pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
@@ -329,7 +328,8 @@ export function analyzeTracker(t) {
   const own = Object.keys(TARGET_CHIPS).map((tg) => ({ tg, n: channels.filter((c) => TARGET_CHIPS[tg].includes(c.chip)).reduce((s, c) => s + c.notes, 0) }))
     .filter((x) => x.n > 0).sort((x, y) => y.n - x.n).map((x) => x.tg);
   const mine = own.includes("md") ? own : [...own, "md"];
-  const targets = [...mine, ...Object.keys(TARGETS).filter((tg) => !mine.includes(tg) && holdsSong(channels, defaultTrackerOptions({ channels }, tg).dest))];
+  // And every other machine: the rows say what each one keeps.
+  const targets = [...mine, ...Object.keys(TARGETS).filter((tg) => !mine.includes(tg) && TARGETS[tg].sound === "chips")];
   return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
 }
 
