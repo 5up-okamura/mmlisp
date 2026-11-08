@@ -93,10 +93,13 @@ Rulings, not to re-propose:
   `(gain 6) (limit)` gained 1 dB more and changed the drums.
 - **One road for a song onto another machine** (the user, 2026-11-08):
   every song import writes its own machine's score, and any other machine
-  is that score converted (portScore) — Open onto X ≡ Open + Convert. The
-  VGM and tracker writers still map chips onto another machine's channels,
-  but only where a song's own machine is the fallback (no one machine has
-  every chip: an arcade mix, a multi-chip Furnace module, written as md).
+  is that score converted (portScore) — Open onto X ≡ Open + Convert. A
+  song no one machine has every chip of is the score of the machine that
+  keeps the most of its notes (what that score drops cannot come back), the
+  only place the VGM and tracker writers still map chips onto another
+  machine's channels. Known limit: a phrase played at several octaves takes
+  its lowest play's lift under a tone's floor (said; split it per octave if
+  a score needs it).
 
 Test material (not in the repo): the user's DTWNB MDX set (19 songs + PDX),
 BF_4TH.MGS (a doubled bass), pcmt13.muc (part K beside rhythm1–6); Yuzo

@@ -3312,7 +3312,7 @@
     // (portImported); midi, through its MIDI (readViaMidi).
     async function convertMucom(song, datBytes, pcmBytes) {
       if (song.target === 'pc88') return importMucom(song.bytes, datBytes, pcmBytes);
-      const res = importMucom(song.bytes, datBytes, pcmBytes, { target: 'pc88' });
+      const res = importMucom(song.bytes, datBytes, pcmBytes);
       if (song.target === 'midi') return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
       const out = await portImported(res, song.target, { fileName: song.fileName });
       return { ...res, source: `; Imported as pc88, then onto ${song.target}\n${out.text}`, warnings: [...res.warnings, ...out.said] };

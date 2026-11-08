@@ -330,8 +330,18 @@ export function analyzeTracker(t) {
     .filter((x) => x.n > 0).sort((x, y) => y.n - x.n).map((x) => x.tg);
   const mine = own.includes("md") ? own : [...own, "md"];
   // And every other machine: the rows say what each one keeps.
-  const targets = [...mine, ...PORT_TARGETS.filter((tg) => !mine.includes(tg))];
-  return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
+  const all = [...mine, ...PORT_TARGETS.filter((tg) => !mine.includes(tg))];
+  // A module of one machine's chips is that machine's score. One of several
+  // machines' (a Furnace module of the Genesis and the MSX's) is the score of
+  // the machine that keeps the most of its notes at its rows' defaults — its
+  // own first among equals: every other machine is that score converted.
+  const base = { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels };
+  const keptOn = (tg) => {
+    const { dest } = defaultTrackerOptions({ ...base, targets: all, target: tg }, tg);
+    return channels.reduce((n, c) => n + (dest[c.index] != null && dest[c.index] !== "drop" ? c.notes : 0), 0);
+  };
+  const target = own.length > 1 ? all.reduce((best, tg) => (keptOn(tg) > keptOn(best) ? tg : best), all[0]) : all[0];
+  return { ...base, targets: [target, ...all.filter((tg) => tg !== target)], target };
 }
 
 /**

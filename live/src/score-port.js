@@ -1600,10 +1600,16 @@ class Porter {
         if (ctx.head && ctx.destPart?.lowest != null && isNote(v)) {
           // As it sounds here: the octaves a stand-in's voice writes it up too.
           const m = this.lowNotes(ctx.head).get(`${it.line}:${it.column}`);
-          const lowest = ctx.destPart.lowest, sounds = m + 12 * (this.octShift.get(ctx.head) ?? 0);
+          const lowest = ctx.destPart.lowest, shift = 12 * (this.octShift.get(ctx.head) ?? 0), sounds = (m?.lo ?? 0) + shift;
           if (m != null && sounds < lowest) {
             const k = Math.ceil((lowest - sounds) / 12);
             if (!this.saidLow?.has(ctx.head)) { (this.saidLow ??= new Set()).add(ctx.head); this.say(`${this.nameOf(ctx.head)}: notes under the ${this.to.system}'s lowest (${PITCH_NAMES[lowest % 12]}${Math.floor(lowest / 12) - 1}) written up by octaves to it`); }
+            // A phrase played at several octaves takes its lowest play's lift
+            // everywhere: its higher plays go up too.
+            if (Math.ceil((lowest - m.hi - shift) / 12) < k && !this.saidLowPhrase?.has(ctx.head)) {
+              (this.saidLowPhrase ??= new Set()).add(ctx.head);
+              this.say(`${this.nameOf(ctx.head)}: a phrase played at several octaves is written up as its lowest play needs, so its higher plays sound that much higher`);
+            }
             outs[i] = `${Array(k).fill(">").join(" ")} ${v} ${Array(k).fill("<").join(" ")}`;
             continue;
           }
@@ -1972,9 +1978,9 @@ class Porter {
   }
 
   // A track's notes by their place in the score's own text ("line:column",
-  // not an imported file's) → the lowest MIDI note played there, as the
-  // source compiles: a tie's second token the note it holds. A place played
-  // at several octaves (a phrase) takes its lowest.
+  // not an imported file's) → { lo, hi }, the lowest and highest MIDI note
+  // played there, as the source compiles: a tie's second token the note it
+  // holds. A place played at several octaves (a phrase) is lifted by its lowest.
   lowNotes(head) {
     this.lows ??= new Map();
     if (!this.lows.has(head)) {
@@ -1987,7 +1993,8 @@ class Porter {
           else if (e.cmd !== "TIE") continue;
           if (!Number.isFinite(held) || !e.src || e.src.file) continue;
           const p = `${e.src.line}:${e.src.column}`;
-          at.set(p, Math.min(held, at.get(p) ?? 127));
+          const was = at.get(p);
+          at.set(p, { lo: Math.min(held, was?.lo ?? 127), hi: Math.max(held, was?.hi ?? 0) });
         }
       }
       this.lows.set(head, at);
@@ -2103,6 +2110,9 @@ class Porter {
   // What a `:keyword value` pair is on the destination: { keep } | { drop }
   // | { replace }, said where it is not as written.
   wordRule(kw, val, ctx) {
+    // A track's own `:vel*` macro, which a drawn envelope takes the place of
+    // and `:env none` gives back (envAsLevel).
+    if (ctx.macro && kw === ":vel*" && ctx.head) { const sp = this.span(val); (this.velStar ??= new Map()).set(ctx.head, this.text.slice(sp.from, sp.to)); }
     const KEEP = {};
     const DROP = { drop: true };
     const where = ctx.dest ? `${ctx.dest}` : `the ${this.to.system}`;
@@ -2222,7 +2232,8 @@ class Porter {
   // has no frames to draw it in: the level is the note's.
   envAsLevel(val, ctx) {
     const v = val.kind === "atom" ? String(val.value) : null;
-    if (v === "none") return { replace: "(macro :vel* none)" };
+    // Off: the track's own :vel* macro back, as the chip gives its level back.
+    if (v === "none") return { replace: `(macro :vel* ${this.velStar?.get(ctx.head) ?? "none"})` };
     const shape = num(val);
     if (ctx.macro || shape == null || shape < 0 || shape > 15) {
       this.say(`:env ${v ?? "(…)"} on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope, and this one is not a shape to draw; taken out`);

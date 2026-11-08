@@ -17,7 +17,7 @@ import { VEL_DB_PER_STEP, fmCarrierOpsForAlg } from "./ir-utils.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
 import { ym2608 } from "./chips/ym2608.js";
 import { envCycle } from "./chips/ssg.js";
-import { portScore, pruneUnnamedDefs, PORT_TARGETS } from "./score-port.js";
+import { pruneUnnamedDefs, PORT_TARGETS } from "./score-port.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -2889,7 +2889,7 @@ function mergeDatVoices(parsed, datVoices) {
 // A `.muc` is MUCOM88's, so its chip is the YM2608: it is written as a pc88
 // score, which keeps the chip's own rhythm, SSG mixer, hardware envelope and
 // noise period. Any other machine takes that score at the words' level
-// (score-port.js), as Edit > Convert to Machine… would.
+// (score-port.js), as Edit > Convert to Machine… would — the caller's to do.
 /** Every machine a song can be imported onto, the song's own first. */
 export const MUCOM_TARGETS = ["pc88", ...PORT_TARGETS.filter((t) => t !== "pc88")];
 
@@ -2901,24 +2901,17 @@ export const MUCOM_TARGETS = ["pc88", ...PORT_TARGETS.filter((t) => t !== "pc88"
  */
 // `unfold`: every loop written out pass by pass (a score to compare note by
 // note, as tools/scripts/import-snapshot.mjs --flat takes it).
-export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = MUCOM_TARGETS[0], unfold = false } = {}) {
-  if (!MUCOM_TARGETS.includes(target)) throw new Error(`mucom88 writes ${MUCOM_TARGETS.join(", ")}, not ${target}`);
+export function importMucom(bytes, datBytes = null, pcmBytes = null, { unfold = false } = {}) {
   const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
   const parsed = parseMucom(decodeMucText(bytes));
   if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
   if (pcm) parsed.pcm = pcm;
   parsed.unfold = unfold;
   let out = mucomToMmlisp(parsed);
-  if (target !== "pc88") {
-    const port = portScore(out.source, target, { header: false });
-    if (port.error) throw new Error(port.error);
-    out = { ...out, source: `; Imported as pc88, then onto ${target}\n${port.text}`, warnings: [...out.warnings, ...port.said] };
-  } else {
-    // The song's score holds what it plays: a voice of its list no part
-    // names, a macro of a part left out, goes (as a conversion's do).
-    const { text, gone } = pruneUnnamedDefs(out.source);
-    if (gone.length) out = { ...out, source: text, warnings: [...out.warnings, `defs nothing plays taken out: ${gone.join(" ")}`] };
-  }
+  // The song's score holds what it plays: a voice of its list no part
+  // names, a macro of a part left out, goes (as a conversion's do).
+  const { text, gone } = pruneUnnamedDefs(out.source);
+  if (gone.length) out = { ...out, source: text, warnings: [...out.warnings, `defs nothing plays taken out: ${gone.join(" ")}`] };
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.
   return pcm ? { ...out, pcm } : out;

@@ -394,6 +394,9 @@ const port = (src, to, rows) => {
   const buzz = port("(def-score :target msx)\n(sqr1 :env-rate note :env 8 :len 4 c)", "fc");
   assert.match(buzz.text, /\(sqr1 \(macro :vel\* none\) :len 4 c\)/);
   assert.ok(buzz.said.some((x) => /follows the note .*keeps its level/.test(x)));
+  // :env none gives the track's own :vel* macro back.
+  const back = port("(def-score :target pc88)\n(sqr1 :env-rate 4 (macro :vel* [1 0.5]) :len 4 c :env 8 d :env none e)", "md");
+  assert.match(back.text, /\(macro :vel\* \(saw 1\.\.0 :len 15f\)\) d \(macro :vel\* \[1 0\.5\]\) e\)/);
 }
 {
   // An SSG note under the SN76489's lowest (A2): that note written up by
@@ -409,6 +412,9 @@ const port = (src, to, rows) => {
   const fm = port("(def-score :target pc88)\n(def-fm b2 init-fm :alg 7 :ml1 2 :ml2 2 :ml3 2 :ml4 2)\n(fm1 b2 :oct 1 :len 4 c a)", "md", { fm1: "sqr1" });
   const fmIr = compileMMLisp(fm.text, join(repo, "tools/tests/t.mmlisp")).ir;
   assert.deepEqual(fmIr.tracks.find((t) => t.channel === "sqr1").events.filter((e) => e.cmd === "NOTE_ON").map((e) => e.args.pitch), ["c3", "a2"]);
+  // A phrase played at several octaves takes its lowest play's lift, said.
+  const multi = port("(def-score :target pc88)\n(def ph c d e)\n(sqr1 :len 4 :oct 1 ph :oct 4 ph)", "md");
+  assert.ok(multi.said.some((x) => /played at several octaves/.test(x)));
 }
 {
   // A voice sounding octaves up (its carrier's :ml 8) onto a square: the
@@ -822,9 +828,11 @@ const port = (src, to, rows) => {
 {
   // mucom88: the pc88 score, converted onto any other machine.
   const muc = new TextEncoder().encode("#title test song\n\nA t120 o4 l8 cdefgab>c\nB o3 l4 c g c g\nD o5 l8 v13 eg>c<g eg>c<g\nE l16 P2 w5 v12 c c c c c c c c\nG l8 v15 @1c @8c @2c @8c\n");
+  const own = importMucom(muc).source;
+  assert.match(own, /:target pc88/);
   for (const target of MUCOM_TARGETS) {
-    const r = importMucom(muc, null, null, { target });
-    assert.deepEqual(compile(r.source, join(repo, "tools/tests/t.mmlisp")).bad, [], `mucom88 onto ${target} compiles clean`);
+    const text = target === "pc88" ? own : portScore(own, target, { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), own) }).text;
+    assert.deepEqual(compile(text, join(repo, "tools/tests/t.mmlisp")).bad, [], `mucom88 onto ${target} compiles clean`);
   }
   assert.deepEqual(MUCOM_TARGETS.slice().sort(), PORT_TARGETS.slice().sort(), "mucom88 offers every machine");
   // A VGM of each machine offers every machine: written as its own
@@ -891,10 +899,10 @@ const port = (src, to, rows) => {
   // mucom88 onto md is the pc88 score converted: part J (fm6) beside the
   // rhythm, which takes the DAC there, moves to a free FM channel.
   const muc = new TextEncoder().encode("#title j\n\nA t120 o4 l8 cdef\nG l8 v15 @1c @8c @2c @8c\nJ o4 l8 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4\n");
-  const j = importMucom(muc, null, null, { target: "md" });
-  assert.match(j.source, /^; Imported as pc88, then onto md/);
-  assert.match(j.source, /\(fm2 :oct 3 \(x 4 :len 8 c d e f\)/, "part J kept on a free FM channel");
-  assert.deepEqual(compile(j.source, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
+  const jOwn = importMucom(muc).source;
+  const j = portScore(jOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), jOwn) });
+  assert.match(j.text, /\(fm2 :oct 3 \(x 4 :len 8 c d e f\)/, "part J kept on a free FM channel");
+  assert.deepEqual(compile(j.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

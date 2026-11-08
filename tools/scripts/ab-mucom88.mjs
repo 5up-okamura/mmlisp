@@ -36,7 +36,7 @@ const beside = (name, ext) => {
   const hit = fs.readdirSync(path.dirname(file)).find((e) => want.includes(e.toLowerCase()));
   return hit ? fs.readFileSync(path.join(path.dirname(file), hit)) : null;
 };
-const res = importMucom(bytes, beside(meta("voice"), ".dat") ?? beside("voice.dat"), beside(meta("pcm"), ".bin"), { target: "pc88", unfold: flat });
+const res = importMucom(bytes, beside(meta("voice"), ".dat") ?? beside("voice.dat"), beside(meta("pcm"), ".bin"), { unfold: flat });
 // The presets the score imports, from live/.
 const LIVE = new URL("../../live/", import.meta.url);
 const importsOf = (src, acc = new Map()) => {

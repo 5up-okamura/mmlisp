@@ -1866,8 +1866,9 @@ jingle).
 MIDI instrument's, so it starts on `midi` (a channel each, the drums on
 `drum1`…) and offers every other machine, its rows that machine's channels. A
 VGM, NSF, tracker module, MDX, MGS or mucom88 song starts on the machine of
-its own chips (the Mega Drive where no one machine has them all), which keeps
-what they have, and offers every other machine: the song is written as its
+its own chips, which keeps what they have — or, where no one machine has them
+all (an arcade mix, a Furnace module of two machines' chips), the machine that
+keeps the most of its notes — and offers every other machine: the song is written as its
 own machine's score, then moved onto the one chosen at the words' level, as
 Edit ▸ Convert to Machine… moves a score (§ Converting to another machine) —
 so opening a song onto a machine and opening it, then converting it, give the
