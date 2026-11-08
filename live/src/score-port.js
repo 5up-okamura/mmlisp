@@ -253,6 +253,30 @@ export function pruneUnnamedDefs(text) {
   return { text: out, gone };
 }
 
+// The kick and the snare on a noise channel, where a machine has no sample
+// channel (the Game Boy): each a note — a low clock for the kick, a bright
+// one for the snare — under a level that falls away in a few frames, its gate
+// as long (so a layer under it gives way only while it sounds). The rest of
+// the kit is decoration and is not played.
+const NOISE_DRUMS = {
+  kick: { oct: 4, note: "a", env: "noise-kick", steps: "[0 -4 -8 -12 -15]", gate: "5f" },
+  snare: { oct: 6, note: "d+", env: "noise-snare", steps: "[0 -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -15]", gate: "15f" },
+};
+const noiseDrumOf = (rank) => (rank === 1 ? "kick" : rank === 2 ? "snare" : null);
+
+// The roles heard, as a kit has them: one kick and one snare — of the
+// samples heard as kicks, the one the score names most; as snares, too (the
+// listening takes a tom or a second snare for a snare); the others toms.
+function heardBeat(heard, text) {
+  const out = new Map(heard ?? []);
+  const uses = (n) => (text.match(new RegExp(`(?<![\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`, "g")) ?? []).length;
+  for (const role of ["kick", "snare"]) {
+    const these = [...out].filter(([, r]) => r === role).map(([n]) => n).sort((a, b) => uses(b) - uses(a));
+    for (const n of these.slice(1)) out.set(n, "tom");
+  }
+  return out;
+}
+
 // ── The rows ─────────────────────────────────────────────────────────────
 
 // A machine's channels of one kind a track can be written on: not another
@@ -312,7 +336,7 @@ function planFor(text, toName, imports, heard = null) {
   if (!PORT_TARGETS.includes(from.name)) return { error: `the ${from.system} is not converted at the words' level` };
   let s;
   try { s = survey(text, from, imports); } catch (e) { return { error: `the score does not parse: ${e.message}` }; }
-  s.heard = heard ?? new Map();
+  s.heard = heardBeat(heard, text);
   // Each track's endless loop, as [from, to] ticks (null: none), read off
   // the score compiled — once, and only if rows are to share a channel.
   let loops;
@@ -423,9 +447,14 @@ function planRows(s, from, to, loopOf = () => null) {
   // first, the hats last), for which keeps a channel of its own.
   const isSampleRow = (k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k));
   const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k), s.heard)));
+  // A machine with no sample channel plays the kick and the snare on its
+  // noise (NOISE_DRUMS): those rows go there, the rest of the kit is dropped.
+  const drumNoise = !channelsOf(to, "sample", { board: true }).length && !roleKit && channelsOf(to, "noise", { board: true })[0];
+  const noiseDrums = drumNoise ? keys.filter((k) => isSampleRow(k) && notesOf(k) && drumRank(s.heads.get(k), s.heard) <= 2) : [];
+  for (const k of noiseDrums) dest[k] = "noise-drum";
   for (const [inPool, room] of pools) {
     const groups = new Map();
-    for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop" && dest[k] !== "layer")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
+    for (const k of keys.filter((k) => inPool(k) && !(k in dest && ["drop", "layer", "noise-drum"].includes(dest[k])))) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
     if (groups.size <= room) continue;
     const notes = (g) => g.reduce((n, k) => n + notesOf(k), 0);
     // A row of a kind the machine has (FM onto FM) keeps its channel before
@@ -516,12 +545,23 @@ function planRows(s, from, to, loopOf = () => null) {
   }
   // A layered sample row plays on its host's channel.
   for (const k of keys) if (dest[k] === "layer") dest[k] = hostOf[k] && dest[hostOf[k]] && dest[hostOf[k]] !== "drop" ? dest[hostOf[k]] : "drop";
+  // The kick and snare on the noise, as :prio layers over its own part (the
+  // beat first): they loop as one, so a row looping on other ticks than the
+  // drums goes — the noise's own part first, being decoration.
+  if (noiseDrums.length) {
+    const on = keys.filter((k) => dest[k] === drumNoise || noiseDrums.includes(k));
+    const loopOfRow = (k) => loopOf(splitHead(k));
+    const top = [...noiseDrums].sort((a, b) => drumRank(s.heads.get(a), s.heard) - drumRank(s.heads.get(b), s.heard) || notesOf(b) - notesOf(a))[0];
+    const alike = (k) => loopOfRow(k) == null || loopOfRow(top) == null || loopOfRow(k) === loopOfRow(top);
+    for (const k of on) dest[k] = alike(k) ? drumNoise : "drop";
+  }
   const choicesOf = (k) => {
     const kind = kindOf(from, k);
     if (to.partOf(k)?.kind === kind && !to.partOf(k).kit && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
     if (k === "fm3-csm-rate") return ["drop"];
     if (["fm", "tone", "wave"].includes(kind)) return [...channelsOf(to, "fm"), ...channelsOf(to, "wave").filter((h) => !reserved.includes(h)), ...channelsOf(to, "tone"), "drop"];
     if (kind === "noise") return [...channelsOf(to, "noise"), "drop"];
+    if (drumNoise && kind === "sample") return [...channelsOf(to, "noise"), "drop"];
     return [...channelsOf(to, "sample"), ...(rolesHere(s.heads.get(k)) ? channelsOf(to, "sample", { kit: true }) : []), "drop"];
   };
   return keys.map((k) => ({
@@ -565,7 +605,9 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
     const key = to.voiceKey(h);
     const prev = seen.get(key);
     // Sample rows on one sample channel are its :prio layers (placeLayers).
-    const layers = prev && prev.h === h && to.partOf(h).kind === "sample" && kindOf(from, k) === "sample" && kindOf(from, prev.k) === "sample";
+    // So are drum rows on a noise channel (NOISE_DRUMS), with its own part.
+    const layers = prev && prev.h === h && ((to.partOf(h).kind === "sample" && kindOf(from, k) === "sample" && kindOf(from, prev.k) === "sample")
+      || (to.partOf(h).kind === "noise" && [k, prev.k].some((x) => kindOf(from, x) === "sample") && [k, prev.k].every((x) => ["sample", "noise"].includes(kindOf(from, x)))));
     if (prev && !layers && (prev.h === h || srcKey(prev.k) !== srcKey(k)))
       return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
@@ -968,7 +1010,10 @@ class Porter {
   placeLayers() {
     const byDest = new Map();
     for (const [k, h] of Object.entries(this.map)) {
-      if (h === "drop" || this.to.partOf(h)?.kind !== "sample" || this.to.partOf(h).kit) continue;
+      if (h === "drop" || this.to.partOf(h)?.kit) continue;
+      // A sample channel's rows, and a noise channel's where drums play on it.
+      const kind = this.to.partOf(h)?.kind;
+      if (kind !== "sample" && !(kind === "noise" && Object.entries(this.map).some(([o, d]) => d === h && this.from.partOf(splitHead(o))?.kind === "sample"))) continue;
       byDest.set(h, [...(byDest.get(h) ?? []), k]);
     }
     const out = new Map();
@@ -988,7 +1033,7 @@ class Porter {
       }
       for (const k of ks) {
         const words = this.s.heads.get(k)?.forms.map((f) => this.text.slice(this.starts[f.line - 1] + f.column - 1, this.starts[f.endLine - 1] + f.endColumn - 1)).join(" ") ?? "";
-        if (!/:mode|:gate/.test(words)) this.shotRows.add(k);
+        if (!/:mode|:gate/.test(words) && this.from.partOf(splitHead(k))?.kind === "sample" && this.to.partOf(h)?.kind === "sample") this.shotRows.add(k);
       }
       const streams = this.to.partOf(h).streams;
       this.say(`${ks.map((k) => this.nameOf(k)).join(", ")} share ${h} as :prio layers${streams ? ` (the ${this.to.system}'s drivers stream samples on ${streams === 1 ? "one channel" : `${streams} channels`})` : ""}: where two hit at once, the lower :prio sounds`);
@@ -1146,6 +1191,9 @@ class Porter {
     // that plays each sound at one pitch (the PC-8801's ROM rhythm).
     c.noBend = dst?.kind === "sample" && !dst.pitch && !!src?.pitch;
     c.flatPitch = !!dst?.kit && !dst.pitch && !(src?.kit && !src.pitch);
+    // A drum row on a noise channel: its kick and snare each a noise note
+    // (NOISE_DRUMS), the rest silent; the role goes on from form to form.
+    if (src?.kind === "sample" && dst?.kind === "noise") c.drumNoise = ((this.drumNoiseState ??= new Map()).get(head) ?? this.drumNoiseState.set(head, { role: null }).get(head));
     // A noise between a pitched one and the others is read note by note.
     if (src?.kind === "noise" && dst?.kind === "noise") {
       const from = noiseModel(src), to = noiseModel(dst);
@@ -1323,6 +1371,30 @@ class Porter {
           const r = this.voiceRule(v, ctx);
           if (r !== undefined) outs[i] = r;
           continue;
+        }
+        if (ctx.drumNoise) {
+          if (this.s.samples.has(v) || this.s.kit?.has?.(v)) {
+            const role = noiseDrumOf(drumRank({ samples: [v] }, this.s.heard));
+            // Within one body the role's words once; a loop's body (another
+            // list) writes them again, so every pass starts right.
+            const same = role === ctx.drumNoise.role && ctx.drumNoise.lastIn === items;
+            ctx.drumNoise.role = role;
+            ctx.drumNoise.lastIn = items;
+            if (same) { outs[i] = null; continue; }
+            if (role) {
+              const d = NOISE_DRUMS[role];
+              this.envDefs.set(d.env, `(def ${d.env} (macro :vel+ ${d.steps}))`);
+              if (!this.saidDrums?.has(role)) { (this.saidDrums ??= new Set()).add(role); this.say(`the ${role} on ${ctx.dest} (the ${this.to.system} has no sample channel): a noise note under ${d.env}`); }
+            }
+            outs[i] = role ? `${NOISE_DRUMS[role].env} :oct ${NOISE_DRUMS[role].oct} :gate ${NOISE_DRUMS[role].gate}` : null;
+            continue;
+          }
+          if (v === ">" || v === "<" || /^o[+-]\d*$/.test(v)) { outs[i] = null; continue; }
+          if (isNote(v)) {
+            sawNote = true;
+            outs[i] = ctx.drumNoise.role ? `${NOISE_DRUMS[ctx.drumNoise.role].note}${NOTE.exec(v)[2]}` : restOf(v);
+            continue;
+          }
         }
         if (ctx.flatPitch && (v === ">" || v === "<" || /^o[+-]\d*$/.test(v))) { outs[i] = null; continue; }
         if (ctx.flatPitch && isNote(v)) {
@@ -1703,6 +1775,7 @@ class Porter {
       return DROP;
     }
     if (ctx.flatPitch && base === ":oct") return DROP;
+    if (ctx.drumNoise && [":oct", ":oct+", ":pitch", ":semi", ":mode", ":gate", ":gate-", ":gate*"].includes(base)) return DROP;
     if ((base === ":pitch" || base === ":semi") && (ctx.noBend || ctx.flatPitch)) {
       this.say(`${kw} on ${this.nameOf(ctx.head)}: the ${ctx.destPart.label} cannot bend a sample; taken out`);
       return DROP;

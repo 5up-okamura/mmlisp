@@ -442,6 +442,35 @@ const port = (src, to, rows) => {
   assert.ok(alone("pcm3") && alone("pcm4"), `by ear: the kick and snare keep a channel each: ${JSON.stringify(byEar.map)}`);
   assert.equal(on("pcm1"), on("pcm2"), "the hat and the cymbal share the third");
   assert.deepEqual(portRows(anon, "md", { heard }).rows.filter((r) => /^pcm/.test(r.key)).map((r) => r.to), ["pcm1", "pcm2", "pcm3", "pcm4"].map(on), "the dialog's rows read alike");
+  // A machine with no sample channel (the Game Boy) plays the kick and the
+  // snare on its noise — each a noise note under a falling level, its gate
+  // as long — as :prio layers over the noise's own part; the rest of the kit
+  // is decoration and goes.
+  const gbDrums = port(six, "gb");
+  assert.deepEqual([gbDrums.map.rhythm1, gbDrums.map.rhythm2], ["noise", "noise"]);
+  assert.deepEqual(["rhythm3", "rhythm4", "rhythm5", "rhythm6"].map((k) => gbDrums.map[k]), ["drop", "drop", "drop", "drop"]);
+  assert.match(gbDrums.text, /\(noise :prio 1 noise-kick :oct 4 :gate 5f :len 4 a _ a _\)/);
+  assert.match(gbDrums.text, /\(noise :prio 2 noise-snare :oct 6 :gate 15f :len 4 _ d\+ _ d\+\)/);
+  assert.match(gbDrums.text, /\(def noise-kick \(macro :vel\+ \[/);
+  const withNoise = port(`(def-pcm kick :file "a.wav")
+(def-pcm snare :file "b.wav")
+(def-pcm hat :file "c.wav")
+(fm1 :len 4 c e g c)
+(noise :len 8 c c c c c c c c)
+(pcm1 kick :len 4 c _ c _)
+(pcm2 snare :len 4 _ c _ c)
+(pcm3 hat :len 16 c c c c c c c c c c c c c c c c)`, "gb");
+  assert.match(withNoise.text, /\(noise :prio 3 :len 8 /, "the noise's own part under the drums");
+  assert.equal(withNoise.map.pcm3, "drop", "the hat is decoration");
+  // One kit pcm row (an MDX's): its kick and snare hits by ear, the other
+  // samples rests — of those heard as snares the one named most is the snare.
+  const kitRow = portScore(`(def-score :target x68k)
+(def-pcm smp-a :file "a.wav")
+(def-pcm smp-b :file "b.wav")
+(def-pcm smp-c :file "c.wav")
+(fm1 :len 4 c e g c)
+(pcm1 :len 8 smp-a c smp-b c smp-a c smp-b c smp-c c c)`, "gb", { heard: new Map([["smp-a", "kick"], ["smp-b", "snare"], ["smp-c", "snare"]]) });
+  assert.match(kitRow.text, /\(noise :len 8 noise-kick :oct 4 :gate 5f a noise-snare :oct 6 :gate 15f d\+ noise-kick :oct 4 :gate 5f a noise-snare :oct 6 :gate 15f d\+ _ _\)/, kitRow.text);
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

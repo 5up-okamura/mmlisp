@@ -338,7 +338,19 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   fills from the import's samples (portImported, driverSongDialog) and on
   Convert from the score's own (scorePcm). A name that says a role wins.
   sampleRole is rough — DTWNB's kick, hats and cymbal come right, its toms
-  read as snares — enough for kick and snare first. Inline operator words on such a
+  read as snares — enough for kick and snare first. `heardBeat` keeps one
+  kick and one snare (the sample the score names most of each), the others
+  "tom".
+- **gb: the kick and snare on the noise** (user, 2026-11-08). planRows: no
+  sample channel and no ROM kit, a noise there → sample rows ranked ≤ 2
+  ("noise-drum") go to it, the rest drop; with the noise's own row they are
+  :prio layers (drums first), and a row looping otherwise goes. The porter
+  (`ctx.drumNoise`): a sample name → NOISE_DRUMS' words (kick: `noise-kick
+  :oct 4 :gate 5f`, note a = 69, a 1365 Hz clock; snare: `noise-snare :oct
+  6 :gate 15f`, d+ = 87, 32768 Hz; their `:vel+` falls, the gate as long so a
+  layer under it gives way only while it sounds — not :gate 1t, a noise note
+  stops at its gate), written once a body; any other sample → its notes
+  rests; the sample's :oct / :pitch / :mode / gates dropped. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
