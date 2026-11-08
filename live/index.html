@@ -273,10 +273,8 @@
             <svg class="menu-icon" aria-hidden="true"><use href="#mi-download"/></svg><span>Import</span>
             <span class="submenu-arrow" aria-hidden="true"></span>
           </button>
-          <!-- by what an import does: Song… replaces the document, Instruments… inserts at the cursor -->
+          <!-- what goes in at the cursor; a song opens with File > Open…, which replaces the document -->
           <div class="menu-dropdown submenu-dropdown">
-            <button class="menu-item" onclick="importSongMenu();closeMenus()"
-                    title="A song as a new document: MIDI, DefleMask .dmf, Furnace .fur, VGM, mucom88 .muc (with its .dat / .bin)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-music_note"/></svg><span>Song…</span></button>
             <button class="menu-item" data-needs="sound" onclick="importInstrumentsMenu();closeMenus()"
                     title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>Instruments…</span></button>
             <div class="menu-sep"></div>
@@ -3302,9 +3300,8 @@
     }
 
     // Remember the last imported mucom song so a bank can be applied afterwards.
-    // A song's banks are best picked with it in one multi-select dialog; a bank
-    // picked alone in File > Import > Song… is for when they weren't, since each
-    // menu click is a fresh user gesture and so can always open a picker.
+    // A song's banks are best picked with it in one multi-select Open; a bank
+    // opened alone is for when they weren't (applyMucomBanks).
     let _mucomSong = null; // { bytes, fileName, target, datBytes, pcmBytes, folder }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
@@ -3386,48 +3383,23 @@
     }
     // What File > Open… and a folder open as a song: a .pdx only comes with its MDX.
     const SONG_OPEN_EXTS = [...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts).filter((e) => e !== '.pdx'), '.muc', '.mml'];
+    // What Open takes with a song, or a mucom88 bank alone for the last one.
+    const SONG_BANK_EXTS = ['.dat', '.bin', '.pdx'];
+    const isSongBank = (name) => /\.(dat|bin|pdx)$/i.test(name);
     const isSongFile = (name) => /\.(muc|mml)$/i.test(name) || Boolean(songImporterFor(name));
 
-    // File > Import > Song… replaces the document; Instruments… inserts at the
-    // cursor. Each picks by extension, as a drop does. A mucom88 song comes
-    // with its .dat / .bin in the same selection (one dialog, one gesture),
-    // and a bank picked here alone re-converts the last mucom88 song with it.
-    const MUCOM_SONG_EXTS = ['.muc', '.mml', '.dat', '.bin'];
+    // Instruments… inserts at the cursor; a song opens with Open…, which
+    // replaces the document.
     const INSTRUMENT_EXTS = [...Object.values(FM_IMPORT_FORMATS).flatMap((f) => f.extensions), '.opm', '.dat', '.bin', '.sf2'];
 
-    async function importSongMenu() {
-      let picked;
-      try {
-        picked = await pickFileWithInput([...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts), ...MUCOM_SONG_EXTS], { multiple: true });
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        log(`Song import failed: ${e?.message || e}`, 'err');
-        return;
-      }
-      if (picked.some((f) => /\.(muc|mml)$/i.test(f.name))) {
-        await importMucom88FromFiles(picked);
-        return;
-      }
-      const song = picked.find((f) => songImporterFor(f.name));
-      if (song) {
-        // An MDX's ADPCM samples are its PDX, picked with it.
-        const pdx = /\.mdx$/i.test(song.name) ? picked.find((f) => /\.pdx$/i.test(f.name)) : null;
-        for (const f of picked) if (f !== song && f !== pdx) log(`${f.name} ignored — a song import takes one file`, 'info');
-        await importSongFromFile(song, undefined, { pdx });
-        return;
-      }
-      if (picked.some((f) => /\.pdx$/i.test(f.name))) {
-        log('MDX: a .pdx is the samples of an MDX song — pick it together with the .mdx', 'err');
-        return;
-      }
-      const dat = picked.find((f) => /\.dat$/i.test(f.name));
-      const bin = picked.find((f) => /\.bin$/i.test(f.name));
-      if (!dat && !bin) {
-        log(`${picked.map((f) => f.name).join(', ')}: not a song file (.mid .vgm .dmf .fur .mdx .mgs .nsf .muc, or a mucom88 .dat / .bin)`, 'err');
-        return;
-      }
+    // A mucom88 .dat / .bin opened alone: the bank of the last mucom88 song,
+    // which is converted again with it — picked after the song, since each
+    // menu click is a fresh gesture and can always open a picker.
+    async function applyMucomBanks(files) {
+      const dat = files.find((f) => /\.dat$/i.test(f.name));
+      const bin = files.find((f) => /\.bin$/i.test(f.name));
       if (!_mucomSong) {
-        log('mucom88: no song to apply the bank to — pick the .muc with it, or File > Import > Instruments… for its defs', 'err');
+        log(`${files.map((f) => f.name).join(', ')}: a mucom88 bank applies to the song opened last — open the .muc with it, or File > Import > Instruments… for its defs`, 'err');
         return;
       }
       if (dat) await importMucomVoiceBankFromFile(dat, { toSong: true });
@@ -4226,7 +4198,7 @@
     // mucom88 .muc: convert the whole song to MMLisp source and load it as a
     // new untitled document: FM and SSG parts, rhythm G and ADPCM K on PCM
     // tracks (with their banks); what does not convert is reported. The song
-    // and its banks come in one set — one multi-select dialog (Song…) or one
+    // and its banks come in one set — one multi-select dialog (Open…) or one
     // drop: chaining a second picker after the first `await` loses the user
     // gesture, so the browser blocks it.
     // `folder`: the source folder the song came from, its banks looked up there.
@@ -4266,7 +4238,7 @@
           res.pcm);
 
         // Point at whatever the song wants but wasn't handed to us. Applying a
-        // bank from File > Import > Song… is a fresh gesture, so it always works.
+        // bank with File > Open… is a fresh gesture, so it always works.
         let voiceFile = null, pcmFile = null;
         try {
           const head = new TextDecoder('shift-jis', { fatal: false }).decode(bytes.subarray(0, 4096));
@@ -4276,19 +4248,19 @@
         if (voiceFile && !datPick) {
           log(folder
             ? `mucom88: ${file.name} uses external voices "${voiceFile}", which is not in ${folder.name} — imported without them: its FM parts play the chip's bare voice`
-            : `mucom88: ${file.name} uses external voices "${voiceFile}" — imported without them: its FM parts play the chip's bare voice. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'warn');
+            : `mucom88: ${file.name} uses external voices "${voiceFile}" — imported without them: its FM parts play the chip's bare voice. Open the .dat with File ▸ Open… to apply it, or re-import selecting the .muc and .dat together`, 'warn');
         }
         if (pcmFile && !pcmPick) {
           log(folder
             ? `mucom88: ${file.name} plays drums from "${pcmFile}" (part K), which is not in ${folder.name} — imported without them`
-            : `mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Pick the .bin in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .bin together`, 'info');
+            : `mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Open the .bin with File ▸ Open… to apply it, or re-import selecting the .muc and .bin together`, 'info');
         }
       } catch (e) {
         log(`mucom88 import failed: ${e?.message || e}`, 'err');
       }
     }
 
-    // Load a mucom .dat voice bank. With toSong (File > Import > Song…), re-convert
+    // Load a mucom .dat voice bank. With toSong (File > Open…), re-convert
     // the last imported song with the bank so external @"name"/@n voices
     // resolve; otherwise insert the bank as (def-fm @name …) voice definitions.
     // A VOPM / MiOPMdrv voice bank (.opm): its named voices as def-fm, DT2 as
@@ -5212,7 +5184,6 @@
     // as VS Code's Selection menu is on a tablet.
     window.addCursorAboveAction = () => { addCursorVertically(editorView, false); editorView.focus(); };
     window.addCursorBelowAction = () => { addCursorVertically(editorView, true); editorView.focus(); };
-    window.importSongMenu = importSongMenu;
     window.importInstrumentsMenu = importInstrumentsMenu;
     window.importResynth = importResynth;
     window.importAudioAsFmVoice = importAudioAsFmVoice;
@@ -5572,6 +5543,7 @@
     const OPEN_TYPES = [
       MMLISP_FILE_TYPE,
       { description: 'Song (opens converted)', accept: { 'application/octet-stream': SONG_OPEN_EXTS } },
+      { description: 'A song\'s banks (mucom88 .dat / .bin, MDX .pdx)', accept: { 'application/octet-stream': SONG_BANK_EXTS } },
       { description: 'Archive (opens as a folder)', accept: { 'application/zip': ['.zip'], 'application/x-lzh-compressed': ['.lzh', '.lha'] } },
       { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
       { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
@@ -6158,10 +6130,10 @@
           // File and no handle — Save then asks where. Unfiltered, since iOS
           // greys out what it has no type for (.mmlisp); checked here instead.
           const files = await pickFileWithInput(null, { multiple: true });
-          if (files.length > 1) return openPickedSet(files);
+          if (files.length > 1 || isSongBank(files[0].name)) return openPickedSet(files);
           const [file] = files;
           if (!SOURCE_FILE_EXT.test(file.name) && !isSongFile(file.name) && !ARCHIVE_EXT.test(file.name)) {
-            log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
+            log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}) with their banks (${SONG_BANK_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
             return;
           }
           await openPickedFile(file);
@@ -6175,7 +6147,7 @@
           // picker was left.
           ...(_sourceDir?.handle || _sourceDir?.archive?.handle ? { startIn: _sourceDir.handle ?? _sourceDir.archive.handle } : {}),
         });
-        if (handles.length > 1) return openPickedSet(await Promise.all(handles.map((h) => h.getFile())));
+        if (handles.length > 1 || isSongBank(handles[0].name)) return openPickedSet(await Promise.all(handles.map((h) => h.getFile())));
         await openPickedFile(await handles[0].getFile(), handles[0]);
       } catch (e) {
         if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
@@ -6183,11 +6155,12 @@
     }
 
     // Several files picked in Open: a song with the banks it names — a mucom88
-    // .muc with its .dat / .bin, an MDX with its PDX — as Import > Song… takes
-    // them, which is how a phone, with no folder to open, hands them over
-    // together. A score is one file.
+    // .muc with its .dat / .bin, an MDX with its PDX — which is how a phone,
+    // with no folder to open, hands them over together; or a mucom88 bank
+    // alone, for the song opened last. A score is one file.
     async function openPickedSet(files) {
       const names = files.map((f) => f.name).join(', ');
+      if (files.every((f) => /\.(dat|bin)$/i.test(f.name))) return applyMucomBanks(files);
       if (files.some((f) => /\.(muc|mml)$/i.test(f.name))) {
         const other = files.find((f) => !/\.(muc|mml|dat|bin)$/i.test(f.name));
         if (other) log(`${other.name} ignored — a mucom88 song opens with its .dat / .bin only`, 'info');
@@ -6196,6 +6169,10 @@
       const mdx = files.find((f) => /\.mdx$/i.test(f.name));
       const pdx = files.find((f) => /\.pdx$/i.test(f.name));
       if (mdx && pdx && files.length === 2) return keepingPlayback(() => importSongFromFile(mdx, undefined, { pdx }));
+      if (files.length === 1 && /\.pdx$/i.test(files[0].name)) {
+        log('MDX: a .pdx is the samples of an MDX song — open it together with the .mdx', 'err');
+        return;
+      }
       log(`${names}: Open takes one file, or a song with its banks (a .muc with its .dat / .bin, an .mdx with its .pdx)`, 'err');
     }
 
@@ -6278,8 +6255,8 @@
       await applySourceDir(folder);
     }
 
-    // A song opens as the score converted from it (File > Import > Song… does
-    // the same from a multi-select). Opened from the folder it sits in, it
+    // A song opens as the score converted from it (Open… with several files
+    // picked does the same: openPickedSet). Opened from the folder it sits in, it
     // keeps the folder: what the song names beside it — an MDX's PDX, a
     // mucom88 song's voices and drums — is read from there, and the rest of
     // the folder stays one click away. `pdx` is one handed over with it (a drop).

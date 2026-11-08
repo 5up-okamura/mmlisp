@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// A song import onto `:target midi` (File > Open / Import > Song…, Target
+// A song import onto `:target midi` (File > Open…, Target
 // midi): the file is imported onto its own machine as ever (VGM, NSF, the
 // trackers, MDX, MGS), and that score goes through the MIDI export and the
 // MIDI import — one road for every importer, the MIDI import's beat, repeats

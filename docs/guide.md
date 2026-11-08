@@ -1581,7 +1581,8 @@ folder, so the next song is one click away, and what the song names beside
 itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
 `#pcm` banks. Without a folder — on a phone — `File > Open…` takes the song
 and its banks selected together (a `.muc` with its `.dat` / `.bin`, an `.mdx`
-with its `.pdx`), as `File > Import > Song…` does. Opening a folder opens its
+with its `.pdx`); a `.dat` / `.bin` opened alone is the bank of the mucom88
+song opened last, which is converted again with it. Opening a folder opens its
 first score, or its one file when it holds only one; a folder of songs only
 lists them.
 
@@ -1621,8 +1622,8 @@ names, or open the score's folder with `File > Open Folder…`.
 ## 23. Dragging files into the live app
 
 Drop files anywhere on the window. They are routed by extension — the same
-formats `File > Import` accepts, where `Song…` opens a song as a new document
-and `Instruments…` inserts voices and drum kits at the cursor (not on a
+formats `File > Open…` and `File > Import` accept: a song opens as a new
+document, and `Instruments…` inserts voices and drum kits at the cursor (not on a
 `:target midi` score, whose instruments are its `:prog` programs; a voice or
 a sample dropped on one is turned away):
 

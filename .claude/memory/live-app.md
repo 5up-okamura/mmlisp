@@ -41,9 +41,12 @@ lessons.
   read high there.)
 - **Archives** (2026-10-28): ZIP and LZH only, both first-party
   (`src/archive.js`). No RAR / 7z for now — no small decoder of our own;
-  libarchive built to WASM, loaded on demand, if a need shows up. `File >
-  Import > Song…` stays beside Open…: it is the multi-select, the only way a
-  phone (no folder) brings a `.muc` with its `.dat` / `.bin`.
+  libarchive built to WASM, loaded on demand, if a need shows up.
+- **Import > Song… is gone** (2026-11-08): Open… takes several files (a
+  `.muc` with its `.dat` / `.bin`, an `.mdx` with its `.pdx`: how a phone,
+  with no folder, brings a song's banks), and a `.dat` / `.bin` opened alone
+  re-converts the last mucom88 song with it (`applyMucomBanks`). Import keeps
+  what goes in at the cursor: Instruments…, resynthesis, the rhythm ROM.
 - **Share links' files** (2026-11-06): not base64 inside the score's text
   (it buries the score, the diff and an AI's context) — a ZIP beside the
   short link (`share-files.js`). No per-file opt-out in the Share dialog: it

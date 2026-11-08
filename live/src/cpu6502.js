@@ -1,5 +1,5 @@
-// The 6502 as the Famicom's 2A03 runs it (no decimal mode), for File >
-// Import > Song's NSF: the song's own code is run, and what it writes to the
+// The 6502 as the Famicom's 2A03 runs it (no decimal mode), for an NSF
+// opened as a song: the song's own code is run, and what it writes to the
 // sound chips is the song (import-nsf.js). The official opcodes and the
 // stable undocumented ones drivers are known to use (LAX, SAX, DCP, ISB,
 // SLO, RLA, SRE, RRA, ANC, ALR, ARR, AXS, the NOPs, $EB's SBC); the unstable
