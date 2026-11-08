@@ -2355,16 +2355,13 @@ hit starts.
 MGSDRV (`.mgs`, MGSARC's compressed form too) is played as its driver plays
 it — repeats unrolled, each track up to its own loop point or its end — and
 written for the song's own machine: an MDX as an `x68k` score, an MGS as an
-`msx` one (or, as its Target, General MIDI's: above). An MDX's Target can
-also be `md` or `pc88`: the `x68k` score is then moved onto that machine at
-the words' level, so the voices, loops, gates and curves stay as written. A
-row per part (FM A–H, the PCM) takes it to a channel or drops it. By
-default every part keeps its channel where the machine has it, and FM G and
-H go to an FM channel the song leaves free, else a square. Track H's noise
-notes go to `noise`. What the machine lacks is read in its words —
-`:lfo-freq` as the nearest `:lfo-rate`, a noise rate as the nearest
-`:mode whiteN` — or dropped (DT2, the OPM's LFO depths and wave, PCM8's
-`:pitch` on the Mega Drive), and the log says each. Both count in clocks, 48 a quarter, so the timing is exact (no
+`msx` one (or, as its Target, General MIDI's: above). Either one's
+Target can also be another of `md`, `pc88`, `x68k`, `msx`, `fc` and `gb`.
+The song is then moved from its own machine's score onto that one at the
+words' level, as Edit ▸ Convert to Machine… moves a score (below). A row
+per part (an MDX's FM A–H and PCM, an MGS's PSG, SCC, FM and FM rhythm)
+takes it to a channel or drops it, and the log names each change by the
+part's name. Both count in clocks, 48 a quarter, so the timing is exact (no
 tempo is estimated); an MDX whose notes sit on another grid (176-clock
 bars: 44 a quarter) is read on that one, its notes 8ths and 16ths and its
 tempo scaled to match and the tempo commands become `:tempo`. Each track keeps
@@ -2585,34 +2582,61 @@ shortcuts keep their normal meaning.
 
 ### Converting to another machine
 
-**Edit ▸ Convert to Machine…** puts the open score on another machine.
-`md`, `pc88` and `x68k` take one another's scores at the words' level. The
-voices, loops, gates, curves and comments stay as written; only what the
-other machine lacks changes. Every machine's score can also go to General
-MIDI, read as it plays (as a song import's last Target is, above).
+**Edit ▸ Convert to Machine…** puts the open score on another machine:
+`md`, `pc88`, `x68k`, `msx`, `fc` and `gb` take one another's scores at the
+words' level. The voices, loops, gates, curves and comments stay as written;
+only what the other machine lacks changes. Every machine's score can also go
+to General MIDI, read as it plays (as a song import's last Target is, above).
+A wave memory's channels (the SCC, the N163, the FDS, the Game Boy's `wave`,
+the PC Engine's) are not converted yet: they are dropped and said.
 
 The dialog has a row per channel the score writes, each going to one of the
 machine's channels or dropped:
 
 - A channel the machine has, of the same kind, stays: `fm1` is `fm1`.
 - FM past the machine's count (x68k's `fm7`, `fm8`), FM3's operator tracks
-  onto x68k, and CSM onto x68k go to an FM channel the score leaves free,
-  else a square. Each operator track gets a one-operator voice made from the
-  patch's (`kit-op2`). x68k plays CSM's notes as plain notes.
-- A square goes to a free square, else to a free FM channel under
-  `presets/waveforms`' square.
+  and CSM where the machine has none go to an FM channel the score leaves
+  free, else a square. On a 4-operator chip each operator track gets a
+  one-operator voice made from the patch's (`kit-op2`); CSM's notes play as
+  plain notes.
+- A square goes to a free square, else to a free FM channel.
 - The noise stays the noise; x68k `fm8`'s `:mode noise` notes go to it too.
-- A sample track that plays only kit roles (`kick`, `snare` …) goes to the
-  PC-8801's ROM rhythm, and the ROM rhythm goes to sample channels playing
-  `presets/rx5` under the same names.
+- A sample track that plays only kit roles (`kick`, `snare` …) goes to a
+  machine's ROM rhythm (the PC-8801's, the FM-PAC's), and a ROM rhythm goes
+  to sample channels playing `presets/rx5` under the same names.
+- On the Famicom the defaults are its own chips; a cartridge's channels
+  (the VRC6, the VRC7 …) are there to pick.
+- A machine short of channels keeps the parts with the most notes.
+
+A voice crossing between the FM chips with 4 operators (OPN, OPM) and the
+OPLL's 2 (the FM-PAC, the VRC7) plays as follows:
+
+- A voice named for an instrument — `piano`, `flute`, `synth-bass` …
+  (the OPLL's ROM names, `presets/fm-roles`), a `gm-*` voice, the VRC7's
+  own names — plays that machine's voice for it. That is the ROM's on the
+  OPLL, and on a 4-operator chip `presets/fm-roles`' under the same name.
+- Any other voice plays the nearest of `presets/waveforms`' four (sine,
+  triangle, saw, square), weighed by how it sounds. On the OPLL that is the
+  ROM voice of that shape (`clarinet`, `synth`, `flute`), so a conversion
+  never uses the chip's one user voice.
+- An FM-PAC voice of your own goes onto a 4-operator chip as itself, read
+  as 4 operators.
+
+A square on an FM channel plays the waveforms' square (the OPLL's
+`clarinet`).
 
 The words the machine lacks are read in its own words or dropped:
 
 - `:lfo-freq` becomes the nearest `:lfo-rate` (in Hz).
-- A noise rate becomes the nearest `:mode whiteN`, and back.
-- DT2, SSG-EG, the OPM's LFO depths and wave, and the SSG's mixer and
-  envelope are dropped, as is a sample's `:pan` or `:pitch` where the voice
-  has none.
+- The noise's rate goes by Hz between the Mega Drive's `:mode whiteN`, a
+  `:noise-rate` and the Famicom's and Game Boy's noise, whose rate is each
+  note's pitch.
+- A rhythm sound with a pitch plays at `c4` on the PC-8801's ROM rhythm.
+- These are dropped: DT2 and SSG-EG; the OPM's LFO depths and wave; the
+  SSG's mixer and envelope where the machine has none; `:duty` on a square
+  without one; a voice's operator words across the FM families; a sample's
+  `:pan`, `:pitch` or glide where it has none; `:vel` on the Famicom's
+  triangle.
 
 The log names each change, and the score's first line says where it came
 from. It is one undo step.

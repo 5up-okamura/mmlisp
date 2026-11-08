@@ -384,7 +384,7 @@
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-touch_app"/></svg><span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
         </button>
         <button class="menu-item" onclick="convertMachineAction();closeMenus()"
-          title="The score on another machine: md, pc88 and x68k at the words' level, a row per channel; or General MIDI. One undo step">
+          title="The score on another machine (md, pc88, x68k, msx, fc, gb) at the words' level, a row per channel; or General MIDI. One undo step">
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-memory"/></svg><span>Convert to Machine…</span>
         </button>
         <div class="menu-sep"></div>
@@ -3651,25 +3651,51 @@
     }
 
     // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so there is no
-    // tempo to estimate and nothing else to set. What the file holds
-    // goes to the log; repeats are always folded (a run through MXDRV's or
-    // MGSDRV's loops is nothing but repeats).
-    // The one thing to choose is the target: its own machine, or General MIDI
-    // (an MDX also md and pc88, with rows: importMdxBytes).
-    async function driverSongTarget(fileName, own, summary) {
+    // tempo to estimate and nothing else to set. What the file holds goes to
+    // the log; repeats are always folded (a run through MXDRV's or MGSDRV's
+    // loops is nothing but repeats). The one thing to choose is the Target.
+    // A driver song (MDX, MGS) is read as its own machine's score whichever
+    // Target: another machine then takes it at the words' level
+    // (score-port.js) — its voices, loops and gates as the driver played them
+    // — with a row per part onto that machine's channels, or drop; General
+    // MIDI reads it as its own machine's. `partOf`: each of its own
+    // machine's channels as the song names the part. Resolves the score, or
+    // null on Cancel.
+    async function driverSongDialog({ fileName, tag, own, summary, res, partOf, hint }) {
+      const targets = [own, ...PORT_TARGETS.filter((t) => t !== own)];
+      // A part on several channels (MGS's FM rhythm) is told apart by them.
+      const shared = new Set(Object.values(partOf).filter((v, i, all) => all.indexOf(v) !== i));
+      const name = (h) => (partOf[h] == null ? h : shared.has(partOf[h]) ? `${partOf[h]} (${h})` : partOf[h]);
+      const rowsFor = (target) => {
+        if (target === own || !PORT_TARGETS.includes(target)) return [];
+        const plan = portRows(res.source, target);
+        if (plan.error) return [];
+        return plan.rows.map((r) => ({
+          key: r.key,
+          label: `${r.key === 'fm8/noise' ? `${partOf.fm8} · its noise notes` : name(r.head)} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
+          value: r.to,
+          choices: r.choices,
+        }));
+      };
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary,
-        fields: [{ key: 'target', label: 'Target', type: 'select', value: own, choices: withMidi([own], own),
-          hint: `${own} plays it as its driver does; General MIDI reads it so, then gives each channel a GM instrument and the drums kit roles` }],
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: own, rebuildsRows: true,
+          choices: withMidi(targets, own), hint }],
+        rows: [],
+        rowsFor,
       });
-      return got ? got.fields.target : null;
+      if (!got) return null;
+      const target = got.fields.target;
+      if (target === 'midi') return { target, res: await readViaMidi(res, { fileName, tag, own }) };
+      if (target === own) return { target, res };
+      const out = portScore(res.source, target, { rows: got.rows, header: false, names: partOf });
+      if (out.error) throw new Error(out.error);
+      const source = out.text.replace(new RegExp(`^(; Imported from .*?) \\(${tag}\\)`), `$1 (${tag}, read as ${own}, then onto ${target})`);
+      return { target, res: { ...res, source, warnings: [...res.warnings, ...out.said] } };
     }
-    // An MDX is read as the X68000's score whichever Target: md and pc88 then
-    // take it at the words' level (score-port.js) — its voices, loops and
-    // gates as MXDRV played them — with a row per part (FM A–H, PCM) onto
-    // the machine's channels, or drop.
-    const MDX_TARGETS = ['x68k', 'md', 'pc88'];
+    const PORT_HINT = 'another machine takes its voices, loops and gates as written: a part keeps its channel where the machine has it, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice named for an instrument plays that machine’s, any other the nearest waveform; what the machine has not is read in its words or said. A wave-memory part (SCC …) is dropped for now. General MIDI reads it as its own machine’s, then gives each channel a GM instrument and the drums kit roles';
+
     async function importMdxBytes(bytes, fileName, pdx) {
       const mdx = parseMdx(bytes);
       const a = analyzeMdx(mdx);
@@ -3679,36 +3705,13 @@
       const res = mdxToMmlisp(mdx, { pdx, structure: true, fileName }, a);
       // Each x68k channel's part, as the summary names it.
       const partOf = Object.fromEntries(played.map((t) => [t.pcm ? `pcm${t.index - 7}` : `fm${t.index + 1}`, t.name]));
-      const rowsFor = (target) => {
-        if (target === 'x68k' || !MDX_TARGETS.includes(target)) return [];
-        const plan = portRows(res.source, target);
-        if (plan.error) return [];
-        return plan.rows.map((r) => ({
-          key: r.key,
-          label: r.key === 'fm8/noise' ? `${partOf.fm8} · its noise notes` : partOf[r.head] ?? r.head,
-          value: r.to,
-          choices: r.choices,
-        }));
-      };
-      const got = await showImportDialog({
-        title: `Import ${fileName}`,
+      const got = await driverSongDialog({ fileName, tag: 'MDX', own: 'x68k', res, partOf,
         summary: about + '. Played clock-exact on MXDRV’s timing; repeats folded.',
-        fields: [{ key: 'target', label: 'Target', type: 'select', value: 'x68k', rebuildsRows: true,
-          choices: withMidi(MDX_TARGETS, 'x68k'),
-          hint: 'x68k plays it as its driver does; md and pc88 take its voices, loops and gates as written — FM past their six, and the PCM past theirs, on the channels left free, what they have not (DT2, the OPM’s LFO, its noise) read in their words or said; General MIDI reads it as the X68000’s, then gives each channel a GM instrument and the drums kit roles' }],
-        rows: [],
-        rowsFor,
-      });
+        hint: `x68k plays it as MXDRV does; ${PORT_HINT}` });
       if (!got) return null;
-      const target = got.fields.target;
       log(`${fileName}: ${about}`, 'info');
       if (hasPcm && !pdx) log(`${fileName}: the ADPCM needs ${mdx.pdxName || 'its PDX'}, picked (or dropped) with the MDX — its tracks are left out`, 'warn');
-      if (target === 'midi') return readViaMidi(res, { fileName, tag: 'MDX', own: 'x68k' });
-      if (target === 'x68k') return res;
-      const out = portScore(res.source, target, { rows: got.rows, header: false, names: partOf });
-      if (out.error) throw new Error(out.error);
-      const source = out.text.replace(/^(; Imported from .*?) \(MDX\)/, `$1 (MDX, read as x68k, then onto ${target})`);
-      return { ...res, source, warnings: [...res.warnings, ...out.said] };
+      return got.res;
     }
 
     async function importMgsBytes(bytes, fileName) {
@@ -3716,11 +3719,19 @@
       const a = analyzeMgs(mgs);
       const played = a.tracks.filter((t) => t.notes.length);
       const about = `MGS${mgs.version}${mgs.title ? ' · ' + mgs.title : ''} · ${a.bpm} BPM at the start · ` + played.map((t) => t.label).join(' · ');
-      const target = await driverSongTarget(fileName, 'msx', about + '. Played clock-exact on MGSDRV’s timing; repeats folded.');
-      if (!target) return null;
-      log(`${fileName}: ${about}`, 'info');
       const res = mgsToMmlisp(mgs, { structure: true, fileName }, a);
-      return target === 'midi' ? readViaMidi(res, { fileName, tag: 'MGS', own: 'msx' }) : res;
+      // Each msx channel's part, as the summary names it (mgsToMmlisp's channels).
+      const partOf = {};
+      for (const t of played) {
+        if (t.name === 'FM rhythm') for (let n = 1; n <= 5; n++) partOf[`rhythm${n}`] = 'FM rhythm';
+        else partOf[t.kind === 'psg' ? `sqr${t.index}` : t.kind === 'fm' ? `fm${t.index - 8}` : `wave${t.index - 3}`] = t.name;
+      }
+      const got = await driverSongDialog({ fileName, tag: 'MGS', own: 'msx', res, partOf,
+        summary: about + '. Played clock-exact on MGSDRV’s timing; repeats folded.',
+        hint: `msx plays it as MGSDRV does; ${PORT_HINT}` });
+      if (!got) return null;
+      log(`${fileName}: ${about}`, 'info');
+      return got.res;
     }
 
     // NSF: a song is run — the file's own driver on a 6502 — and its writes
@@ -4434,7 +4445,7 @@
           (near.length ? '' : ' Its chips are its own: it converts onto General MIDI.'),
         fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, choices,
           hint: near.length
-            ? 'md, pc88 and x68k keep what was written — voices, loops, gates, curves; a channel the machine has stays, FM past its count and the squares go to channels left free; what it has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
+            ? 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice named for an instrument plays that machine’s, any other the nearest waveform; what the machine has not is read in its words or dropped, and the log says each. A wave-memory part (SCC, N163, FDS, the Game Boy’s wave) is dropped for now. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
             : 'General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
         rows: rowsFor(choices[0][0]),
         rowsFor,

@@ -945,7 +945,9 @@ class Porter {
         this.say(`:noise-rate ${n} (${Math.round(NOISE_CLOCK / n)} Hz) reads as :mode white${white} (${WHITE_HZ[white]} Hz)`);
         return { replace: `:mode white${white}` };
       }
-      this.say(`:noise-rate ${n ?? "(a sweep)"} on ${ctx.head ? this.nameOf(ctx.head) : "a def"}: the ${this.to.system}'s noise has no rate${ctx.destPart?.kind === "noise" ? " sweep" : " but its track's :mode"}; taken out`);
+      const noise = [...this.toParts].find((p) => p.kind === "noise");
+      const how = noiseModel(noise) === "pitch" ? "its rate is each noise note's pitch" : noiseModel(noise) === "mode" ? "its rate is the noise track's :mode" : "it has no rate sweep";
+      this.say(`:noise-rate ${n ?? "(a sweep)"} on ${ctx.head ? this.nameOf(ctx.head) : "a def"}: the ${this.to.system}'s noise — ${how}; taken out`);
       return DROP;
     }
     this.say(`${kw}: the ${this.to.system} has none; taken out`);
