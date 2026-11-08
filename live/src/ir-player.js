@@ -1068,6 +1068,13 @@ export class IRPlayer {
       // A PCM8 voice is cut from the mix.
       const h = hits.at(-1);
       if (h?.pcm8 != null) { this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 }); continue; }
+      // A DDA channel stops, and its hit is fed no more frames.
+      if (h?.dda != null) {
+        h.dumped = true;
+        for (const [p, a, d] of this._ddaEncoder()?.off(h.dda) ?? []) this._write(p, a, d, when);
+        continue;
+      }
+      if (voice !== "adpcm" && !this._rhythmEnc) continue; // a sample voice this player cannot dump
       const writes = voice === "adpcm" ? adpcm.stop() : this._rhythmEnc.dump(voice, when);
       for (const [p, a, d] of writes) this._write(p, a, d, when);
     }
