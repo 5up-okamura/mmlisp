@@ -4276,7 +4276,7 @@
         if (voiceFile && !datPick) {
           log(folder
             ? `mucom88: ${file.name} uses external voices "${voiceFile}", which is not in ${folder.name} — imported without them: its FM parts play the chip's bare voice`
-            : `mucom88: ${file.name} uses external voices "${voiceFile}" — imported without them: its FM parts play the chip's bare voice. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'info');
+            : `mucom88: ${file.name} uses external voices "${voiceFile}" — imported without them: its FM parts play the chip's bare voice. Pick the .dat in File ▸ Import ▸ Song… to apply it, or re-import selecting the .muc and .dat together`, 'warn');
         }
         if (pcmFile && !pcmPick) {
           log(folder
