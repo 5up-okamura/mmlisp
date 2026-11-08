@@ -1598,8 +1598,15 @@ class Porter {
         // A note under the destination's lowest (the SN76489's A2), written
         // up by octaves to it — the note alone, the track's octave unmoved.
         if (ctx.head && ctx.destPart?.lowest != null && isNote(v)) {
-          const k = this.lowNotes(ctx.head, ctx.destPart.lowest).get(`${it.line}:${it.column}`);
-          if (k) { outs[i] = `${Array(k).fill(">").join(" ")} ${v} ${Array(k).fill("<").join(" ")}`; continue; }
+          // As it sounds here: the octaves a stand-in's voice writes it up too.
+          const m = this.lowNotes(ctx.head).get(`${it.line}:${it.column}`);
+          const lowest = ctx.destPart.lowest, sounds = m + 12 * (this.octShift.get(ctx.head) ?? 0);
+          if (m != null && sounds < lowest) {
+            const k = Math.ceil((lowest - sounds) / 12);
+            if (!this.saidLow?.has(ctx.head)) { (this.saidLow ??= new Set()).add(ctx.head); this.say(`${this.nameOf(ctx.head)}: notes under the ${this.to.system}'s lowest (${PITCH_NAMES[lowest % 12]}${Math.floor(lowest / 12) - 1}) written up by octaves to it`); }
+            outs[i] = `${Array(k).fill(">").join(" ")} ${v} ${Array(k).fill("<").join(" ")}`;
+            continue;
+          }
         }
         const shift = ctx.head ? this.octShift.get(ctx.head) ?? 0 : 0;
         if (shift && v === ":oct" && num(items[i + 1]) != null) { outs[i + 1] = String(num(items[i + 1]) + shift); i++; continue; }
@@ -1964,29 +1971,28 @@ class Porter {
     return null;
   }
 
-  // The notes of a track under `lowest`, by their place in the source
-  // ("line:column") → the octaves each is written up: as the source
-  // compiles, a place played anywhere under it (a phrase played at several
-  // octaves) the most any play needs.
-  lowNotes(head, lowest) {
+  // A track's notes by their place in the score's own text ("line:column",
+  // not an imported file's) → the lowest MIDI note played there, as the
+  // source compiles: a tie's second token the note it holds. A place played
+  // at several octaves (a phrase) takes its lowest.
+  lowNotes(head) {
     this.lows ??= new Map();
-    const key = `${head}@${lowest}`;
-    if (!this.lows.has(key)) {
+    if (!this.lows.has(head)) {
       const at = new Map();
       for (const t of this.s.compiled?.()?.tracks ?? []) {
         if ((t.scoreChannel ?? t.channel) !== head) continue;
+        let held = null;
         for (const e of t.events) {
-          if (e.cmd !== "NOTE_ON" || e.args.pitch == null || !e.src) continue;
-          const m = pitchToMidi(e.args.pitch);
-          if (!(m < lowest)) continue;
-          const k = Math.ceil((lowest - m) / 12), p = `${e.src.line}:${e.src.column}`;
-          at.set(p, Math.max(k, at.get(p) ?? 0));
+          if (e.cmd === "NOTE_ON") held = e.args.pitch == null ? null : pitchToMidi(e.args.pitch);
+          else if (e.cmd !== "TIE") continue;
+          if (!Number.isFinite(held) || !e.src || e.src.file) continue;
+          const p = `${e.src.line}:${e.src.column}`;
+          at.set(p, Math.min(held, at.get(p) ?? 127));
         }
       }
-      if (at.size) this.say(`${this.nameOf(head)}: ${at.size} note${at.size === 1 ? "" : "s"} under the ${this.to.system}'s lowest (${PITCH_NAMES[lowest % 12]}${Math.floor(lowest / 12) - 1}) written up by octaves to it`);
-      this.lows.set(key, at);
+      this.lows.set(head, at);
     }
-    return this.lows.get(key);
+    return this.lows.get(head);
   }
 
   // The lowest and highest MIDI note a track plays (its every form's), as
@@ -2227,13 +2233,14 @@ class Porter {
       const look = (n) => { if (isList(n)) n.items.forEach((x, i) => { if (x.kind === "atom" && x.value === ":env-rate") rates.push(n.items[i + 1]); look(x); }); };
       this.s.roots.forEach(look);
       const hz = rates.map((r) => (r ? num(r) : null));
-      this.envHz = hz.length && hz.every((x) => x != null && x === hz[0]) ? hz[0] : hz.find((x) => x != null) ?? null;
+      this.envHz = !hz.length ? 0 : hz.every((x) => x != null && x === hz[0]) ? hz[0] : hz.find((x) => x != null) ?? null;
       if (hz.length > 1 && !hz.every((x) => x === hz[0])) this.say(`:env-rate changes during the song: the envelopes drawn as levels take ${this.envHz ?? "none"} Hz throughout`);
     }
     const frameHz = this.s.compiled?.()?.metadata?.frameHz ?? 60;
     const frames = this.envHz > 0 ? Math.round(frameHz / this.envHz) : 0;
     if (frames < 2) {
-      if (!this.saidEnv) { this.saidEnv = true; this.say(`:env on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope, and ${this.envHz == null ? "a period that follows the note" : `${this.envHz} Hz`} is too fast to draw a frame at a time; the note keeps its level`); }
+      const why = this.envHz == null ? "its period follows the note or a value, not a rate to draw" : this.envHz <= 0 ? "the song sets no rate for it" : `${this.envHz} Hz is too fast to draw a frame at a time`;
+      if (!this.saidEnv) { this.saidEnv = true; this.say(`:env on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope, and ${why}; the note keeps its level`); }
       return { replace: "(macro :vel* none)" };
     }
     const len = `:len ${frames}f`;

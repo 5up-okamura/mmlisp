@@ -3609,7 +3609,8 @@
         fields.push({ key: 'pcmVoices', label: 'PCM voices', type: 'select', value: String(def.pcmVoices),
           choices: [['1', '1 — 14.4 kHz'], ['2', '2 — 10.1 kHz'], ['3', '3 — 6.7 kHz']],
           hint: `up to ${a.pcmPoly} ring at once — with fewer voices, the oldest sound is cut`,
-          onlyFor: () => targetProfile(a.target).hasPart('dac') });
+          // (Onto another machine the conversion's rows are the default's.)
+          onlyFor: (t) => t === a.target && targetProfile(t).hasPart('dac') });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3627,7 +3628,7 @@
         dest: target === a.target || target === 'midi' ? got.rows : def.dest,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
-        pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
+        pcmVoices: target === a.target && got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
         structure: !!got.fields.structure,
         fileName,
       };
@@ -5041,6 +5042,7 @@
           const { source, pcm } = song.onto
             ? await songOnto(written, { own: song.a.target, target: song.onto.target, fileName: song.name, rows: song.onto.rows })
             : written;
+          if (_it !== it) break; // another document came in meanwhile
           it.zero = timing ? beatClock(timing, it.first).zero : 0;
           it.written = source;
           editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: source }, userEvent: 'input.timing' });

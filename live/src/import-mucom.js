@@ -1364,7 +1364,6 @@ function lfoName(ctx, spec) {
 
 // Before a note: an LFO drawn per pitch class switches to this note's.
 function lfoBeforeNote(ctx, out, letter, acc) {
-  if (ctx.isNoise) return;
   const sw = ctx.lfoPerPc;
   // A slur keeps the running curve — unless an `M` came in between: the driver
   // reloads the delay then and restarts the wave on the new pitch.
@@ -1777,7 +1776,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         // a glide or detune. One spec for every note is named here; one drawn
         // per pitch class is named per note (lfoBeforeNote).
         const lfo = op.lfo;
-        if (ctx.isPcm || ctx.isNoise) break;
+        if (ctx.isPcm) break;
         if (lfoPerPitchClass(lfo, ctx.isSsg)) {
           ctx.lfoPerPc = { lfo, wholeClocks: op.wholeClocks, maxClocks: op.maxClocks };
           ctx.lfoChanged = true;
@@ -2040,7 +2039,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         // Emit an inline :tempo only when it changes the running tempo. The
         // first tempo already rides the first playable form (ctx.tempo), so
         // it's not repeated inline; mid-song changes are emitted here.
-        if (ctx.isNoise || !fm3Patch(ctx)) break; // the square track / first copy carries it
+        if (!fm3Patch(ctx)) break; // the first operator copy carries it
         if (op.bpm !== ctx.tempo || ctx.verbose) { out.push(`:tempo ${op.bpm}`); ctx.tempo = op.bpm; }
         break;
     }
@@ -2089,9 +2088,7 @@ function adpcmLevelVol(v) {
 }
 const adpcmFader = (ctx) => ctx.isAdpcm;
 
-// An SSG part that ever turns noise on renders twice: its square track keeps
-// the notes played with tone on, its noise copy (ctx.isNoise) the ones with
-// noise on; each rests through the other's.
+// An SSG note the channel's mixer silences (P0) rests.
 function mutedHere(ctx) {
   if (!ctx.isSsg) return false;
   const mix = ctx.mix ?? 1;
@@ -2413,7 +2410,6 @@ const fm3Carrier = (ctx) =>
 // A new `D`: write the one `:pitch` that serves every note, or leave it to
 // detuneBeforeNote when the cents depend too much on the pitch class.
 function detuneChanged(ctx, out) {
-  if (ctx.isNoise) return;
   const raw = rawDetune(ctx);
   const cents = Array.from({ length: 12 }, (_, pc) => (ctx.isPcm ? pcmDetuneCents(pc, raw) : lfoCents(ctx.isSsg, pc, raw)));
   // In operator mode the point is the small distance between the operators, and
@@ -2425,7 +2421,7 @@ function detuneChanged(ctx, out) {
 }
 
 function detuneBeforeNote(ctx, out, letter, acc) {
-  if (!ctx.detunePerNote || (ctx.isPcm && !adpcmFader(ctx)) || ctx.isNoise) return;
+  if (!ctx.detunePerNote || (ctx.isPcm && !adpcmFader(ctx))) return;
   const shift = (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
   const pc = (((SEMI[letter] + acc + shift) % 12) + 12) % 12;
   const cents = Math.round(ctx.isPcm ? pcmDetuneCents(pc, rawDetune(ctx)) : lfoCents(ctx.isSsg, pc, rawDetune(ctx)));
@@ -2440,8 +2436,7 @@ function detuneBeforeNote(ctx, out, letter, acc) {
 // converts it to steps. Still lossy (16 steps), and v0 stays :vel 0.
 function velToken(v, ctx) {
   // An SSG `v` is the register value an envelope at full level writes.
-  if (ssgFader(ctx) || adpcmFader(ctx)) return 15; // pc88: the level is the fader
-  if (ctx.isSsg) return ssgRegVel(v, noiseDb(ctx));
+  if (ssgFader(ctx) || adpcmFader(ctx)) return 15; // the level is the fader
   if (!ctx.isPcm) return clamp(v, 0, 15);
   const max = ctx.pcmVelMax || 0;
   if (v <= 0 || max <= 0) return 0;
@@ -2509,7 +2504,7 @@ function buildVoiceLabels(voices) {
 
 /**
  * Render a parsed mucom song into MMLisp source text.
- * @returns {{ source:string, warnings:string[], pcmVoices:number }}
+ * @returns {{ source:string, warnings:string[] }}
  */
 function mucomToMmlisp(parsed) {
   const { meta, tempo, voices, macros, scoreItems, scoreComments, warnings, pcm } = parsed;

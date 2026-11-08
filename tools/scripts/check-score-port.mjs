@@ -393,7 +393,7 @@ const port = (src, to, rows) => {
   assert.match(env.text, /\(sqr1 \(macro :vel\* \(saw 1\.\.0 :len 15f\)\) :len 4 c \(macro :vel\* \[\(linear 0\.\.1 :len 15f\) 1\]\) d \(macro :vel\* none\) e\)/);
   const buzz = port("(def-score :target msx)\n(sqr1 :env-rate note :env 8 :len 4 c)", "fc");
   assert.match(buzz.text, /\(sqr1 \(macro :vel\* none\) :len 4 c\)/);
-  assert.ok(buzz.said.some((x) => /too fast to draw/.test(x)));
+  assert.ok(buzz.said.some((x) => /follows the note .*keeps its level/.test(x)));
 }
 {
   // An SSG note under the SN76489's lowest (A2): that note written up by
@@ -401,6 +401,14 @@ const port = (src, to, rows) => {
   const low = port("(def-score :target pc88)\n(def lo :oct 1 c a > c)\n(sqr1 :len 4 lo :oct 2 g a)", "md");
   const lowIr = compileMMLisp(low.text, join(repo, "tools/tests/t.mmlisp")).ir;
   assert.deepEqual(lowIr.tracks[0].events.filter((e) => e.cmd === "NOTE_ON").map((e) => e.args.pitch), ["c3", "a2", "c3", "g3", "a2"]);
+  // A tie's second token is lifted with its note: still one held note.
+  const tie = port("(def-score :target pc88)\n(sqr1 :oct 1 :len 4 c ~ c8 e)", "md");
+  const tieEv = compileMMLisp(tie.text, join(repo, "tools/tests/t.mmlisp")).ir.tracks[0].events.filter((e) => /NOTE_ON|TIE/.test(e.cmd));
+  assert.deepEqual(tieEv.map((e) => (e.cmd === "TIE" ? "~" : e.args.pitch)), ["c3", "~", "e3"]);
+  // An FM voice already written up (its carrier's :ml 2) is not lifted again.
+  const fm = port("(def-score :target pc88)\n(def-fm b2 init-fm :alg 7 :ml1 2 :ml2 2 :ml3 2 :ml4 2)\n(fm1 b2 :oct 1 :len 4 c a)", "md", { fm1: "sqr1" });
+  const fmIr = compileMMLisp(fm.text, join(repo, "tools/tests/t.mmlisp")).ir;
+  assert.deepEqual(fmIr.tracks.find((t) => t.channel === "sqr1").events.filter((e) => e.cmd === "NOTE_ON").map((e) => e.args.pitch), ["c3", "a2"]);
 }
 {
   // A voice sounding octaves up (its carrier's :ml 8) onto a square: the
