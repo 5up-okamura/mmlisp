@@ -2621,6 +2621,10 @@ machine's channels or dropped:
 - A machine short of channels keeps the parts of its own kind first (FM
   onto FM), then the parts with the most notes — counted as they play, a
   loop's body as many times as it repeats.
+- Drums and samples past a machine's sample channels are not dropped: the
+  beat's (the kick, the snare) keep a channel each, and the rest share one
+  as `:prio` layers in the drums' order — a snare is kept before the hats
+  however few its notes.
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
   forms, language.md §1), a `:prio` each: the kick and snare first, then

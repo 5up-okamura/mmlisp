@@ -412,7 +412,10 @@ function planRows(s, from, to, loopOf = () => null) {
       Math.min(channelsOf(to, "sample", { board: true }).length, ...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams))],
   ];
   if (shared) pools.push([(k) => !isKitRow(k) && k !== "fm3-csm-rate", boardKeys(["fm", "tone", "wave", "noise", "sample"]).size - reserved.length]);
-  const streams = Math.min(...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams));
+  // A sample row's place among the drums (drumRank: the kick and snare
+  // first, the hats last), for which keeps a channel of its own.
+  const isSampleRow = (k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k));
+  const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k))));
   for (const [inPool, room] of pools) {
     const groups = new Map();
     for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop" && dest[k] !== "layer")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
@@ -422,28 +425,39 @@ function planRows(s, from, to, loopOf = () => null) {
     // one that would play a stand-in (the user, 2026-11-08); among those
     // alike, the most notes.
     const own = (g) => g.some((k) => channelsOf(to, kindOf(from, k), { board: true }).length > 0);
-    // Samples past the channels a driver streams on are layers on the one
-    // kept (:prio, the drums' own order: placeLayers); the rest past the
-    // room go.
-    const layering = (g) => Number.isFinite(streams) && g.every((k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)));
-    for (const g of [...groups.values()].sort((a, b) => (own(a) - own(b)) || (notes(a) - notes(b))).slice(0, groups.size - Math.max(0, room)))
-      for (const k of g) dest[k] = layering(g) && groups.size > 0 && room > 0 ? "layer" : "drop";
+    // Samples past the machine's sample channels (or the one its drivers
+    // stream on) are not dropped: they are :prio layers on a kept one
+    // (placeLayers) — and the drums that keep a channel of their own are the
+    // beat's (a snare plays fewer notes than the hats, and matters more).
+    const samples = (g) => g.every(isSampleRow);
+    const order = (a, b) => (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
+      for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
   }
-  // A channel has one loop (language.md §1): the layers loop as one. A
-  // mucom88 song's parts each loop on their own, so the rows are grouped by
-  // their loop and the group playing the most notes kept — its busiest row
-  // the channel's, the rest its layers (a row with no loop joins it); a row
-  // looping over other ticks goes.
+  // The layers' channel: the kept sample row least among the drums (the
+  // kick and snare keep theirs to themselves), of those looping as the
+  // layers do — a channel has one loop (language.md §1), and a mucom88
+  // song's parts each loop on their own. With one channel (the PC Engine's
+  // one stream) the kept row is the loop's group playing the most notes.
+  // A layer looping over other ticks than any kept row goes.
+  const hostOf = {};
   if (keys.some((k) => dest[k] === "layer")) {
-    const rows = keys.filter((k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)) && dest[k] !== "drop");
-    const loopsOf = [...new Set(rows.map((k) => loopOf(splitHead(k))).filter((l) => l != null))];
-    const inLoop = (k, l) => l == null || loopOf(splitHead(k)) == null || loopOf(splitHead(k)) === l;
-    const total = (l) => rows.filter((k) => inLoop(k, l)).reduce((n, k) => n + notesOf(k), 0);
-    const best = loopsOf.length ? loopsOf.sort((a, b) => total(b) - total(a))[0] : null;
-    const group = rows.filter((k) => inLoop(k, best)).sort((a, b) => notesOf(b) - notesOf(a));
+    const rows = keys.filter((k) => isSampleRow(k) && dest[k] !== "drop");
+    let kept = rows.filter((k) => dest[k] !== "layer");
+    const loopOfRow = (k) => loopOf(splitHead(k));
+    const alike = (a, b) => loopOfRow(a) == null || loopOfRow(b) == null || loopOfRow(a) === loopOfRow(b);
+    if (kept.length === 1) {
+      // One channel: which loop it plays is the group with the most notes.
+      const total = (k) => rows.filter((o) => alike(o, k)).reduce((n, o) => n + notesOf(o), 0);
+      const best = [...rows].sort((a, b) => total(b) - total(a) || drumRank(s.heads.get(a)) - drumRank(s.heads.get(b)) || notesOf(b) - notesOf(a))[0];
+      if (best !== kept[0]) { dest[kept[0]] = "layer"; delete dest[best]; kept = [best]; }
+    }
+    const byRank = [...kept].sort((a, b) => drumRank(s.heads.get(b)) - drumRank(s.heads.get(a)) || notesOf(a) - notesOf(b));
     for (const k of rows) {
-      if (k === group[0]) delete dest[k];
-      else dest[k] = group.includes(k) ? "layer" : "drop";
+      if (dest[k] !== "layer") continue;
+      const host = byRank.find((h) => alike(h, k));
+      if (host) hostOf[k] = host;
+      else dest[k] = "drop";
     }
   }
   // With the FDS's track dropped there is no LFO to keep wave2 for.
@@ -493,9 +507,8 @@ function planRows(s, from, to, loopOf = () => null) {
     const h = cands.find((c) => free(k, c));
     dest[k] = h ? claim(k, h) : "drop";
   }
-  // A layered sample row plays on the sample channel kept.
-  const kept = keys.find((k) => kindOf(from, k) === "sample" && dest[k] && dest[k] !== "drop" && dest[k] !== "layer" && to.partOf(dest[k])?.kind === "sample" && !to.partOf(dest[k]).kit);
-  for (const k of keys) if (dest[k] === "layer") dest[k] = kept ? dest[kept] : "drop";
+  // A layered sample row plays on its host's channel.
+  for (const k of keys) if (dest[k] === "layer") dest[k] = hostOf[k] && dest[hostOf[k]] && dest[hostOf[k]] !== "drop" ? dest[hostOf[k]] : "drop";
   const choicesOf = (k) => {
     const kind = kindOf(from, k);
     if (to.partOf(k)?.kind === kind && !to.partOf(k).kit && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
@@ -957,10 +970,16 @@ class Porter {
     for (const [h, ks] of byDest) {
       if (ks.length < 2) continue;
       // Each its own :prio — forms of an equal one append, not layer — in
-      // the drums' order, the busier first among alike.
+      // the drums' order, the busier first among alike; a row's own layers
+      // (its forms' :prio) each a number of their own, in their order.
       const order = [...ks].sort((a, b) => drumRank(this.s.heads.get(a)) - drumRank(this.s.heads.get(b)) || (this.s.heads.get(b)?.notes ?? 0) - (this.s.heads.get(a)?.notes ?? 0));
+      let next = 1;
+      for (const k of order) {
+        const own = [...new Set((this.s.heads.get(splitHead(k))?.forms ?? []).map((f) => (f.items[1]?.value === ":prio" ? String(f.items[2]?.value) : "")))];
+        own.sort((a, b) => (a === "" ? 8 : Number(a)) - (b === "" ? 8 : Number(b)));
+        for (const p of own) out.set(`${k}|${p}`, next++);
+      }
       for (const k of ks) {
-        out.set(k, order.indexOf(k) + 1);
         const words = this.s.heads.get(k)?.forms.map((f) => this.text.slice(this.starts[f.line - 1] + f.column - 1, this.starts[f.endLine - 1] + f.endColumn - 1)).join(" ") ?? "";
         if (!/:mode|:gate/.test(words)) this.shotRows.add(k);
       }
@@ -1176,12 +1195,15 @@ class Porter {
     }
     const { outs, after } = this.body(n.items, at + 1, ctx);
     outs[0] = ctx.dest;
-    const prio = this.layerPrio.get(ctx.head);
+    const layerKey = `${ctx.head}|${at ? String(n.items[2]?.value) : ""}`;
+    const prio = this.layerPrio.get(layerKey);
     if (prio != null) {
       // A shot plays to its end whatever its gate: a hit holds the channel a
       // tick, so a lower layer gives way only where both strike at once and
-      // past that the latest hit sounds, as one stream plays them.
-      const gate = !this.started?.has(ctx.head) && this.shotRows.has(ctx.head) ? " :gate 1t" : "";
+      // past that the latest hit sounds, as one stream plays them. Each layer
+      // is a timeline of its own: its first form takes the gate.
+      const gate = !(this.gated ??= new Set()).has(layerKey) && this.shotRows.has(ctx.head) ? " :gate 1t" : "";
+      this.gated.add(layerKey);
       if (at) outs[2] = `${prio}${gate}`;
       else outs[0] = `${ctx.dest} :prio ${prio}${gate}`;
     }

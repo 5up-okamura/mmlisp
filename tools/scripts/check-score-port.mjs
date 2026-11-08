@@ -211,7 +211,14 @@ const port = (src, to, rows) => {
   const r = port(readFileSync(join(repo, "tools/tests/pc88/rhythm.mmlisp"), "utf8"), "md");
   assert.match(r.text, /\(import "presets\/rx5\/set\.mmlisp"\)/);
   assert.match(r.text, /:pcm-voices 3/);
-  assert.ok(r.said.some((s) => /^rhythm3 \(2 notes\) is not converted/.test(s)), "past md's three, the one with the fewest notes dropped and said");
+  // Past md's three channels nothing goes: the kick and the snare keep a
+  // channel each, the rest share the third as :prio layers, the hats last
+  // and a row's own layers (rhythm4's tom and rim) each their own number.
+  assert.ok(!r.said.some((s) => /is not converted/.test(s)), r.said.join("\n"));
+  assert.match(r.text, /\(pcm1 :tempo 132 :len 4 kick /);
+  assert.match(r.text, /\(pcm2 :len 2 _ snare c \|\)/);
+  const third = [...r.text.matchAll(/^\(pcm3 :prio (\d+) [^\n]*?(hat|tom4|rim)/gm)].map((m) => [m[2], Number(m[1])]);
+  assert.deepEqual(third, [["hat", 3], ["tom4", 1], ["rim", 2]], r.text);
   const back = port(r.text, "pc88");
   assert.deepEqual([back.map.pcm1, back.map.pcm2, back.map.pcm3], ["rhythm1", "rhythm2", "rhythm3"]);
 }
@@ -395,6 +402,23 @@ const port = (src, to, rows) => {
   assert.ok(firstLoud(envelopeOf(slow(3), 84)) < 10, `KS 3 at c6: ${envelopeOf(slow(3), 84).slice(0, 60)}`);
   assert.ok(firstLoud(envelopeOf(slow(0), 84)) > 30, `KS 0 at c6: ${envelopeOf(slow(0), 84).slice(0, 60)}`);
   // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)
+  // Drums past a machine's sample channels share one as layers rather than
+  // go, and the ones keeping a channel are the beat's, not the busiest: a
+  // snare of two notes before a hat of sixteen.
+  const six = `(def-score :target pc88)
+(import "presets/rx5/set.mmlisp")
+(fm1 :len 4 c e g c)
+(rhythm1 kick :len 4 c _ c _)
+(rhythm2 snare :len 4 _ c _ c)
+(rhythm3 ride :len 8 c c c c c c c c)
+(rhythm4 hat :len 16 c c c c c c c c c c c c c c c c)
+(rhythm5 tom4 :len 2 _ c)
+(rhythm6 rim :len 8 c _ c _ c _ c _)`;
+  const onMd = port(six, "md");
+  assert.deepEqual([onMd.map.rhythm1, onMd.map.rhythm2], ["pcm1", "pcm2"], "the kick and snare keep channels");
+  assert.deepEqual(["rhythm3", "rhythm4", "rhythm5", "rhythm6"].map((k) => onMd.map[k]), ["pcm3", "pcm3", "pcm3", "pcm3"], "the rest share the third");
+  const onFc = port(six, "fc");
+  assert.deepEqual(new Set(["rhythm1", "rhythm2", "rhythm3", "rhythm4", "rhythm5", "rhythm6"].map((k) => onFc.map[k])), new Set(["pcm1"]), "the Famicom's one DPCM channel takes them all");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

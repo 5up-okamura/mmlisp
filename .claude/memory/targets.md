@@ -320,7 +320,17 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   further; DTWNB00's PCM sits 2.8 dB under its FM on x68k, 19.2 on md
   before, 13.7 after. The rest is the FM's: md's FM is ~7 dB hotter than
   x68k's for one voice. Keeping the source's balance (each track's level
-  offset by the machines' part gains) is put to the user. Inline operator words on such a
+  offset by the machines' part gains) is put to the user.
+- **Drums past a machine's sample channels are layered, not dropped** (user,
+  2026-11-08: "a snare of few notes matters"). planRows' sample pool keeps a
+  channel each for the beat's drums first (drumRank, then notes), and the
+  rest are "layer" rows on the least of the kept (`hostOf`, a kept row whose
+  loop matches; with one channel the loop group with the most notes picks
+  it). placeLayers numbers every (row, its own :prio) layer apart (a pc88
+  rhythm4 with tom :prio 1 / rim :prio 2 had both become one number —
+  appended, not layered). pc88's six rhythm parts onto md: kick pcm1,
+  snare pcm2, ride / hat / tom / rim layers on pcm3 (it kept ride, hat, rim
+  and dropped the kick and snare); onto fc all six on the DPCM. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
