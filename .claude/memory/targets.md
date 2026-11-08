@@ -249,10 +249,15 @@ a non-role voice of the score's own onto the FM-PAC / VRC7 is no longer a
 ROM voice by shape — it stays as a 2-op `def-fm` (`opnAs2op`: the main
 carrier and the loudest of its modulators per MODULATORS_OF, rates >> 1,
 modulator TL >> 1, FB where op1 is the modulator, SR > 0 → EG 0 with
-RR = SR >> 1, OPLL ML nearest; the other operators and DT said). The one
-user voice: the note keyed last sets it (the compiler's W_TARGET). Roles
-and ROM-named voices still play the ROM; imported voices (no def to
-rewrite) and waves still the ROM by shape. Inline operator words on such a
+RR = SR >> 1, OPLL ML nearest; the other operators and DT said). Only
+one such voice (`pickUserVoice`): the chip's one user voice is every
+channel's, so the own voice with the most notes on rows going to FM keeps
+it, the others the ROM by shape (the user found several sounding at once
+hard to hear: each key-on rewrote the others' sound). Roles and ROM-named
+voices still play the ROM; imported voices (no def to rewrite) and waves
+still the ROM by shape. pruneVoices takes every def a source track named
+as a candidate, so a def whose rows went to waves / squares / drop goes;
+one no track named stays (a mucom song's unused bank voices). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

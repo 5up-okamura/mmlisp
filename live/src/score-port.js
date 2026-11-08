@@ -157,14 +157,18 @@ function survey(text, from, imports) {
   const heads = new Map();
   for (const f of forms) {
     const head = f.items[0].value;
-    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, noiseNotes: 0, mode: "tone", samples: new Set(), voices: [], waves: new Set(), noiseMode: false };
+    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, noiseNotes: 0, mode: "tone", samples: new Set(), voices: [], voiceNotes: new Map(), voice: null, waves: new Set(), noiseMode: false };
     heads.set(head, h);
     h.forms.push(f);
     walk(f.items.slice(1), (n, prev) => {
       if (n.kind !== "atom") return;
-      if (isNote(n.value)) { h.notes++; if (NOISY.has(h.mode)) h.noiseNotes++; }
+      if (isNote(n.value)) {
+        h.notes++;
+        if (NOISY.has(h.mode)) h.noiseNotes++;
+        if (h.voice) h.voiceNotes.set(h.voice, (h.voiceNotes.get(h.voice) ?? 0) + 1); // the notes each voice plays
+      }
       else if (samples.has(n.value) || kit.has(n.value)) h.samples.add(n.value);
-      else if (voices.has(n.value)) h.voices.push(n.value);
+      else if (voices.has(n.value)) { h.voices.push(n.value); h.voice = n.value; }
       if (waveNames.has(n.value)) h.waves.add(n.value);
       if (prev?.value === ":mode" && NOISY.has(n.value)) h.noiseMode = true;
       if (prev?.value === ":mode" && n.kind === "atom") h.mode = n.value; // the notes after it: tone or noise
@@ -484,6 +488,7 @@ class Porter {
     this.waveMacroOn = new Set(); // the heads a role's wave macro is running on
     this.octShift = new Map(); // head → the octaves its stand-in is written up, for its voice's carrier
     this.setupLfo();
+    this.userVoice = this.pickUserVoice();
     // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
     // the wave written last plays on both — said where their waves differ.
     const byRam = new Map();
@@ -693,6 +698,10 @@ class Porter {
       out = out.replace(new RegExp(`^[ \\t]*\\(import\\s+"${FM_ROLES_SET.replace(/[./]/g, "\\$&")}"\\)[^\\n]*\\n?`, "m"), "");
       if (out !== before) this.say(`presets/fm-roles: the ${this.toFm.label}'s ROM voices are the roles; its import is taken out`);
     }
+    // Every voice the score's tracks played may be named by none now (its
+    // rows a wave's, a square's, dropped): a def nothing names goes. A def
+    // no track named before stays, as the score's own library.
+    for (const h of this.s.heads.values()) for (const v of h.voices) this.replaced.add(v);
     for (let pass = 0; pass < 4 && (this.replaced.size || this.shadowing.size || this.replacedWaves.size || this.replacedSnippets.size); pass++) {
       let roots;
       try { roots = parse(out); } catch { return out; }
@@ -804,6 +813,30 @@ class Porter {
     return `(def-wave ${name} :wave [${wave32(steps).join(" ")}])`;
   }
 
+  // 4-op onto the OPLL, which has one user voice for all its channels: the
+  // score's own voice that plays the most notes on an FM row keeps itself,
+  // read as two operators; the others play the ROM's (onOpll), so voices
+  // sounding at once do not fight over the one register set.
+  pickUserVoice() {
+    const fm = this.toFm;
+    if (!fm || !twoOp(fm) || twoOp(this.fromFm)) return null;
+    const own = (v) => {
+      const d = this.voices.get(v);
+      return d && !d.imported && !roleOf(v) && !fm.romNames.includes(v);
+    };
+    const notes = new Map();
+    for (const [head, h] of this.s.heads) {
+      const dest = this.map[head];
+      if (!dest || dest === "drop" || this.to.partOf(dest)?.kind !== "fm") continue;
+      for (const [v, k] of h.voiceNotes) if (own(v)) notes.set(v, (notes.get(v) ?? 0) + k);
+    }
+    const [best] = [...notes].sort((a, b) => b[1] - a[1]);
+    if (!best) return null;
+    if (notes.size > 1) this.say(`the ${fm.label} has one user voice: '${best[0]}' (${best[1]} notes) keeps it, read as two operators; the score's ${notes.size - 1} other voice${notes.size > 2 ? "s" : ""} play the ROM's nearest`);
+    else this.say(`the ${fm.label}'s one user voice: '${best[0]}', read as two operators`);
+    return best[0];
+  }
+
   defFm(n) {
     const fm = this.toFm;
     const name = n.items[1]?.value;
@@ -813,7 +846,7 @@ class Porter {
     if (twoOp(fm) && !twoOp(this.fromFm)) {
       const d = this.voices.get(name);
       const onFm = Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm");
-      if (!d || !onFm || roleOf(name) || fm.romNames.includes(name)) return this.slice(n);
+      if (!d || !onFm || name !== this.userVoice) return this.slice(n);
       const r = opnAs2op(name, d.words);
       if (r.without.length) this.say(`'${name}' as two operators plays without ${r.without.join(", ")}`);
       return r.text;
@@ -1409,13 +1442,9 @@ class Porter {
     const def = this.voices.get(v);
     // 4-op onto the OPLL: a role's ROM voice, else its waveform's.
     if (ctx.family && !twoOp(ctx.srcPart)) {
-      // A role's voice is the ROM's; the score's own other voices stay as
-      // themselves, read as two operators (defFm) — the chip's one user
-      // voice, which the note keyed last sets, as its drivers play.
-      if (!roleOf(v) && def && !def.imported && !ctx.destPart.romNames.includes(v)) {
-        if (!this.saidUser) { this.saidUser = true; this.say(`the ${ctx.destPart.label} has one user voice: the score's own voices are read as two operators, and where two sound at once the note keyed last sets it (the compiler says where)`); }
-        return undefined;
-      }
+      // A role's voice is the ROM's; the one user voice (pickUserVoice)
+      // stays itself, read as two operators (defFm); the rest the ROM's.
+      if (v === this.userVoice) return undefined;
       const r = onOpll(v, def?.words ?? new Map(), ctx.destPart);
       if (r.why) this.say(r.why);
       if (r.name !== v) this.replaced.add(v);

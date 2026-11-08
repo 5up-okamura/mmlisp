@@ -247,6 +247,19 @@ const port = (src, to, rows) => {
   assert.match(r.text, /\(fm1 lead :len 4 c e g\)/, "its op words gone");
   assert.match(r.text, /\(fm2 organ /);
   assert.doesNotMatch(r.text, /def-fm organ/, "the 4-op def that hid the ROM's organ goes");
+  // The FM-PAC has one user voice for all its channels: the own voice that
+  // plays the most notes keeps it; the others play the ROM's, their defs gone.
+  const two4 = port(`(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :ml1 2 :tl2 0 :tl3 30 :tl4 0)
+(def-fm bass init-fm :alg 0 :fb 6 :tl1 30 :tl2 20 :tl3 20 :tl4 0)
+(def-fm spare init-fm :alg 7)
+(fm1 lead :len 8 c d e f g a b > c)
+(fm2 bass :len 4 c g)
+(fm3 bass :len 4 e)`, "msx");
+  assert.match(two4.text, /\(def-fm lead :fb 5 /, "the busier voice is the user voice, as two operators");
+  assert.doesNotMatch(two4.text, /def-fm bass/, "the other's def goes");
+  assert.match(two4.text, /\(fm2 (?!bass)[\w-]+ :len 4 c g\)/, "the other plays a ROM voice");
+  assert.match(two4.text, /\(def-fm spare /, "a def no track named stays");
+  assert.ok(two4.said.some((w) => /one user voice: 'lead' \(8 notes\)/.test(w)), "the choice is said");
   // A 4-op voice's modulators and carrier chosen: alg 4's op3 → op4 chain
   // when op4 is the louder carrier; the detune and the other pair said.
   const two = opnAs2op("v", new Map([["FM_ALG", 4], ["FM_TL2", 10], ["FM_TL4", 0], ["FM_TL3", 40], ["FM_TL1", 20], ["FM_ML3", 3], ["FM_DT1", 1], ["FM_SR4", 6], ["FM_RR4", 9]]));

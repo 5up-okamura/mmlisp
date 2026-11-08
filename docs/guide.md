@@ -2624,14 +2624,14 @@ OPLL's 2 (the FM-PAC, the VRC7) plays as follows:
   (the OPLL's ROM names, `presets/fm-roles`), a `gm-*` voice, the VRC7's
   own names — plays that machine's voice for it. That is the ROM's on the
   OPLL, and on a 4-operator chip `presets/fm-roles`' under the same name.
-- Any other voice of the score's own, onto the OPLL, stays as itself read
-  as two operators: its main carrier under the loudest of that carrier's
-  modulators, the rates halved to the chip's, a sustain rate as the
-  percussive envelope; the other two operators and the detune go, said.
-  The chip has one user voice, so where two tracks sound different ones at
-  once the note keyed last sets it (as its drivers play; the compiler says
-  where). An imported voice, or a wave's, plays the ROM voice of its nearest
-  plain shape (`clarinet`, `synth`, `flute`) instead.
+- The chip has one user voice for all its channels, so onto the OPLL one
+  voice of the score's own stays as itself — the one that plays the most
+  notes on its FM channels, named in the log — read as two operators: its
+  main carrier under the loudest of that carrier's modulators, the rates
+  halved to the chip's, a sustain rate as the percussive envelope; the other
+  two operators and the detune go, said. Every other voice, an imported
+  one, or a wave's, plays the ROM voice of its nearest plain shape
+  (`clarinet`, `synth`, `flute`), and a def no track names then goes.
 - An FM-PAC voice of your own goes onto a 4-operator chip as itself, read
   as 4 operators. Its vibrato and tremolo (`:vib`, `:am`, in the voice, on
   a track or in a macro) become the channel's `:fms 4` / `:ams 2` on the
