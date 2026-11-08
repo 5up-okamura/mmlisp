@@ -415,7 +415,13 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   the next (import-to-midi.js's LOW_APART rule), off `s.compiled()`; first
   in the melodic pool's order, and placed on the machine's `bass` part
   (chips/parts.js: fc-tri, gb-wave `bass: true`) before the rest. DTWNB:
-  fm1 → tri / wave on every song tried. Inline operator words on such a
+  fm1 → tri / wave on every song tried.
+- **gb: every drum on the noise** (user: "a 1-channel PCM song; the
+  gaps are rests — could the noise play more than kick and snare?"):
+  NOISE_DRUMS has tom (d+5, 4096 Hz, 10f), rim (g6, 3f), cymbal (a6, 30f
+  line), hat (a+6, 3f) beside kick / snare; `knownRank` (name or heard,
+  null for neither) picks a sample's drum, noiseDrumOf(rank) its sound; a
+  row of any known drum goes to the noise, layered by rank. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

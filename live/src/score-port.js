@@ -212,6 +212,9 @@ function walk(items, fn, times = 1) {
 // sound as heard (`heard`: name → role, import-to-midi.js heardRoles).
 const DRUM_RANKS = [[/kick|bd|bass-?drum/i, 1], [/snare|sd|clap/i, 2], [/tom/i, 3], [/rim|cow|perc/i, 4], [/crash|ride|cym|splash/i, 5], [/hat|hh/i, 6]];
 const rankOfName = (n) => DRUM_RANKS.find(([re]) => re.test(n))?.[1];
+// A sample's place among the drums where its name or its sound tells it; null
+// for one that says nothing (a pad, a voice, a hit not heard).
+const knownRank = (n, heard) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(heard.get(n)) : undefined) ?? null;
 function drumRank(h, heard = null) {
   const ranks = [...(h?.samples ?? [])].map((n) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(heard.get(n)) : null) ?? 4);
   return ranks.length ? Math.min(...ranks) : 4;
@@ -264,16 +267,21 @@ const LIMIT_LIFT_DB = 3;
 // the next lowest, by the median note (import-to-midi.js LOW_APART).
 const BASS_APART = 7;
 
-// The kick and the snare on a noise channel, where a machine has no sample
-// channel (the Game Boy): each a note — a low clock for the kick, a bright
-// one for the snare — under a level that falls away in a few frames, its gate
-// as long (so a layer under it gives way only while it sounds). The rest of
-// the kit is decoration and is not played.
+// The drums on a noise channel, where a machine has no sample channel (the
+// Game Boy): each a note — its clock, low for the kick, bright for the snare,
+// brighter for a rim and the cymbals, brightest for the hats — under a level
+// that falls away (a hat in three frames, a cymbal in thirty), its gate as
+// long (so a layer under it gives way only while it sounds). A sample whose
+// name or sound says no drum plays nothing there.
 const NOISE_DRUMS = {
   kick: { oct: 4, note: "a", env: "noise-kick", steps: "[0 -4 -8 -12 -15]", gate: "5f" },
   snare: { oct: 6, note: "d+", env: "noise-snare", steps: "[0 -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -15]", gate: "15f" },
+  tom: { oct: 5, note: "d+", env: "noise-tom", steps: "[0 -2 -3 -5 -6 -8 -9 -11 -13 -15]", gate: "10f" },
+  rim: { oct: 6, note: "g", env: "noise-rim", steps: "[0 -7 -15]", gate: "3f" },
+  cymbal: { oct: 6, note: "a", env: "noise-cymbal", steps: "[(linear 0..-15 :len 30f)]", gate: "30f" },
+  hat: { oct: 6, note: "a+", env: "noise-hat", steps: "[0 -8 -15]", gate: "3f" },
 };
-const noiseDrumOf = (rank) => (rank === 1 ? "kick" : rank === 2 ? "snare" : null);
+const noiseDrumOf = (rank) => [null, "kick", "snare", "tom", "rim", "cymbal", "hat"][rank ?? 0] ?? null;
 
 // The roles heard, as a kit has them: one kick and one snare — of the
 // samples heard as kicks, the one the score names most; as snares, too (the
@@ -493,10 +501,10 @@ function planRows(s, from, to, loopOf = () => null) {
   // first, the hats last), for which keeps a channel of its own.
   const isSampleRow = (k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k));
   const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k), s.heard)));
-  // A machine with no sample channel plays the kick and the snare on its
-  // noise (NOISE_DRUMS): those rows go there, the rest of the kit is dropped.
+  // A machine with no sample channel plays its drums on its noise
+  // (NOISE_DRUMS): a row of any drum goes there; one that plays none drops.
   const drumNoise = !channelsOf(to, "sample", { board: true }).length && !roleKit && channelsOf(to, "noise", { board: true })[0];
-  const noiseDrums = drumNoise ? keys.filter((k) => isSampleRow(k) && notesOf(k) && drumRank(s.heads.get(k), s.heard) <= 2) : [];
+  const noiseDrums = drumNoise ? keys.filter((k) => isSampleRow(k) && notesOf(k) && [...(s.heads.get(k)?.samples ?? [])].some((n) => knownRank(n, s.heard) != null)) : [];
   for (const k of noiseDrums) dest[k] = "noise-drum";
   for (const [inPool, room] of pools) {
     const groups = new Map();
@@ -595,7 +603,7 @@ function planRows(s, from, to, loopOf = () => null) {
   }
   // A layered sample row plays on its host's channel.
   for (const k of keys) if (dest[k] === "layer") dest[k] = hostOf[k] && dest[hostOf[k]] && dest[hostOf[k]] !== "drop" ? dest[hostOf[k]] : "drop";
-  // The kick and snare on the noise, as :prio layers over its own part (the
+  // The drums on the noise, as :prio layers over its own part (the
   // beat first): they loop as one, so a row looping on other ticks than the
   // drums goes — the noise's own part first, being decoration.
   if (noiseDrums.length) {
@@ -1293,7 +1301,7 @@ class Porter {
     // that plays each sound at one pitch (the PC-8801's ROM rhythm).
     c.noBend = dst?.kind === "sample" && !dst.pitch && !!src?.pitch;
     c.flatPitch = !!dst?.kit && !dst.pitch && !(src?.kit && !src.pitch);
-    // A drum row on a noise channel: its kick and snare each a noise note
+    // A drum row on a noise channel: each drum a noise note
     // (NOISE_DRUMS), the rest silent; the role goes on from form to form.
     if (src?.kind === "sample" && dst?.kind === "noise") c.drumNoise = ((this.drumNoiseState ??= new Map()).get(head) ?? this.drumNoiseState.set(head, { role: null }).get(head));
     // A noise between a pitched one and the others is read note by note.
@@ -1476,7 +1484,7 @@ class Porter {
         }
         if (ctx.drumNoise) {
           if (this.s.samples.has(v) || this.s.kit?.has?.(v)) {
-            const role = noiseDrumOf(drumRank({ samples: [v] }, this.s.heard));
+            const role = noiseDrumOf(knownRank(v, this.s.heard));
             // Within one body the role's words once; a loop's body (another
             // list) writes them again, so every pass starts right.
             const same = role === ctx.drumNoise.role && ctx.drumNoise.lastIn === items;

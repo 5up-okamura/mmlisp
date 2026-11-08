@@ -2628,12 +2628,14 @@ machine's channels or dropped:
   beat's (the kick, the snare) keep a channel each, and the rest share one
   as `:prio` layers in the drums' order — a snare is kept before the hats
   however few its notes.
-- A machine with no sample channel (the Game Boy) plays the kick and the
-  snare on its noise, as `:prio` layers over the noise's own part: each a
-  noise note — a low clock for the kick, a bright one for the snare — under
-  a level that falls away in a few frames (`noise-kick`, `noise-snare`).
-  The rest of the kit is decoration and is left out. A sample whose name
-  says nothing (an MDX's `pdx-003`) is told by its sound.
+- A machine with no sample channel (the Game Boy) plays its drums on its
+  noise, as `:prio` layers over the noise's own part: each a noise note of
+  its own — a low clock for the kick, a bright one for the snare, a middle
+  one for a tom, the brightest and shortest for the hats, a long bright one
+  for a cymbal — under a level that falls away (`noise-kick`,
+  `noise-snare`, `noise-tom`, `noise-rim`, `noise-cymbal`, `noise-hat`). A
+  sample whose name says nothing (an MDX's `pdx-003`) is told by its sound;
+  one that sounds as no drum plays nothing there.
 - A machine with no sample channel but a ROM rhythm (the MSX's FM-PAC)
   plays a drum track on it: each sample as the kit's role it is named or
   sounds as (an MDX's samples by their sound: kick, snare, tom, top
