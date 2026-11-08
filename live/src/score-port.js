@@ -936,6 +936,7 @@ class Porter {
     lines.push(...opDefs);
     // The mix kept (mixBalance): a channel's notes moved by a def-mod.
     for (const [n, hs] of this.mix?.steps ?? []) lines.push(`(def-mod :ch ${hs.length > 1 ? `[${hs.join(" ")}]` : hs[0]} :vel+ ${n}) ; beside the samples, as on the ${this.from.system}`);
+    if (this.mix?.gain) lines.push(`(def-mod :voice ${this.mix.samples.length > 1 ? `[${this.mix.samples.join(" ")}]` : this.mix.samples[0]} :vel+ ${-this.mix.gain}) ; the samples beside the melody, as on the ${this.from.system}`);
     if (!this.s.roots.some((n) => isList(n, "def-score"))) lines.unshift(`(def-score :target ${this.to.name}${this.pcmVoices() ? ` :pcm-voices ${this.pcmVoices()}` : ""})`);
     let head = "";
     let body = out;
@@ -1141,8 +1142,9 @@ class Porter {
   // on drums: LIMIT_LIFT_DB) and a melodic track comes down — but only as
   // far as the machine plays it louder than the source did, never under
   // the level it had. A track that would have to go up takes the rest down
-  // instead, the samples by a (gain) after their normalize. Written as
-  // `def-mod :ch […] :vel+ N` lines (2 dB a step), one a step. `peaks`: the
+  // instead, the samples too. Every move is a `def-mod … :vel+ N` line (2
+  // dB a step), one a step — the tracks' by :ch, the samples' by :voice —
+  // so the score's own notes and defs stay as written. `peaks`: the
   // samples' own headroom, which the normalize lifts them by.
   mixBalance() {
     const L = (t, kind) => PART_LEVELS[t]?.[kind === "noise" ? "tone" : kind];
@@ -1172,14 +1174,16 @@ class Porter {
     const up = Math.max(0, ...move.values());
     const steps = new Map();
     for (const [h, d] of move) {
-      const n = Math.round((Math.min(d, 0) - up) / VEL_DB_PER_STEP);
+      const n = Math.round((d - up) / VEL_DB_PER_STEP);
       if (n) steps.set(n, [...(steps.get(n) ?? []), h]);
     }
-    const gain = Math.round(up);
+    // The samples' own move, in :vel steps too (a def-mod on their names).
+    const gain = Math.round(up / VEL_DB_PER_STEP);
+    const samples = gain ? played : [];
     if (!steps.size && !gain && !limit) return null;
     const left = Math.max(0, ...[...want].map(([h, d]) => -(d + (limit ? LIMIT_LIFT_DB : 0)) - louder.get(h)));
-    this.say(`the samples beside the melody as on the ${this.from.system}: the ${this.to.system}'s parts play at other levels (part-levels.js)${limit ? "; the samples limited (louder, the same peak)" : ""}${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod, no further than the ${this.to.system} plays them louder)` : ""}${gain ? `; the samples ${-gain} dB` : ""}${left > 1 ? `; still ${Math.round(left)} dB under, the song not made quieter for it` : ""}`);
-    return { steps, gain, limit };
+    this.say(`the samples beside the melody as on the ${this.from.system}: the ${this.to.system}'s parts play at other levels (part-levels.js)${limit ? "; the samples limited (louder, the same peak)" : ""}${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod, no further than the ${this.to.system} plays them louder)` : ""}${gain ? `; the samples :vel+ ${-gain}` : ""}${left > 1 ? `; still ${Math.round(left)} dB under, the song not made quieter for it` : ""}`);
+    return { steps, gain, samples, limit };
   }
 
   // A sample onto another machine plays at its peak (`:fx` … (normalize)):
@@ -1191,7 +1195,7 @@ class Porter {
   louder(n, text) {
     const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
     if (!onSamples || !n.items.some((x) => x.value === ":file") || /\(normalize\b/.test(text)) return text;
-    const tail = ` (normalize)${this.mix?.limit ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}${this.mix?.gain ? ` (gain ${-this.mix.gain})` : ""}`;
+    const tail = ` (normalize)${this.mix?.limit ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}`;
     if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
     const fx = text.match(/:fx\s*\[/);
     if (fx) {

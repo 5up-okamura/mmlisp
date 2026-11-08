@@ -390,7 +390,10 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   −15.9), PCM 3.7 dB under the melody; pce: −1, PCM still ~9 dB under (its
   DDA is one wave's level and its waves already the X68000's FM's) — said
   in the log, the song not made quieter for it. No `:master` boost exists
-  (VOL_UNITY is the top). Inline operator words on such a
+  (VOL_UNITY is the top). The user: a level change to the score is a
+  def-mod — so the samples' own move is `def-mod :voice [names] :vel+ N`
+  too (it was a `(gain -N)` in their :fx); only the normalize and the
+  limiter, which shape the sound, stay in the def-pcm's :fx. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

@@ -524,10 +524,11 @@ const port = (src, to, rows) => {
   const roomSteps = Math.round(Math.max(want("md", -12) + (want("md", -12) < -louder("md") ? 3 : 0), -louder("md")) / 2);
   assert.ok(roomSteps > mdSteps, "less, by the sample's headroom");
   assert.match(mdRoom.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${roomSteps}\\)`), mdRoom.text);
-  const pcMix = portScore(mixSrc, "pc88", { peaks: new Map([["smp-k", -6]]) });
-  assert.ok(want("pc88", -6) > 0, "the PC-8801's ADPCM-B is the louder: the melody would have to go up");
-  assert.match(pcMix.text, new RegExp(`:fx \\[\\(normalize\\) \\(gain ${-Math.round(want("pc88", -6))}\\)\\]`), pcMix.text);
-  assert.doesNotMatch(pcMix.text, /def-mod|limit/, "the melody as it was, the samples not limited");
+  const pcMix = portScore(mixSrc, "pc88", { peaks: new Map([["smp-k", -12]]) });
+  assert.ok(want("pc88", -12) > 2, "the PC-8801's ADPCM-B is the louder: the melody would have to go up");
+  assert.match(pcMix.text, new RegExp(`\\(def-mod :voice smp-k :vel\\+ ${-Math.round(want("pc88", -12) / 2)}\\)`), pcMix.text);
+  assert.match(pcMix.text, /:fx \[\(normalize\)\]/, "the samples' def as written, but for the normalize");
+  assert.doesNotMatch(pcMix.text, /def-mod :ch|limit/, "the melody as it was, the samples not limited");
   assert.doesNotMatch(portScore(mixSrc.replace(/\n\(pcm1[^\n]*/, ""), "md").text, /def-mod/, "no samples, no balance to keep");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.

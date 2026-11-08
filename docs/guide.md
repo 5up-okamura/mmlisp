@@ -2643,8 +2643,10 @@ machine's channels or dropped:
   peak) and the melodic channels come down by `def-mod :ch […] :vel+ N`
   lines — but no further than the machine plays them louder than the
   source did; the log says what is still missing. Where the melody would
-  have to go up, the samples come down (`(gain …)`) instead. Delete the
-  lines to undo it.
+  have to go up, the samples come down instead, by a `def-mod :voice […]
+  :vel+ N` line. The score's own notes and defs stay as written (the
+  normalize and the limiter are the samples' `:fx`); delete the lines to
+  undo it.
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
   forms, language.md §1), a `:prio` each: the kick and snare first, then
