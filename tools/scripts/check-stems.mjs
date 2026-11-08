@@ -26,7 +26,8 @@ import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples, loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderWavSamples } from "../../live/src/export-wav.js";
-import { renderStems, mixerStrips, stemName } from "../../live/src/stems.js";
+import { renderStems, mixerStrips, stemName, soloStrip } from "../../live/src/stems.js";
+import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { targetProfile } from "../../live/src/targets.js";
 import { bakeSampleBank, sampleBankKind } from "../../live/src/sample-bank.js";
 
@@ -135,6 +136,23 @@ for (const file of ADDS_UP) {
   const residual = db(er / em);
   assert.ok(residual < -45, `${file}: the stems add up to the WAV (${residual.toFixed(1)} dB)`);
   console.log(`  ${file}: the stems and the floor are the WAV to ${residual.toFixed(1)} dB`);
+}
+
+// A machine's sample strip soloed sounds, by the key the player holds it
+// by: its voice where the part has one (a soloed track is not a soloed
+// voice — the PC Engine's DDA, soloed by track, silenced itself).
+{
+  const { TARGETS } = await import("../../live/src/targets.js");
+  for (const [name, t] of Object.entries(TARGETS)) {
+    const head = t.channelNames.find((h) => t.partOf(h)?.kind === "sample" && !t.partOf(h).kit);
+    if (!head) continue;
+    const { ir } = compileMMLisp(`(def-score :target ${name})\n(def-pcm snd :file "a.wav")\n(${head} snd :len 4 c)`, "t.mmlisp");
+    const strip = mixerStrips(ir).find((s) => s.head === head);
+    if (name === "pce") assert.equal(strip?.voice, "dda-0", "the DDA's strip is its voice");
+    const p = new IRPlayer(() => {}).loadJSON(ir);
+    soloStrip(p, strip, true);
+    assert.ok(strip.voice ? p._isVoiceAudible(strip.voice) : p._isTrackAudible(strip.trackIndex), `${name} ${head}: soloed, it sounds`);
+  }
 }
 
 console.log("check:stems ok");

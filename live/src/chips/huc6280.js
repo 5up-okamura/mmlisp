@@ -115,6 +115,10 @@ export const pceDda = {
     return { data, rateHz: DDA_RATE, range: null, loop: null };
   },
   sharePrio: 0,
+  // The IR player's key for a channel's DDA voice (ir-player
+  // _dispatchDdaEvent's `dda-N`): its strip mutes and solos the voice, as
+  // the ADPCM-B's and PCM8's do — a soloed track is not a soloed voice.
+  mixVoice: (v) => `dda-${v}`,
   // How many channels its drivers stream samples on at once: DDA is fed a
   // sample at a time by the CPU, which has time for one (the user,
   // 2026-11-08). The conversion gives a score's samples that many.
