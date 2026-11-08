@@ -191,10 +191,6 @@ to Machine, and the MDX's and the MGS's Target with rows). Decisions:
   song's words (tempo, master, LFO). A mode stepped by a macro is not split.
 - Open (stage 3): an SCC song's dead def-wave / wave macros stay.
 
-- Known (a review, 2026-11-08): a noise loop that moves the octave, onto the
-  Mega Drive's mode model, writes an absolute `:mode` inside the loop, so
-  every pass plays as the first; the source's later passes ran higher. Say it
-  in stage 3 (as the split's mode in a loop is said).
 
 ## Machine conversion, stage 3: the wave memories (built 2026-11-08)
 
@@ -225,9 +221,12 @@ Decisions on the way:
   a role macro clears its waves (`(macro :wave none)`); fc's tri / vrc6-saw
   keep their shape on a wave; a :duty over half is its mirror; the envelope
   starts at key-on; a quiet wave's repeat tolerance is 3 % of its swing.
-- Open: inline `:wave (expr)` off a wave channel is dropped, not classified;
-  the SCC's wave4 / wave5 share one memory (the compiler says so); a noise
-  loop moving the octave onto the SN's modes plays every pass as the first.
+- The last three (2026-11-08): a track's `:wave (expr)` off a wave channel
+  is read off the wave the compile folds it to (`wave1@line:col` in
+  metadata.waves); a channel sharing another's wave memory (`waveRam`: the
+  SCC's wave5) is taken last and said when its waves differ; a loop whose
+  passes move the noise's octave or a split's :mode is written out pass by
+  pass (not when it holds a label or a (break): said).
 
 ## The PC Engine (pce; built 2026-10-27)
 

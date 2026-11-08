@@ -126,10 +126,11 @@ function survey(text, from, imports) {
     if (isHead(n)) forms.push(n);
     else if (isList(n, "def") && n.items[1]?.kind === "atom") forms.push(...n.items.slice(2).filter(isHead));
   }
+  const waveNames = new Set([...defNames(roots, "def-wave"), ...defNames(others, "def-wave")]);
   const heads = new Map();
   for (const f of forms) {
     const head = f.items[0].value;
-    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, samples: new Set(), voices: [], noiseMode: false };
+    const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, samples: new Set(), voices: [], waves: new Set(), noiseMode: false };
     heads.set(head, h);
     h.forms.push(f);
     walk(f.items.slice(1), (n, prev) => {
@@ -137,11 +138,12 @@ function survey(text, from, imports) {
       if (isNote(n.value)) h.notes++;
       else if (samples.has(n.value) || kit.has(n.value)) h.samples.add(n.value);
       else if (voices.has(n.value)) h.voices.push(n.value);
+      if (waveNames.has(n.value)) h.waves.add(n.value);
       if (prev?.value === ":mode" && NOISY.has(n.value)) h.noiseMode = true;
     });
   }
   // The waves: the score's def-waves and its imports'.
-  const waves = new Set([...defNames(roots, "def-wave"), ...defNames(others, "def-wave")]);
+  const waves = waveNames;
   // An FDS track's modulation (a depth written above 0), which the PC
   // Engine plays as its LFO (wave-port.js).
   let fdsMod = false;
@@ -317,6 +319,7 @@ function planRows(s, from, to) {
     if (k in dest || !p || p.kind !== kindOf(from, k)) continue;
     if (p.kit && !rolesHere(s.heads.get(k))) continue; // a kit's track plays its roles
     if (p.kind === "sample" && rolesHere(s.heads.get(k))) continue; // its roles go to the ROM rhythm
+    if (p.kind === "wave" && p.waveRam && channelsOf(to, "wave").some((o) => o !== k && to.partOf(o).waveRam?.(to.channels[o].voice) === p.waveRam(to.channels[k].voice) && to.channelNames.indexOf(o) < to.channelNames.indexOf(k))) continue;
     if (free(k, k)) dest[k] = claim(k, k);
   }
   // Then the rest, in the table's order (the pools above have dropped what
@@ -331,15 +334,22 @@ function planRows(s, from, to) {
     return /^fm3/.test(k) && order.includes("fm3") ? ["fm3", ...order.filter((h) => h !== "fm3")] : order;
   };
   const tones = channelsOf(to, "tone", { board: true });
-  const waves = channelsOf(to, "wave", { board: true });
+  // A wave channel whose memory an earlier one has (the SCC's wave5, wave4's)
+  // plays whichever wave was written last: it is taken last, after FM and
+  // the squares.
+  const ramOf = (h) => to.partOf(h).waveRam?.(to.channels[h].voice);
+  const allWaves = channelsOf(to, "wave", { board: true });
+  const sharesRam = (h) => ramOf(h) != null && allWaves.some((o) => o !== h && allWaves.indexOf(o) < allWaves.indexOf(h) && ramOf(o) === ramOf(h));
+  const waves = allWaves.filter((h) => !sharesRam(h));
+  const lastWaves = allWaves.filter(sharesRam);
   for (const k of [...keys].sort((a, b) => (kindOf(from, b) === "noise") - (kindOf(from, a) === "noise"))) {
     if (k in dest) continue;
     const kind = kindOf(from, k);
     let cands = [];
     if (k === "fm3-csm-rate") cands = [];
-    else if (kind === "fm") cands = [...fmFirst(k), ...waves, ...tones];
-    else if (kind === "tone") cands = [...tones, ...waves, ...fmFirst(k)];
-    else if (kind === "wave") cands = [...waves, ...fmFirst(k), ...tones];
+    else if (kind === "fm") cands = [...fmFirst(k), ...waves, ...tones, ...lastWaves];
+    else if (kind === "tone") cands = [...tones, ...waves, ...fmFirst(k), ...lastWaves];
+    else if (kind === "wave") cands = [...waves, ...fmFirst(k), ...tones, ...lastWaves];
     else if (kind === "noise") cands = channelsOf(to, "noise", { board: true });
     else if (kind === "sample") cands = rolesHere(s.heads.get(k)) ? [...channelsOf(to, "sample", { kit: true }), ...channelsOf(to, "sample", { board: true })] : channelsOf(to, "sample", { board: true });
     const h = cands.find((c) => free(k, c));
@@ -432,6 +442,20 @@ class Porter {
     this.replacedWaves = new Set(); // def-wave names a conversion leaves unplayed
     this.replacedSnippets = new Set(); // a def a conversion leaves unnamed (an FDS table's)
     this.setupLfo();
+    // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
+    // the wave written last plays on both — said where their waves differ.
+    const byRam = new Map();
+    for (const [k, h] of Object.entries(map)) {
+      const ram = h !== "drop" && to.partOf(h)?.waveRam?.(to.channels[h].voice);
+      if (ram == null || ram === false) continue;
+      byRam.set(ram, [...(byRam.get(ram) ?? []), [k, h]]);
+    }
+    for (const rows of byRam.values()) {
+      if (rows.length < 2) continue;
+      const sets = rows.map(([k]) => [...(this.s.heads.get(k)?.waves ?? [])].sort().join(" "));
+      if (sets.some((x) => x !== sets[0]) || sets.some((x) => !x))
+        this.say(`${rows.map(([k, h]) => `${this.nameOf(k)} (${h})`).join(" and ")} share one wave memory on the ${to.system}: the wave written last plays on both`);
+    }
     this.envDefs = new Map(); // a voice's envelope macro, onto a wave channel
     this.splits = new Set(Object.keys(map).filter(isSplit).map(splitHead));
   }
@@ -1009,9 +1033,30 @@ class Porter {
         // leaves the split's mode changed starts its next pass in that mode,
         // which a split cannot follow note by note: said.
         const times = isList(it, "x") ? num(it.items[1]) : null;
-        if (times > 1 && ctx.noise && ctx.noise.oct !== oct) ctx.noise.oct += (times - 1) * (ctx.noise.oct - oct);
-        if (times > 1 && ctx.split === "tone" && ctx.state.mode !== mode)
-          this.say(`a loop on ${this.nameOf(ctx.head)} ends in another :mode than it starts: its later passes are split as its first`);
+        const moves = times > 1 && ((ctx.noise && ctx.noise.oct !== oct) || (ctx.split && ctx.state.mode !== mode));
+        // Such a loop is written out a pass after another, each from where
+        // the last ended — unless it holds a label or a (break), which a
+        // copy cannot: then its later passes are read as its first, said.
+        const fixed = (n) => (n?.kind === "atom" && /^#./.test(n.value)) || isList(n, "break") || (n?.kind === "list" && n.items.some(fixed));
+        if (moves && !it.items.slice(2).some(fixed)) {
+          const bodyText = (r) => {
+            const outs2 = [...r.outs];
+            outs2[0] = outs2[1] = null;
+            return this.renderList(it, outs2, r.after).slice(1, -1).trim();
+          };
+          const passes = [bodyText(inner)];
+          for (let k = 1; k < times; k++) {
+            if (ctx.noise) ctx.noise.last = null;
+            passes.push(bodyText(this.body(it.items, 2, ctx)));
+          }
+          if (ctx.noise) ctx.noise.last = null;
+          if (ctx.split !== "noise") this.say(`a loop on ${this.nameOf(ctx.head)} whose passes ${ctx.split ? "change the :mode" : "move the noise's octave"} is written out pass by pass`);
+          outs[i] = passes.join(" ");
+          continue;
+        }
+        if (moves && ctx.noise && ctx.noise.oct !== oct) ctx.noise.oct += (times - 1) * (ctx.noise.oct - oct);
+        if (moves && ctx.split !== "noise")
+          this.say(`a loop on ${this.nameOf(ctx.head)} ${ctx.split ? "ends in another :mode than it starts" : "moves the noise's octave"} and holds a label or a (break): its later passes are read as its first`);
         outs[i] = this.renderList(it, inner.outs, inner.after);
       }
     }
@@ -1199,21 +1244,28 @@ class Porter {
     if (!dst || dst.kind === "wave") return undefined;
     this.replacedWaves.add(v);
     const steps = this.waveSteps(v);
-    const shape = ROLES.includes(v) ? null : steps ? shapeOf(steps) : "square";
+    return this.waveOnto(ROLES.includes(v) ? null : steps ? shapeOf(steps) : "square", `wave '${v}'`, v, ctx);
+  }
+
+  // A wave of `shape` (null: the role `role`'s) onto a channel without wave
+  // memory: on FM the role's voice or the shape's, on a pulse its width.
+  waveOnto(shape, what, role, ctx) {
+    const dst = ctx.destPart;
+    const v = role;
     if (dst.kind === "fm") {
       let name;
       if (!shape) name = twoOp(dst) ? romForRole(dst, v) : (this.needsRoles = true, v);
       else if (twoOp(dst)) name = { sine: "flute", triangle: "flute", saw: "synth" }[shape] ?? "clarinet";
       else { name = `wave-${["pulse25", "pulse12"].includes(shape) ? "square" : shape}`; this.standIns.add(name); }
-      this.say(`wave '${v}' on ${this.nameOf(ctx.head)} plays ${shape ? `as a ${shape}` : "its role"}: ${name} on ${ctx.dest}`);
+      this.say(`${what} on ${this.nameOf(ctx.head)} plays ${shape ? `as a ${shape}` : "its role"}: ${name} on ${ctx.dest}`);
       return name;
     }
     if (dst.kind === "tone" && dst.words("DUTY")) {
       const duty = { pulse25: 4, pulse12: 2 }[shape] ?? 8;
-      this.say(`wave '${v}' on ${this.nameOf(ctx.head)}: ${ctx.dest}'s ${duty === 8 ? "square" : `pulse (:duty ${duty})`}`);
+      this.say(`${what} on ${this.nameOf(ctx.head)}: ${ctx.dest}'s ${duty === 8 ? "square" : `pulse (:duty ${duty})`}`);
       return `:duty ${duty}`;
     }
-    this.say(`wave '${v}' on ${this.nameOf(ctx.head)}: ${ctx.dest} plays its own ${{ "fc-tri": "triangle", "vrc6-saw": "saw" }[dst.name] ?? "square"}`);
+    this.say(`${what} on ${this.nameOf(ctx.head)}: ${ctx.dest} plays its own ${{ "fc-tri": "triangle", "vrc6-saw": "saw" }[dst.name] ?? "square"}`);
     return null;
   }
 
@@ -1316,6 +1368,22 @@ class Porter {
     if ((w === "FM_FMS" || w === "FM_AMS") && ctx.destPart?.kind === "wave" && ctx.srcPart?.kind === "fm") {
       this.say(`${base} on ${this.nameOf(ctx.head)}: FM's LFO sensitivity, not the ${this.to.system}'s LFO; taken out`);
       return { drop: true };
+    }
+    // A track's `:wave (expr)` off a wave channel: the wave it folds to (the
+    // compile names it by its place, `wave1@3:14`), read as a named one is.
+    // One that follows a $slot has no steps to read.
+    if (w === "WAVE" && ctx.srcPart?.kind === "wave" && ctx.destPart && ctx.destPart.kind !== "wave" && !ctx.macro) {
+      if (val.kind === "atom" && this.s.waves.has(val.value)) {
+        const r = this.waveRule(val.value, ctx);
+        return r ? { replace: r } : { drop: true };
+      }
+      const steps = this.waveSteps(`${splitHead(ctx.head)}@${val.line}:${val.column}`);
+      if (!steps) {
+        this.say(`:wave on ${this.nameOf(ctx.head)}: a wave with no steps to read (it follows a $slot, or does not fold); taken out`);
+        return { drop: true };
+      }
+      const r = this.waveOnto(shapeOf(steps), ":wave (a wave of its own)", null, ctx);
+      return r ? { replace: r } : { drop: true };
     }
     // A pulse's width onto a wave channel: the wavetable's pulse of it.
     if (w === "DUTY" && ctx.destPart?.kind === "wave" && num(val) != null && !ctx.macro) {

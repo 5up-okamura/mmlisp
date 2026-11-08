@@ -2651,7 +2651,10 @@ Game Boy's `wave`) take FM, squares and one another's waves the same way:
   another's: the FDS's table summed is wave2's wave, held at `:vol 0`; its
   rate is wave2's pitch with `:lfo-freq`; its depth is wave1's nearest
   `:fms` at its middle note. Other LFOs do not cross (said).
-- A `(macro :wave …)` onto FM or a square loses its waves and keeps the rest.
+- A `(macro :wave …)` onto FM or a square loses its waves and keeps the rest;
+  a track's `:wave (expr)` is read as the wave it folds to.
+- The SCC's `wave5` plays wave4's memory: it is taken last, and said when
+  the two would play different waves.
 
 The words the machine lacks are read in its own words or dropped:
 
@@ -2660,6 +2663,8 @@ The words the machine lacks are read in its own words or dropped:
   `:noise-rate` and the Famicom's and Game Boy's noise, whose rate is each
   note's pitch.
 - A rhythm sound with a pitch plays at `c4` on the PC-8801's ROM rhythm.
+- A loop whose passes move the noise's octave, or a split track's `:mode`,
+  is written out pass by pass.
 - These are dropped: DT2 and SSG-EG; the OPM's LFO depths and wave; the
   SSG's mixer and envelope where the machine has none; `:duty` on a square
   without one; a voice's operator words across the FM families; a sample's

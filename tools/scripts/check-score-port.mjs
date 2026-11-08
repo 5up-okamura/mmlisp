@@ -310,7 +310,6 @@ const port = (src, to, rows) => {
   assert.match(port("(def-score :target fc)\n(noise :oct 2 c c)\n(noise c c |)", "md").text, /\(noise :mode white2 c c \|\)/);
   assert.match(port("(def-score :target x68k)\n(fm8 :len 8 c :mode noise c)\n(fm8 c c :mode tone c |)", "md").text, /\(noise c c _ \|\)/);
   // A loop that moves the octave ends its passes' moves on; :oct+ moves it.
-  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\) :mode white0 c\)/);
   assert.match(port("(noise :mode white0 c :oct+ 1 c)", "fc").text, /\(noise :mode white :oct \d [a-g]\+? [a-g]\+?\)/, ":oct+ read, not left");
   // A pruned voice's base goes too when nothing else names it.
   const prune = port('(import "presets/fm-roles/set.mmlisp")\n(def-fm mid piano :tl1 3)\n(def-fm lead mid :tl2 4)\n(fm1 lead :len 4 c e)', "fc");
@@ -375,6 +374,21 @@ const port = (src, to, rows) => {
   assert.equal(shapeOf(Array(32).fill(0)), "sine");
   // Two kinds on one of pce's channels: said as one channel.
   assert.match(portScore("(fm1 c)\n(noise c)", "pce", { rows: { fm1: "wave5", noise: "noise5" } }).error, /fm1 \(to wave5\) and noise \(to noise5\) are one channel/);
+}
+
+// ── The remaining three (2026-11-08) ──
+{
+  // A track's own :wave (expr) off a wave channel: the wave it folds to, read.
+  const src = "(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 :wave (* saw 0.5) :len 4 c)";
+  assert.match(port(src, "md").text, /\(fm1 wave-saw :len 4 c\)/);
+  // The SCC's wave5 shares wave4's memory: taken last, and said when made to.
+  const pce = readFileSync(join(repo, "tools/tests/pce/wave.mmlisp"), "utf8");
+  assert.notEqual(portRows(pce, "msx").rows.find((x) => x.key === "wave5").to, "wave5");
+  assert.ok(port(pce, "msx", { wave6: "wave5" }).said.some((x) => /share one wave memory/.test(x)));
+  // A loop that moves the noise's octave, or a split's :mode, written out pass by pass.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d > :mode white0 c d > :mode white0 c\)/);
+  const split = port("(def-score :target x68k)\n(fm8 :len 8 (x 2 c :mode noise c) c)", "md").text;
+  assert.match(split, /\(noise :len 8 _ c c c c\)/);
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);
