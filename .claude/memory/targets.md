@@ -288,7 +288,18 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   cause was elsewhere: part K's and part G's loops matched, but pcm1 took
   :prio 2 as the snare row did — forms of an equal :prio append, not layer,
   which moved the loop. placeLayers now numbers the rows 1…n in DRUM_RANKS
-  order (the busier first among alike). Inline operator words on such a
+  order (the busier first among alike).
+- **The user's MDX set (DTWNB, 19 songs + PDX) onto every machine**
+  (2026-11-08): no conversion errors. Fixed from it: opnAs2op's def is on
+  `init-fm` (a channel coming from a ROM voice kept its :ws / :vib / :ksl,
+  so its "user voice" differed from another channel's → W_TARGET); the
+  compiler's W_SONG_WRITE_RACE only where the two writes differ (each MDX
+  part writing :lfo-freq 204 became five equal `:lfo-rate 5`). Open:
+  x68k's FM renders ~7 dB under the OPN's for one voice and note (−22.2 vs
+  −15.2 dBFS RMS), so an MDX's levels clip on pc88 / md (25k samples on
+  DTWNB00 pc88) — a per-machine gain the conversion does not make up; the
+  user to decide. The fc triangle's `:vel 0` (a mute) still draws its
+  W_TARGET note; left. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

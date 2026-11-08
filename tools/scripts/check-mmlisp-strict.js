@@ -416,6 +416,18 @@ async function main() {
       expected: ["E_UNKNOWN_LIST"],
     },
     {
+      // A song-wide value written by two tracks on one tick: a race only
+      // where the writes differ (each part setting the song's LFO alike).
+      label: "the same song-wide write on two tracks",
+      src: "(fm1 :lfo-rate 5 :len 4 c)\n(fm2 :lfo-rate 5 :len 4 e)",
+      expected: [],
+    },
+    {
+      label: "different song-wide writes on two tracks",
+      src: "(fm1 :lfo-rate 5 :len 4 c)\n(fm2 :lfo-rate 3 :len 4 e)",
+      expected: ["W_SONG_WRITE_RACE"],
+    },
+    {
       // Its body is still read: a :mode there has no part to ask.
       label: "a channel the machine has not, with a :mode",
       src: "(def-score :target pce)\n(noise :mode white1 :len 8 c)",

@@ -187,7 +187,10 @@ export function opnAs2op(name, words) {
   if (others.length) without.push(`operator${others.length > 1 ? "s" : ""} ${others.join(", ")}`);
   if ([1, 2, 3, 4].some((n) => (w.get(`FM_DT${n}`) ?? 0) !== 0)) without.push("the detune");
   if (mods.length > 1) without.push(`modulator${mods.length - 1 > 1 ? "s" : ""} ${mods.filter((n) => n !== mod).join(", ")}`);
-  return { text: `(def-fm ${name} :fb ${fb} ${modLine}\n  ${op(car, false)})`, without };
+  // On init-fm: the words the 4-op voice has no say in (:ws, :ksl, :vib) set
+  // too, so a channel coming from a ROM voice keeps none of its registers —
+  // the one user voice is then the same on every channel (W_TARGET).
+  return { text: `(def-fm ${name} init-fm :fb ${fb} ${modLine}\n  ${op(car, false)})`, without };
 }
 function carrierMainOf(w) {
   const carriers = CARRIERS_OF[w.get("FM_ALG") ?? 7];

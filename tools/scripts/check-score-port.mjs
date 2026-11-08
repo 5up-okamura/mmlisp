@@ -249,7 +249,7 @@ const port = (src, to, rows) => {
 (fm2 organ :len 4 c)
 (fm3 gm-piano :len 4 c)`;
   const r = port(md, "msx");
-  assert.match(r.text, /\(def-fm lead :fb 5 :tl1 \d+ :ar1 \d+ .*:eg1 \d\n  :ar2 /, "the score's own voice stays, read as two operators");
+  assert.match(r.text, /\(def-fm lead init-fm :fb 5 :tl1 \d+ :ar1 \d+ .*:eg1 \d\n  :ar2 /, "the score's own voice stays, read as two operators, on init-fm (its :ws / :ksl / :vib set, none carried from a ROM voice before it)");
   assert.match(r.text, /\(fm1 lead :len 4 c e g\)/, "its op words gone");
   assert.match(r.text, /\(fm2 organ /);
   assert.doesNotMatch(r.text, /def-fm organ/, "the 4-op def that hid the ROM's organ goes");
@@ -261,9 +261,17 @@ const port = (src, to, rows) => {
 (fm1 lead :len 8 c d e f g a b > c)
 (fm2 bass :len 4 c g)
 (fm3 bass :len 4 e)`, "msx");
-  assert.match(two4.text, /\(def-fm lead :fb 5 /, "the busier voice is the user voice, as two operators");
+  assert.match(two4.text, /\(def-fm lead init-fm :fb 5 /, "the busier voice is the user voice, as two operators");
   assert.doesNotMatch(two4.text, /def-fm bass/, "the other's def goes");
   assert.match(two4.text, /\(fm2 (?!bass)[\w-]+ :len 4 c g\)/, "the other plays a ROM voice");
+  // A channel coming to the user voice from a ROM voice carries none of the
+  // ROM's registers: the user voice is one on every channel (no W_TARGET).
+  const fromRom = port(`(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :ml1 2 :tl2 0 :tl3 30 :tl4 0)
+(def-fm organ init-fm :alg 7 :tl1 10)
+(fm1 organ :len 4 c d lead e f g a b > c)
+(fm2 lead :len 4 _ _ c d e f g a)`, "msx");
+  const fromRomDiag = compileMMLisp(fromRom.text, join(repo, "tools/tests/t.mmlisp"), { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), fromRom.text) }).diagnostics;
+  assert.deepEqual(fromRomDiag.filter((d) => d.code === "W_TARGET").map((d) => d.message), [], `one user voice:\n${fromRom.text}`);
   assert.doesNotMatch(two4.text, /def-fm spare/, "a 4-op def no track names cannot play on the OPLL: it goes");
   // The converted score holds what it plays: a def nothing names goes, and
   // then what only it named; one a track plays stays.

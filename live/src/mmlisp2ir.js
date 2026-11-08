@@ -177,18 +177,21 @@ function warnSongWrites(tracks, diagnostics, frameHz) {
       live.set(target, ev.args?.loop ? Infinity : ev.tick + ticksOf(ev));
     }
   }
-  // Two channels writing one song-wide value on one tick: the later track wins.
-  const writers = new Map(); // "target@tick" → channel
+  // Two channels writing one song-wide value on one tick, differently: the
+  // later track wins. The same write twice (each part of a song setting the
+  // song's LFO) races nothing.
+  const writers = new Map(); // "target@tick" → { channel, what }
   for (const t of tracks)
     for (const ev of t.events) {
       if (!ev.cmd.startsWith("PARAM_") || !isSongTarget(ev.args?.target)) continue;
       const key = `${ev.args.target}@${ev.tick}`;
+      const what = `${ev.cmd} ${JSON.stringify(ev.args)}`;
       const other = writers.get(key);
-      if (other != null && other !== t.scoreChannel)
+      if (other != null && other.channel !== t.scoreChannel && other.what !== what)
         pushDiag(diagnostics, "warning", "W_SONG_WRITE_RACE",
-          `${other} and ${t.scoreChannel} write the same song-wide value on one tick; ${t.scoreChannel}'s, the later track, wins`,
+          `${other.channel} and ${t.scoreChannel} write the same song-wide value on one tick; ${t.scoreChannel}'s, the later track, wins`,
           ev.src, t.scoreChannel);
-      writers.set(key, t.scoreChannel);
+      writers.set(key, { channel: t.scoreChannel, what });
     }
 }
 const PCM_POINT_TARGETS = new Set(["RANGE_START", "RANGE_END", "RANGE_LEN",

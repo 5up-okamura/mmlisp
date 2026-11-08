@@ -366,7 +366,8 @@ values (§8) — belong to the song, not to the channel whose track writes them.
 Their sweeps run on their own, one per value: an effect taking that channel
 (§9.3) or the track ending does not stop them; the next write to the value
 does. If two tracks write one at the same tick the **last writer wins** (track
-order), and for all but `:tempo` that is flagged `W_SONG_WRITE_RACE`; the
+order), and for all but `:tempo` that is flagged `W_SONG_WRITE_RACE` where
+the two writes differ (the same write twice races nothing); the
 tick-0 initial tempo resolves the same way. Keep song-wide automation on a
 single track to avoid ambiguity.
 
