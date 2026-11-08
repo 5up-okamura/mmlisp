@@ -57,6 +57,8 @@ function profile(def) {
     partOf: (head) => def.channels[head]?.part ?? null,
     chipOf: (head) => def.chips[def.channels[head]?.chip] ?? null,
     headsOf: (partName) => heads.filter((h) => def.channels[h].part.name === partName),
+    // A chip's channels, in the table's order (an importer's channel n of it).
+    headsOfChip: (chip) => heads.filter((h) => def.channels[h].chip === chip),
     headsOfKind: (kind) => heads.filter((h) => def.channels[h].part.kind === kind),
     hasPart: (partName) => parts.some((p) => p.name === partName),
     /** The physical voice `head` plays on, as a key two heads can be compared by. */

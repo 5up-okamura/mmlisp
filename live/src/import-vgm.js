@@ -2278,16 +2278,23 @@ export function vgmDests(targetName = "md") {
 // A Famicom expansion's channel on its own name, where the target has it
 // (fc): the FDS on fds-wave, the VRC7's FM2 on vrc7-fm2, the 5B's SSGB on
 // 5b-sqr2, the VRC6's and the MMC5's on theirs, the N163's channel 8 on
-// n163-wave1 (the language counts them from the top).
-const expansion = (key) => {
-  const m = key.match(/^(?:(FDS)|VRC7 FM(\d)|5B SSG([ABC])|(VRC6|MMC5) SQ(\d)|(VRC6 saw)|N163 CH(\d))$/);
-  if (!m) return null;
-  if (m[1]) return "fds-wave";
-  if (m[2]) return `vrc7-fm${m[2]}`;
-  if (m[3]) return `5b-sqr${" ABC".indexOf(m[3])}`;
-  if (m[4]) return `${m[4].toLowerCase()}-sqr${m[5]}`;
-  if (m[6]) return "vrc6-saw";
-  return `n163-wave${9 - Number(m[7])}`;
+// n163-wave1 (the language counts them from the top): a row's key read as
+// its chip and its place among that chip's channels, which the target's
+// channel table names (headsOfChip).
+const EXPANSION_KEYS = [
+  [/^FDS$/, () => ["fds", 0]],
+  [/^VRC7 FM(\d)$/, (m) => ["vrc7", m[1] - 1]],
+  [/^5B SSG([ABC])$/, (m) => ["5b", "ABC".indexOf(m[1])]],
+  [/^(VRC6|MMC5) SQ(\d)$/, (m) => [m[1].toLowerCase(), m[2] - 1]],
+  [/^VRC6 saw$/, () => ["vrc6", 2]],
+  [/^N163 CH(\d)$/, (m) => ["n163", 8 - m[1]]],
+];
+const expansion = (target, key) => {
+  for (const [re, at] of EXPANSION_KEYS) {
+    const m = key.match(re);
+    if (m) { const [chip, i] = at(m); return target.headsOfChip(chip)[i] ?? null; }
+  }
+  return null;
 };
 
 // Whether the target's tone channels play a chip's noise themselves (the
@@ -2296,8 +2303,8 @@ const expansion = (key) => {
 // SSG noise row is not offered; elsewhere they are that row's. `chip` is the
 // rows' prefix (`5B`, `AY-3-8910`).
 const mixesNoise = (target, chip = "") => {
-  const own = expansion(`${chip} SSGA`);
-  const d = own && target.channels[own] ? own : destsFor(target).psg[0];
+  const own = expansion(target, `${chip} SSGA`);
+  const d = own ?? destsFor(target).psg[0];
   return !!(d && target.partOf(d).modes?.noise);
 };
 
@@ -2350,7 +2357,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
     // is where x68k's noise is; so does a YM2413 on the FM-PAC's (msx).
     const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}`
-      : /^YM2413 FM\d$/.test(ch.key) && oplls.length ? `fm${ch.key.slice(-1)}` : expansion(ch.key);
+      : /^YM2413 FM\d$/.test(ch.key) && oplls.length ? `fm${ch.key.slice(-1)}` : expansion(target, ch.key);
     const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
     else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }

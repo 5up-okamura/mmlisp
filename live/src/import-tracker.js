@@ -97,10 +97,7 @@ const OWN_CHIPS = {
 const ownChip = (tg, chip) => OWN_CHIPS[tg]?.[chip] ?? null;
 // A module chip's channels on its own machine: the machine's channels of the
 // chip it plays on, in its table's order, which is Furnace's.
-const chipHeads = (tg, chip) => {
-  const tp = targetProfile(tg), on = ownChip(tg, chip)?.on ?? chip;
-  return tp.channelNames.filter((h) => tp.channels[h].chip === on);
-};
+const chipHeads = (tg, chip) => targetProfile(tg).headsOfChip(ownChip(tg, chip)?.on ?? chip);
 // A target's channels by what they take (import-song.js destsFor), its
 // rhythm tracks apart from its samples.
 const targetDests = (name) => {
