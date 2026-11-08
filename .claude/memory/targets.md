@@ -299,7 +299,20 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   −15.2 dBFS RMS), so an MDX's levels clip on pc88 / md (25k samples on
   DTWNB00 pc88) — a per-machine gain the conversion does not make up; the
   user to decide. The fc triangle's `:vel 0` (a mute) still draws its
-  W_TARGET note; left. Inline operator words on such a
+  W_TARGET note; left.
+- **Open with a Target ≡ Open, then Convert to Machine…** (user, 2026-11-08:
+  "is it the same processing?"). For the songs read as their own machine
+  first — MDX, MGS, mucom88 past pc88 / md — the Open path is
+  `portImported` (index.html): the source's imports resolved, then
+  portScore, as Convert does; held equal in the browser (DTWNB00 onto pce /
+  msx / md / gb, pcmt13 onto pce / x68k / msx: 0 lines differ). Convert to
+  General MIDI now hands chipScoreToMidi the score's samples (`scorePcm`),
+  as the import's readViaMidi does: without them the drums' roles were read
+  from names (31 lines differed on DTWNB00). Still two roads: VGM, NSF,
+  DefleMask / Furnace, MIDI and mucom88's md write each machine themselves,
+  so Open onto X and Open + Convert differ (a VGM of ab-core onto pc88: its
+  noise dropped by the writer, kept by the conversion; fc / gb channels
+  chosen differently) — put to the user, undecided. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

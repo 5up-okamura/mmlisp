@@ -1137,7 +1137,7 @@
     import { renderWav } from './src/export-wav.js';
     import { mixerStrips, renderStems, stemName, soloStrip, muteStrip } from './src/stems.js';
     import { newScoreSource, machineSummary } from './src/new-score.js';
-    import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
+    import { importMucom, MUCOM_TARGETS, MUCOM_WRITES, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from './src/import-vgm.js';
@@ -3308,10 +3308,14 @@
 
     // The song converted for its target: midi reads it as the PC-8801's, then
     // through its MIDI (readViaMidi), with no samples of its own.
+    // Another machine reads the PC-8801's score as Convert to Machine… would
+    // (portImported); midi, through its MIDI (readViaMidi).
     async function convertMucom(song, datBytes, pcmBytes) {
-      if (song.target !== 'midi') return importMucom(song.bytes, datBytes, pcmBytes, { target: song.target });
+      if (MUCOM_WRITES.includes(song.target)) return importMucom(song.bytes, datBytes, pcmBytes, { target: song.target });
       const res = importMucom(song.bytes, datBytes, pcmBytes, { target: 'pc88' });
-      return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
+      if (song.target === 'midi') return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
+      const out = await portImported(res, song.target, { fileName: song.fileName });
+      return { ...res, source: `; Imported as pc88, then onto ${song.target}\n${out.text}`, warnings: [...res.warnings, ...out.said] };
     }
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
@@ -3640,12 +3644,24 @@
     // MIDI reads it as its own machine's. `partOf`: each of its own
     // machine's channels as the song names the part. Resolves the score, or
     // null on Cancel.
+    // An import read as its own machine's score, onto another: the score's
+    // imports resolved, then portScore — as Edit > Convert to Machine… does
+    // with the same score open, so the two give the one result.
+    async function portImported(res, target, { fileName, rows = undefined, names = undefined, header = false }) {
+      const imports = await readImportSources(res.source, mmlispName(fileName));
+      const out = portScore(res.source, target, { rows, imports, header, names });
+      if (out.error) throw new Error(out.error);
+      return out;
+    }
+
     async function driverSongDialog({ fileName, tag, own, summary, res, partOf, hint }) {
       const targets = [own, ...PORT_TARGETS.filter((t) => t !== own)];
       // A part on several channels (MGS's FM rhythm) is told apart by them.
       const shared = new Set(Object.values(partOf).filter((v, i, all) => all.indexOf(v) !== i));
       const name = (h) => (partOf[h] == null ? h : shared.has(partOf[h]) ? `${partOf[h]} (${h})` : partOf[h]);
-      const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { name }));
+      // The rows from the score with its imports, as the conversion reads it.
+      const imports = await readImportSources(res.source, mmlispName(fileName));
+      const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { imports, name }));
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary,
@@ -3658,9 +3674,8 @@
       const target = got.fields.target;
       if (target === 'midi') return { target, res: await readViaMidi(res, { fileName, tag, own }) };
       if (target === own) return { target, res };
-      const out = portScore(res.source, target, { rows: got.rows, header: false, names: partOf });
-      if (out.error) throw new Error(out.error);
-      const source = out.text.replace(new RegExp(`^(; Imported from .*?) \\(${tag}\\)`), `$1 (${tag}, read as ${own}, then onto ${target})`);
+      const out = await portImported(res, target, { fileName, rows: got.rows, names: partOf });
+      const source = out.text.replace(new RegExp(`^(; Imported from .*?) \\(${tag}((?:, [^)]*)?)\\)`), `$1 (${tag}$2, read as ${own}, then onto ${target})`);
       return { target, res: { ...res, source, warnings: [...res.warnings, ...out.said] } };
     }
     // The conversion's rows as the import dialog shows them (score-port.js
@@ -4451,7 +4466,7 @@
           const { ir, diagnostics } = compileMMLisp(text, _lastFileName, { imports, voiceStamps: true });
           const errors = diagnostics.filter((d) => d.severity === 'error');
           if (errors.length) throw new Error(`the score does not compile: ${errors[0].message}`);
-          const res = chipScoreToMidi(ir, { source: text, fileName: _lastFileName, from: `${from}, then as MIDI` });
+          const res = chipScoreToMidi(ir, { source: text, pcm: await scorePcm(ir), fileName: _lastFileName, from: `${from}, then as MIDI` });
           out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
           said = res.warnings;
         } else {
@@ -5904,6 +5919,21 @@
       for (const d of diags) {
         log(`MMB: ${d.message}`, d.severity === 'error' ? 'err' : d.severity === 'warning' ? 'warn' : 'info');
       }
+    }
+
+    // The score's played samples as an import hands them over ({ mono,
+    // entries }, one buffer): what the General MIDI reading listens to for a
+    // drum's role (import-to-midi.js gmReading), so a Convert to Machine… of
+    // the score hears them as its import did.
+    async function scorePcm(ir) {
+      const blobs = await pcmSampleBlobsForMmb(ir);
+      if (!blobs) return null;
+      const entries = [];
+      let frames = 0;
+      for (const [name, b] of Object.entries(blobs)) { entries.push({ name, offset: frames, frames: b.data.length, rate: b.baseRate }); frames += b.data.length; }
+      const mono = new Float32Array(frames);
+      for (const e of entries) mono.set(blobs[e.name].data, e.offset);
+      return { mono, entries, rate: entries[0]?.rate };
     }
 
     async function pcmSampleBlobsForMmb(ir, played = collectPcmUsage(ir)) {
