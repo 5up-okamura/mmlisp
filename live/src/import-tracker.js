@@ -49,7 +49,7 @@
 // at a column of 0 only under one. A .fur's DPCM channel is pcm1 (dpcmTrack).
 //
 // A module of the MSX's, the X68000's or the PC-88's chips can be that
-// machine's score (TARGET_CHIPS): the SSG's mixer, noise period and
+// machine's score (OWN_CHIPS): the SSG's mixer, noise period and
 // hardware envelope as :mode, :noise-rate and :env / :env-rate (Furnace's
 // ay.cpp), the SCC's wavetables as the PC Engine's, the YM2413's voices as
 // its ROM's or a 2-op def-fm and its drums on the rhythm tracks, the
@@ -77,12 +77,29 @@ const CHANNEL_KINDS = {
   fm: "FM", fm3op: "FM operator", opm: "OPM FM", opll: "OPLL FM", opl: "OPL FM",
   psg: "square", wave: "wavetable", noise: "noise", pcm: "sample", rhythm: "rhythm",
 };
-// The chip families (the readers' `chip`) each target plays as its own. A
-// module offers the targets whose chips play its notes, the one playing the
-// most first (a tie: this order), md, then every other machine.
-const TARGET_CHIPS = {
-  pce: ["pce"], fc: ["nes", "vrc6", "fds", "vrc7"], gb: ["gb"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
-  pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
+// The chip families (the readers' `chip`) each target plays as its own, and
+// how: `on` the target's chip whose channels it takes (its channel table's;
+// default the same name), `as` the chip it is read as (its words, its
+// column; default itself) — the Famicom's VRC7 the OPLL with its own ROM, the
+// MMC5's pulses the 2A03's, the N163 the SCC, an AY (Furnace's 5B) the SSG on
+// the 5B's channels. A module offers the targets whose chips play its notes,
+// the one playing the most first (a tie: this order — an AY module the MSX's,
+// not the Famicom's 5B), md, then every other machine.
+const OWN_CHIPS = {
+  pce: { pce: {} },
+  msx: { ssg: {}, scc: {}, opll: {}, "opll-rhythm": {} },
+  gb: { gb: {} },
+  fc: { nes: { on: "apu" }, vrc6: {}, fds: {}, vrc7: { as: "opll" }, mmc5: { as: "nes" }, n163: { as: "scc" }, ssg: { on: "5b" } },
+  x68k: { opm: {} },
+  pc88: { opn: {}, ssg: {}, "opna-rhythm": {} },
+  md: { ym2612: {}, sn76489: {} },
+};
+const ownChip = (tg, chip) => OWN_CHIPS[tg]?.[chip] ?? null;
+// A module chip's channels on its own machine: the machine's channels of the
+// chip it plays on, in its table's order, which is Furnace's.
+const chipHeads = (tg, chip) => {
+  const tp = targetProfile(tg), on = ownChip(tg, chip)?.on ?? chip;
+  return tp.channelNames.filter((h) => tp.channels[h].chip === on);
 };
 // A target's channels by what they take (import-song.js destsFor), its
 // rhythm tracks apart from its samples.
@@ -98,7 +115,7 @@ const VOL_MAX = { opl: 63 };
 
 // The chips whose new note stops a 00xy arpeggio (Furnace's
 // keyOffAffectsArp: the PSGs and the wave chips, not FM, the OPLL or the SCC).
-const ARP_STOPS_AT_NOTE = new Set(["nes", "vrc6", "pce", "gb", "sn76489", "ssg"]);
+const ARP_STOPS_AT_NOTE = new Set(["nes", "vrc6", "fds", "pce", "gb", "sn76489", "ssg"]);
 
 // A row's C-0 as MIDI by its channel (the model, above).
 const C0_MIDI = (chn) => (chn.chip === "sn76489" ? 36
@@ -118,12 +135,8 @@ const PCE_NOISE = { 4: "noise5", 5: "noise6" };
 const PCE_NOISE_TABLE = [4, 13, 15, 18, 21, 23, 25, 27, 29, 31, 0, 2];
 const PCE_NOISE_BASE = 36; // chips/huc6280.js NOISE_NOTE_BASE: c2 is rate 0
 const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed", 0x17: "DDA" };
-// The 2A03 as an fc score: its channels' places, and the noise's register
-// rate (0 the fastest) for a note — Furnace's, which DefleMask's modules
-// play by (nes.cpp noiseTable, properNoiseLayout off).
-const FC_DESTS = ["sqr1", "sqr2", "tri", "noise"];
-// The VRC6's on fc: its pulses and its saw, in Furnace's channel order.
-const VRC6_DESTS = ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw"];
+// The 2A03 noise's register rate (0 the fastest) for a note — Furnace's,
+// which DefleMask's modules play by (nes.cpp noiseTable, properNoiseLayout off).
 const FC_NOISE_UP = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4], FC_NOISE_TOP = [3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 5, 4];
 const FC_NOISE_TABLE = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 4,
   ...FC_NOISE_UP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP, ...FC_NOISE_UP, ...FC_NOISE_TOP]; // then 15
@@ -326,7 +339,7 @@ export function analyzeTracker(t) {
   // A module may be the score of its chips' machine — an MSX one msx, an
   // NES one the Famicom's (an expansion's channels, VRC6, FDS …, left out
   // as md would leave them) — or the Mega Drive's.
-  const own = Object.keys(TARGET_CHIPS).map((tg) => ({ tg, n: channels.filter((c) => TARGET_CHIPS[tg].includes(c.chip)).reduce((s, c) => s + c.notes, 0) }))
+  const own = Object.keys(OWN_CHIPS).map((tg) => ({ tg, n: channels.filter((c) => ownChip(tg, c.chip)).reduce((s, c) => s + c.notes, 0) }))
     .filter((x) => x.n > 0).sort((x, y) => y.n - x.n).map((x) => x.tg);
   const mine = own.includes("md") ? own : [...own, "md"];
   // And every other machine: the rows say what each one keeps.
@@ -343,7 +356,7 @@ export function analyzeTracker(t) {
     const { dest } = defaultTrackerOptions({ ...base, targets: all, target: tg }, tg);
     return channels.reduce((n, c) => n + (dest[c.index] != null && dest[c.index] !== "drop" ? c.notes : 0), 0);
   };
-  const mixed = channels.some((c) => c.notes > 0 && !(TARGET_CHIPS[all[0]] ?? []).includes(c.chip));
+  const mixed = channels.some((c) => c.notes > 0 && !ownChip(all[0], c.chip));
   const pool = all.filter((tg) => tg !== "msx");
   const target = mixed ? pool.reduce((best, tg) => (keptOn(tg) > keptOn(best) ? tg : best), pool[0]) : all[0];
   return { ...base, targets: [target, ...all.filter((tg) => tg !== target)], target };
@@ -352,11 +365,11 @@ export function analyzeTracker(t) {
 /**
  * The channels a `target` score offers a module's rows: its channel table's
  * (targetDests), but on fc and pce the ones a module's channels map onto in
- * Furnace's order (the 2A03's, the VRC6's, the FDS's, the DMC; pce's waves
- * and its two noises) — the Famicom's other expansions are not read.
+ * Furnace's order (each Famicom chip's, chipHeads; pce's waves and its two
+ * noises).
  */
 export function trackerDests(target = "md") {
-  if (target === "fc") return [...FC_DESTS, ...VRC6_DESTS, "fds-wave", "pcm1"];
+  if (target === "fc") return Object.keys(OWN_CHIPS.fc).flatMap((c) => chipHeads("fc", c));
   if (target === "pce") return [...PCE_WAVES, ...Object.values(PCE_NOISE)];
   const d = targetDests(target);
   return [...d.fm, ...d.psg, ...(d.noise ? [d.noise] : []), ...d.wave, ...d.rhythm];
@@ -378,16 +391,14 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     }
     return { dest, phrases: true, bpm: null, target };
   }
-  // An NES module on fc: the 2A03's channels in their places, the DPCM on
-  // pcm1, the VRC6's on vrc6-sqr1, vrc6-sqr2 and vrc6-saw, the FDS's on
-  // fds-wave; another expansion's are not the target's.
-  if (target === "fc" && a.channels.some((c) => TARGET_CHIPS.fc.includes(c.chip))) {
+  // An NES module on fc: each Famicom chip's channels in their places
+  // (chipHeads) — the 2A03's and its DPCM, the VRC6's, the FDS's, the VRC7's,
+  // the MMC5's pulses (not its PCM), the N163's; another chip's are not fc's.
+  if (target === "fc" && a.channels.some((c) => ownChip("fc", c.chip))) {
     const dest = {};
     for (const ch of a.channels) {
       const i = a.channels.filter((c) => c.chip === ch.chip && c.index < ch.index).length;
-      dest[ch.index] = !(ch.notes > 0) ? "drop" : ch.chip === "vrc6" ? VRC6_DESTS[i] ?? "drop" : ch.chip === "fds" ? "fds-wave"
-        : ch.chip === "vrc7" ? (i < 6 ? `vrc7-fm${i + 1}` : "drop")
-        : ch.chip !== "nes" ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
+      dest[ch.index] = ch.notes > 0 && ownChip("fc", ch.chip) ? chipHeads("fc", ch.chip)[i] ?? "drop" : "drop";
     }
     return { dest, phrases: true, bpm: null, target };
   }
@@ -397,10 +408,9 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
   if (target !== "md") {
     const tp = targetProfile(target);
     const d = targetDests(target);
-    const own = TARGET_CHIPS[target] ?? [];
     const board = onBoard(tp);
     // The FM-PAC's rhythm takes its channels 7-9.
-    const rhythmOn = a.channels.some((c) => c.kind === "rhythm" && c.notes > 0 && own.includes(c.chip));
+    const rhythmOn = a.channels.some((c) => c.kind === "rhythm" && c.notes > 0 && ownChip(target, c.chip));
     const fm = d.fm.filter((f) => !(rhythmOn && tp.partOf(f).name === "opll-fm" && /^fm[789]$/.test(f)) && board(f));
     const sqr = d.psg.filter(board), waves = d.wave.filter(board), rhythm = [...d.rhythm];
     const order = ["fm", "opm", "opll", "psg", "wave", "rhythm", "noise", "fm3op", "opl"];
@@ -408,7 +418,7 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     for (const ch of [...a.channels].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind))) {
       let x = "drop";
       if (ch.notes === 0 || ch.kind === "pcm") x = "drop";
-      else if (ch.kind === "rhythm") x = own.includes(ch.chip) ? rhythm.shift() ?? "drop" : "drop";
+      else if (ch.kind === "rhythm") x = ownChip(target, ch.chip) ? rhythm.shift() ?? "drop" : "drop";
       // (A 4-op voice on the OPLL is the nearest ROM voice; on a tone or wave
       // channel its notes alone: play what can be played.)
       else if (ch.kind === "fm" || ch.kind === "opm" || ch.kind === "opll") x = fm.shift() ?? sqr.shift() ?? waves.shift() ?? "drop";
@@ -1039,11 +1049,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // A channel on its own chip's part of the target: the SSG (its mixer,
     // the song's noise period), the SCC (its wavetables), the OPLL (its
     // voices), a rhythm sound.
-    const own = !!TARGET_CHIPS[tg]?.includes(chn.chip);
-    const ssgCh = own && chn.chip === "ssg" && part?.name === "ssg";
-    const sccCh = own && chn.chip === "scc" && part?.kind === "wave";
-    // (The VRC7 is the OPLL's core with a ROM of its own, on fc's vrc7-fm.)
-    const opllCh = own && ((chn.chip === "opll" && part?.name === "opll-fm") || (chn.chip === "vrc7" && part?.name === "vrc7-fm"));
+    const own = !!ownChip(tg, chn.chip);
+    const like = ownChip(tg, chn.chip)?.as ?? chn.chip; // the chip it is read as (OWN_CHIPS)
+    const ssgCh = own && like === "ssg" && part?.kind === "tone";
+    const sccCh = own && like === "scc" && part?.kind === "wave";
+    const opllCh = own && like === "opll" && !!part?.romNames; // the FM-PAC's, the VRC7's
     const rhythmCh = /^rhythm/.test(ch.dest);
     // The FDS on fc's fds-wave: its wavetables 64 steps, its gain 0-32 linear,
     // its modulation unit as the song's :lfo- words.
@@ -1056,7 +1066,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const waveCh = pceVol || sccCh || fdsCh || gbCh === "wave"; // a channel that plays the module's wavetables
     // The VRC6 on fc: a pulse (its eight duties) or the saw, each column
     // linear (the saw's to 63) and its volume macro a ratio of it.
-    const vrc6Ch = onFc && chn.chip === "vrc6" && VRC6_DESTS.includes(ch.dest) ? (ch.dest === "vrc6-saw" ? "saw" : "pulse") : null;
+    const vrc6Ch = onFc && chn.chip === "vrc6" && ch.dest.startsWith("vrc6-") ? (ch.dest === "vrc6-saw" ? "saw" : "pulse") : null;
     // A column in log steps of this many dB (the PC Engine's 1.5, the SSG's
     // and the OPLL's 3, the YM2608 rhythm's 0.75); the SCC's is linear.
     const logStep = pceVol ? 1.5 : ssgCh || opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? 3
@@ -1070,7 +1080,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const fmPan = (onFm || !!gbCh) && !!part?.words("PAN");
     const toNoise = onPce && ch.dest.startsWith("noise");
     // A 2A03 channel on fc: which of its kinds (env's `fc`).
-    const fcCh = onFc && chn.chip === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
+    const fcCh = onFc && like === "nes" ? (ch.dest === "tri" ? "tri" : ch.dest === "noise" ? "noise" : "pulse") : null;
     const noiseRow = toNoise || fcCh === "noise" || gbCh === "noise" || rhythmCh; // a note is a rate (a sound): no pitch effects
     // The column's top, and a level of it as a velocity, before the clamp
     // to 0-15 (in eighths where the chip's steps are finer than :vel's).
@@ -1107,6 +1117,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     let lastPorta = 0;
     let pan = (fmPan || pceVol) && (uses(0x08) || (fmPan && uses(0x80))) ? "center" : null;
     let wave = -1; // the wavetable the channel plays (pce, the SCC)
+    let waveIns = -1; // the instrument whose start wave it took (Furnace: at a change of instrument)
     // The SSG's mixer (Furnace's: 1 tone, 2 noise, 4 the envelope; 20xx
     // and the wave macro) and the noise period (21xx, the duty macro: the
     // register 31 less it). `:mode` is said where the channel ever leaves tone.
@@ -1141,7 +1152,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // — a pulse's shape, the noise's mode.
     let duty = 0;
     let arp = 0;
-    const arpStopsAtNote = ARP_STOPS_AT_NOTE.has(chn.chip);
+    const arpStopsAtNote = ARP_STOPS_AT_NOTE.has(ownChip(tg, chn.chip)?.as ?? chn.chip);
     // The 00xy arpeggio's phase, as Furnace runs it (playback.cpp): while
     // the arpeggio is on, its stage (the note, +x, +y) steps every
     // `arpSpeed` ticks, playing on across notes — a new note starts it over
@@ -1417,8 +1428,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (it.ex2?.values.length) { modFreq = it.ex2.values[0] & 4095; if (it.ex2.values.some((x) => x !== it.ex2.values[0])) fdsMacroMoves++; }
         }
         if (waveCh && typeof row.note === "number" && t.instruments[ins]) {
-          const { wave: wm, duty } = t.instruments[ins];
+          const { wave: wm, duty, waveStart } = t.instruments[ins];
+          // Its wave macro's first step, else the wavetable it starts on —
+          // taken where the instrument changes, so a 10xx holds till then.
           if (wm?.values.length) wave = wm.values[0];
+          else if (ins !== waveIns && waveStart >= 0 && waveStart < (t.waves?.length ?? 0)) wave = waveStart;
+          waveIns = ins;
           if (pceVol) {
             if (duty?.values.some((x) => (x > 0) !== (duty.values[0] > 0))) dutyMoves++;
             noise = dutyNoise(t.instruments[ins]) ?? noise;
@@ -1659,7 +1674,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const PCM = pcmWord.toUpperCase();
   if (dpcm.missing) warnings.push(`a ${PCM} note with no sample (or one of a depth not read) is left out (${dpcm.missing}×)`);
   if (dpcm.loopPart) warnings.push(`a ${PCM} sample looping a part of itself loops whole (${dpcm.loopPart}×)`);
-  if (onFc && a.channels.some((c) => c.notes > 0 && !["nes", "vrc6", "fds"].includes(t.channels[c.index].chip)))
+  if (onFc && a.channels.some((c) => c.notes > 0 && !ownChip("fc", t.channels[c.index].chip)))
     warnings.push("an expansion chip's channels have no fc part — left out");
   if (waveMacroSteps) warnings.push(`a wave macro naming a wavetable the module lacks is left out (${waveMacroSteps}×)`);
   if (dutyUnderNote) warnings.push(`a 12xx under a sounding note takes effect at the next note (${dutyUnderNote}×)`);

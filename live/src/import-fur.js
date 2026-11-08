@@ -72,12 +72,12 @@ const FUR_SYSTEMS = {
   0x05: () => named("PCE", k("wave", 6, "CH")).map((c) => ({ ...c, chip: "pce", volMax: 31 })),
   0x07: () => named("SID", k("psg", 3, "CH")),
   0x47: () => named("SID", k("psg", 3, "CH")),
-  0x8b: () => named("MMC5", [...k("psg", 2, "Pulse"), { kind: "pcm", name: "PCM" }]),
+  0x8b: () => named("MMC5", [...k("psg", 2, "Pulse"), { kind: "pcm", name: "PCM" }], "mmc5"),
   0x88: () => named("VRC6", [...k("psg", 2, "Pulse"), { kind: "wave", name: "Saw", volMax: 63 }], "vrc6"),
   0x8a: () => [{ kind: "wave", name: "FDS", chip: "fds", volMax: 32 }],
   0xa1: () => named("SCC", k("wave", 5, "CH"), "scc"),
   0xb4: () => named("SCC+", k("wave", 5, "CH"), "scc"),
-  0x8c: () => named("N163", k("wave", 8, "CH")),
+  0x8c: () => named("N163", k("wave", 8, "CH"), "n163"),
   0x81: () => named("Amiga", k("pcm", 4, "CH")),
   0x87: () => named("SNES", k("pcm", 8, "CH")),
   0x9b: () => named("SegaPCM", k("pcm", 16, "CH")),
@@ -520,6 +520,7 @@ export async function parseFur(bytes) {
     // steps (0-7: 0 +1 +2 +4 reset -4 -2 -1), or the first wavetable's.
     let fds = null;
     let gb = null; // the Game Boy's hardware envelope (GB)
+    let waveStart = null; // the wavetable the instrument plays with no wave macro (the N163's, N1)
     // The sample map (SM, and NE's DPCM rate and DAC start per note):
     // Furnace's notes from C-5 (0), C-0 at 60; files before 246 store
     // C-0 up.
@@ -575,6 +576,8 @@ export async function parseFur(bytes) {
       } else if (code === "FD") {
         const speed = i32(), depth = i32(), firstWave = !!c();
         fds = { speed, depth, firstWave, table: Array.from({ length: 32 }, () => c() & 7) };
+      } else if (code === "N1") {
+        waveStart = i32(); // then its position, length and mode in the chip's RAM, which the language lays out itself
       } else if (code === "NE") {
         if (c()) {
           sampleMap.noteMap ??= [];
@@ -628,7 +631,7 @@ export async function parseFur(bytes) {
     if (fm && (type === 1 || type === 33)) return { name, kind: "fm", fm };
     ayMode(type, wave);
     // (An OPLL instrument keeps its voice beside its macros.)
-    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex1, ex2, ex3, alg, ex5, pitch, fds, gb,
+    return { name, kind: "std", type, sampleMap, vol, arp: readArp(arp), wave, duty, ex1, ex2, ex3, alg, ex5, pitch, fds, gb, waveStart,
       ...(fm && type === 13 ? { fm } : {}) };
   }
 

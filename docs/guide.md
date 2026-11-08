@@ -2005,14 +2005,20 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   level; `12xx` and the duty macro are `:duty`, on the noise `11xx` and the
   duty macro the `:mode`; `10xx` the wavetable, `08xy` the side. The sweep's
   `13xy` and `14xx` are left out.
-- An **NES** module starts at `fc` (where the 2A03, the VRC6, the FDS and
-  the VRC7 play the most notes). The VRC6's channels go to `vrc6-sqr1`,
+- An **NES** module starts at `fc` (where the 2A03 and its expansions — the
+  VRC6, the FDS, the VRC7, the MMC5, the N163, the 5B — play the most notes), each
+  chip on its own channels. The VRC6's channels go to `vrc6-sqr1`,
   `vrc6-sqr2` and `vrc6-saw`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
   1`–`8`), the columns and volume macros linear (the saw's to 63); a
-  pulse's PCM mode (a sample instrument, `17xx`) is left out, as are the
-  N163's and the MMC5's channels. The VRC7's go to `vrc7-fm1`–`vrc7-fm6`, a
-  preset its ROM voice by the VRC7's name, a user voice a 2-op def-fm, as
-  the FM-PAC's (below). The FDS goes to `fds-wave`:
+  pulse's PCM mode (a sample instrument, `17xx`) is left out. The VRC7's go
+  to `vrc7-fm1`–`vrc7-fm6`, a preset its ROM voice by the VRC7's name, a user
+  voice a 2-op def-fm, as the FM-PAC's (below); the MMC5's pulses to
+  `mmc5-sqr1`–`mmc5-sqr2` as the 2A03's (its PCM is left out); the N163's
+  channels to `n163-wave1`–`n163-wave8` as the SCC's, each instrument on its
+  wave macro or, where the instrument changes, the wavetable it starts on (in
+  a module of Furnace's older instrument format that start is not read yet:
+  it plays the first); an AY's channels (Furnace's 5B) to `5b-sqr1`–`5b-sqr3`
+  as the SSG's. The FDS goes to `fds-wave`:
   its wavetables as 64-step def-waves (a 32-step one as it is), its gain
   0–32 linear, and its modulation unit as the song's `:lfo-wave` (the
   instrument's table, or `15xx`'s made of a wavetable), `:lfo-freq` (its
