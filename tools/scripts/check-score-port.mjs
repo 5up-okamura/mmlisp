@@ -284,4 +284,29 @@ const port = (src, to, rows) => {
   assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["sqr2", "drop", "sqr1", "drop"]);
 }
 
+// ── What a review found (2026-11-08) ──
+{
+  // A dropped track's opening tempo goes onto the first track kept.
+  const r = port("(fm1 :tempo 90 :len 2 c e g e |)\n(fm2 :len 8 c e g e c e g e |)\n(sqr1 :len 8 c e g e c e g e |)", "gb");
+  assert.match(r.text, /\(sqr2 :tempo 90 /);
+  // FM3's tracks are one channel on pc88: nothing past room is dropped.
+  const fm3 = "(fm3 init-fm)\n(fm3-1 :len 4 c)\n(fm3-2 :len 4 c)\n(fm3-3 :len 4 c)\n(fm3-4 :len 4 c)\n(fm1 c)\n(fm2 c)\n(fm4 c)\n(fm5 c)\n(fm6 c)\n(sqr1 c)\n(sqr2 c)\n(sqr3 c)";
+  assert.ok(portRows(fm3, "pc88").rows.every((x) => x.to !== "drop"), "md's FM3 onto pc88: every row kept");
+  // The FM-PAC's rhythm takes fm7-9: with a kit row, they are not offered by default.
+  const kit = port('(def-score :target x68k)\n(import "presets/rx5/set.mmlisp")\n(fm1 c)\n(fm2 c)\n(fm3 c)\n(fm4 c)\n(fm5 c)\n(fm6 c)\n(fm7 c)\n(fm8 c)\n(pcm1 :len 4 kick c snare c)', "msx");
+  assert.equal(kit.map.pcm1, "rhythm1");
+  assert.ok(![kit.map.fm7, kit.map.fm8].some((h) => /^fm[789]$/.test(h)));
+  // Between two pitched noises the rate goes by Hz, not by the note.
+  assert.doesNotMatch(port("(def-score :target fc)\n(noise :oct 3 c c)", "gb").text, /\(noise :oct 3 c c\)/);
+  // A layer's forms append: the noise's octave and a split's mode go on.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 c c)\n(noise c c |)", "md").text, /\(noise :mode white2 c c \|\)/);
+  assert.match(port("(def-score :target x68k)\n(fm8 :len 8 c :mode noise c)\n(fm8 c c :mode tone c |)", "md").text, /\(noise c c _ \|\)/);
+  // A loop that moves the octave ends its passes' moves on; :oct+ moves it.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\) :mode white0 c\)/);
+  assert.match(port("(noise :mode white0 c :oct+ 1 c)", "fc").text, /\(noise :mode white :oct \d [a-g]\+? [a-g]\+?\)/, ":oct+ read, not left");
+  // A pruned voice's base goes too when nothing else names it.
+  const prune = port('(import "presets/fm-roles/set.mmlisp")\n(def-fm mid piano :tl1 3)\n(def-fm lead mid :tl2 4)\n(fm1 lead :len 4 c e)', "fc");
+  assert.doesNotMatch(prune.text, /def-fm (mid|lead)/);
+}
+
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

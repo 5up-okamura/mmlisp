@@ -234,8 +234,17 @@ function planRows(s, from, to) {
     if (!to.partOf(h).kit) takenBy.set(to.voiceKey(h), srcKey(k));
     return h;
   };
+  // A kit that plays on FM channels (the FM-PAC's rhythm, on fm7-9) takes
+  // them when a row plays its roles.
+  const kitPart = to.parts.find((p) => p.kit && p.takes);
+  const kitTakes = kitPart && keys.some((k) => kindOf(from, k) === "sample" && rolesHere(s.heads.get(k)) && s.heads.get(k)?.notes)
+    ? to.channelNames.filter((h) => kitPart.takes(to.channels[h])) : [];
+  for (const h of kitTakes) takenBy.set(to.voiceKey(h), "kit");
   const dest = {};
   const notesOf = (k) => s.heads.get(splitHead(k))?.notes ?? 0;
+  // Rows that are one channel on both machines (fm3 and fm3-1…fm3-4, as
+  // they are on pc88) need one channel between them.
+  const groupOf = (k) => (!isSplit(k) && to.partOf(k)?.kind === kindOf(from, k) && keys.some((o) => o !== k && !isSplit(o) && from.voiceKey(o) === from.voiceKey(k)) ? from.voiceKey(k) : k);
   // A machine short of channels keeps the parts that play the most notes
   // (the user, 2026-11-08): past its melodic channels — FM and squares, less
   // a square its noise is and fm6 under the Mega Drive's PCM — and past its
@@ -244,15 +253,19 @@ function planRows(s, from, to) {
   const pools = [
     [melodic, channelsOf(to, "fm", { board: true }).length + channelsOf(to, "tone", { board: true }).length
       - (keys.some((k) => kindOf(from, k) === "noise") && channelsOf(to, "noise", { board: true }).some((n) => to.channelNames.some((h) => h !== n && to.voiceKey(h) === to.voiceKey(n))) ? 1 : 0)
-      - (to.name === "md" && sampleRows ? 1 : 0)],
+      - (to.name === "md" && sampleRows ? 1 : 0)
+      - kitTakes.filter((h) => channelsOf(to, "fm", { board: true }).includes(h)).length],
     [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise", { board: true }).length],
     // A kit's tracks are many to its one voice; the rest are a channel each.
     [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)), channelsOf(to, "sample", { board: true }).length],
   ];
   for (const [inPool, room] of pools) {
-    const rows = keys.filter(inPool);
-    if (rows.length <= room) continue;
-    for (const k of [...rows].sort((a, b) => notesOf(a) - notesOf(b)).slice(0, rows.length - Math.max(0, room))) dest[k] = "drop";
+    const groups = new Map();
+    for (const k of keys.filter(inPool)) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
+    if (groups.size <= room) continue;
+    const notes = (g) => g.reduce((n, k) => n + notesOf(k), 0);
+    for (const g of [...groups.values()].sort((a, b) => notes(a) - notes(b)).slice(0, groups.size - Math.max(0, room)))
+      for (const k of g) dest[k] = "drop";
   }
   // First the channels the destination has as they are: the noise before a
   // square (a drum is a drum), then in the table's order.
@@ -471,17 +484,57 @@ class Porter {
   // :ams: written once, after the head of the score's first channel form
   // (a song word goes on any track), unless the score sets one.
   placeLfo(out) {
-    if (!this.needsLfo || /:lfo-rate\b/.test(out)) return out;
+    const words = [...(this.carried ?? [])];
+    if (this.needsLfo && !/:lfo-rate\b/.test(out) && !words.some((w) => w.startsWith(":lfo-rate"))) words.push(`:lfo-rate ${OPLL_LFO_RATE}`);
+    if (!words.length) return out;
     let roots;
     try { roots = parse(out); } catch { return out; }
     const isForm = (n) => isList(n) && this.to.channelNames.includes(n.items[0]?.value);
     const form = roots.flatMap((n) => (isList(n, "def") ? n.items.slice(2) : [n])).find(isForm);
-    if (!form) return out;
+    if (!form) {
+      this.say(`${words.join(" ")}: no track is left to carry them`);
+      return out;
+    }
+    // A word the track sets itself before its first note is its own.
+    const own = new Set();
+    for (const it of form.items.slice(1)) {
+      if (it.kind === "atom" && isNote(it.value)) break;
+      if (it.kind === "atom" && /^:/.test(it.value)) own.add(it.value);
+    }
+    const add = words.filter((w) => !own.has(w.split(" ")[0]));
+    if (!add.length) return out;
     const head = form.items[form.items[1]?.value === ":prio" ? 2 : 0];
     const starts = [0];
     for (let i = 0; i < out.length; i++) if (out[i] === "\n") starts.push(i + 1);
     const at = starts[head.line - 1] + head.column - 1 + String(head.value).length;
-    return `${out.slice(0, at)} :lfo-rate ${OPLL_LFO_RATE}${out.slice(at)}`;
+    return `${out.slice(0, at)} ${add.join(" ")}${out.slice(at)}`;
+  }
+
+  // A dropped track's song words — its tempo, the fader, the LFO — written
+  // before its first note are the song's from its start: they go onto the
+  // first track kept (placeLfo). One written later is said.
+  carrySongWords(n, head) {
+    const ctx = this.ctx(null);
+    let before = true;
+    const walkItems = (items) => {
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.kind === "atom" && (isNote(it.value) || /^_/.test(it.value))) before = false;
+        if (isList(it) && DESCEND.has(it.items[0]?.value)) { walkItems(it.items.slice(1)); continue; }
+        if (it.kind !== "atom" || !/^:(tempo|master|lfo-)/.test(it.value) || i + 1 >= items.length) continue;
+        // An LFO word is the song's on FM (the OPN's, the OPM's); the FDS's is
+        // its own modulator's, nothing to another machine's LFO.
+        const part = this.from.partOf(splitHead(head));
+        if (/^:lfo-/.test(it.value) && !(part?.kind === "fm" && part.songWords?.(canonicalTarget(it.value)))) { i++; continue; }
+        const val = items[i + 1];
+        i++;
+        if (!before) { this.say(`${it.value} on ${this.nameOf(head)}, after its first note: the track is not converted, so the change is not kept`); continue; }
+        const r = it.value === ":tempo" || it.value === ":master" ? {} : this.wordRule(it.value, val, ctx);
+        if (r.drop) continue;
+        (this.carried ??= []).push(r.replace ?? `${it.value} ${this.slice(val)}`);
+      }
+    };
+    walkItems(n.items.slice(n.items[1]?.value === ":prio" ? 3 : 1));
   }
 
   // A def-fm the conversion leaves unplayed (its tracks play a role's or a
@@ -513,6 +566,12 @@ class Porter {
         return { from, to: out[to] === "\n" ? to + 1 : to };
       });
       if (!gone.length) break;
+      // The voice a gone one extended may be named by nothing now: the next
+      // pass looks at it.
+      for (const n of defs.filter((n) => named.get(n.items[1].value) === 1 || this.shadowing.has(n.items[1].value))) {
+        const base = n.items[2];
+        if (base?.kind === "atom" && !String(base.value).startsWith(":")) this.replaced.add(base.value);
+      }
       for (const g of gone.sort((a, b) => b.from - a.from)) out = out.slice(0, g.from) + out.slice(g.to);
     }
     return out;
@@ -656,6 +715,9 @@ class Porter {
     const isForm = (x) => isList(x) && this.from.channelNames.includes(x.items[0]?.value);
     if (n.items.slice(2).some(isForm)) {
       for (let i = 2; i < n.items.length; i++) if (isForm(n.items[i])) outs[i] = this.form(n.items[i]);
+      // A section with nothing left stays, empty: its name is written where it plays.
+      if (n.items.slice(2).every((x, k) => !isForm(x) || outs[k + 2] === null))
+        this.say(`section ${n.items[1].value}: none of its channels is converted; it plays nothing`);
       return this.renderList(n, outs);
     }
     // A snippet's voices are read as the FM's: across the FM families each
@@ -692,7 +754,9 @@ class Porter {
     // A noise between a pitched one and the others is read note by note.
     if (src?.kind === "noise" && dst?.kind === "noise") {
       const from = noiseModel(src), to = noiseModel(dst);
-      if (from !== to && (from === "pitch" || to === "pitch"))
+      // Between two pitched noises too: the 2A03's note 48 and the Game
+      // Boy's are rates far apart.
+      if ((from !== to && (from === "pitch" || to === "pitch")) || (from === "pitch" && to === "pitch" && src.name !== dst.name))
         c.noise = { from, to, src, dst, oct: 4, hz: from === "mode" ? WHITE_HZ[0] : NOISE_CLOCK / NOISE_RATE_START, periodic: false, last: null };
     }
     // A voice crossing between the FM families, or between two ROMs.
@@ -705,16 +769,22 @@ class Porter {
     const head = n.items[0].value;
     if (this.patch.has(head)) return null;
     if (this.splits.has(head)) {
-      const state = { mode: "tone" };
+      // A channel's forms of one :prio append (language.md §1): the mode
+      // goes on from one to the next.
+      const layer = `${head}|${n.items[1]?.value === ":prio" ? n.items[2]?.value : ""}`;
+      const state = (this.splitState ??= new Map()).get(layer) ?? { mode: "tone" };
+      this.splitState.set(layer, state);
       const tone = this.map[head] === "drop" ? null : this.oneForm(n, this.ctx(head, { split: "tone", state: { ...state } }));
-      const noise = this.map[splitKey(head)] === "drop" ? null : this.oneForm(n, this.ctx(splitKey(head), { split: "noise", state: { ...state } }));
+      const noise = this.map[splitKey(head)] === "drop" ? null : this.oneForm(n, this.ctx(splitKey(head), { split: "noise", state }));
       if (tone == null && noise == null) {
+        this.carrySongWords(n, head);
         this.say(`${this.nameOf(head)} (${notes(this.s.heads.get(head).notes)}) is not converted`);
         return null;
       }
       return [tone, noise].filter((x) => x != null).join("\n");
     }
     if (this.map[head] === "drop" || this.map[head] == null) {
+      this.carrySongWords(n, head);
       const why = head === "fm3-csm-rate" ? `: the ${this.to.system} has no CSM` : "";
       this.say(`${this.nameOf(head)} (${notes(this.s.heads.get(head)?.notes ?? 0)}) is not converted${why}`);
       return null;
@@ -724,6 +794,14 @@ class Porter {
 
   oneForm(n, ctx) {
     const at = n.items[1]?.value === ":prio" ? 2 : 0; // the head option
+    // The noise's state, too, goes on from one form of a layer to the next.
+    if (ctx.noise) {
+      const layer = `${ctx.head}|${at ? n.items[2]?.value : ""}`;
+      const kept = (this.noiseState ??= new Map()).get(layer);
+      if (kept) ctx.noise = kept;
+      this.noiseState.set(layer, ctx.noise);
+      ctx.noise.last = null;
+    }
     const { outs, after } = this.body(n.items, at + 1, ctx);
     outs[0] = ctx.dest;
     const lead = [];
@@ -746,7 +824,10 @@ class Porter {
     }
     if (ctx.srcPart.kind === "fm" && ctx.destPart.kind !== "fm" && ctx.destPart.kind !== "noise")
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, a square, without its voice`);
-    if (ctx.split === "noise") this.say(`${this.nameOf(ctx.head)}'s noise notes (:mode ${this.from.name === "x68k" ? "noise" : "noise / both"}) play on ${ctx.dest}, its tone notes on ${this.map[splitHead(ctx.head)]}`);
+    if (ctx.split === "noise") {
+      const tone = this.map[splitHead(ctx.head)];
+      this.say(`${this.nameOf(ctx.head)}'s noise notes (:mode ${this.from.name === "x68k" ? "noise" : "noise / both"}) play on ${ctx.dest}${tone === "drop" ? "; its tone notes are not converted" : `, its tone notes on ${tone}`}`);
+    }
     if (ctx.opN && ctx.destPart?.kind === "fm" && !twoOp(ctx.destPart)) this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
     if (ctx.head === "fm3-csm" && ctx.dest !== "fm3-csm") this.say(`${this.nameOf("fm3-csm")} plays its notes on ${ctx.dest}: the ${this.to.system} has no CSM`);
     if (first && ctx.flatPitch && this.s.heads.get(ctx.head)?.notes) {
@@ -767,7 +848,7 @@ class Porter {
       const it = items[i];
       if (it.kind === "atom") {
         const v = it.value;
-        if (ctx.noise && !(ctx.split && v === ":mode") && typeof v === "string" && /^:(mode|noise-rate|oct)$/.test(v) && i + 1 < items.length) {
+        if (ctx.noise && !(ctx.split && v === ":mode") && typeof v === "string" && /^:(mode|noise-rate|oct\+?)$/.test(v) && i + 1 < items.length) {
           this.noiseWord(v, items[i + 1], ctx);
           outs[i] = outs[i + 1] = null;
           i++;
@@ -816,15 +897,28 @@ class Porter {
         // A loop's next pass starts from where its last ended: the noise's
         // state is written again inside it and after it.
         if (ctx.noise) ctx.noise.last = null;
+        const oct = ctx.noise?.oct;
+        const mode = ctx.state?.mode;
         const inner = this.body(it.items, 1, it.items[0].value === "macro" ? { ...ctx, macro: true } : ctx);
         if (ctx.noise) ctx.noise.last = null;
+        // A loop (x N …) whose body moves the octave ends N moves on; one that
+        // leaves the split's mode changed starts its next pass in that mode,
+        // which a split cannot follow note by note: said.
+        const times = isList(it, "x") ? num(it.items[1]) : null;
+        if (times > 1 && ctx.noise && ctx.noise.oct !== oct) ctx.noise.oct += (times - 1) * (ctx.noise.oct - oct);
+        if (times > 1 && ctx.split === "tone" && ctx.state.mode !== mode)
+          this.say(`a loop on ${this.nameOf(ctx.head)} ends in another :mode than it starts: its later passes are split as its first`);
         outs[i] = this.renderList(it, inner.outs, inner.after);
       }
     }
     // A tie into or out of a note the split made a rest ties nothing.
-    if (ctx.split)
+    if (ctx.split) {
+      // The nearest item on each side that is still there (a :mode between
+      // is taken out).
+      const near = (i, d) => { for (let j = i + d; j >= start && j < items.length; j += d) if (outs[j] !== null) return outs[j]; return undefined; };
       for (let i = start; i < items.length; i++)
-        if (items[i].value === "~" && [outs[i - 1], outs[i + 1]].some((o) => typeof o === "string" && o.startsWith("_"))) outs[i] = null;
+        if (items[i].value === "~" && [near(i, -1), near(i, 1)].some((o) => typeof o === "string" && o.startsWith("_"))) outs[i] = null;
+    }
     return { outs, after };
   }
 
@@ -833,6 +927,7 @@ class Porter {
   noiseWord(kw, val, ctx) {
     const n = ctx.noise;
     const v = val.kind === "atom" ? String(val.value) : null;
+    if (kw === ":oct+") { if (num(val) != null) n.oct += num(val); return; }
     if (kw === ":oct") { if (num(val) != null) n.oct = num(val); else this.say(`:oct on ${this.nameOf(ctx.head)}: not a number; the noise's octave is read as ${n.oct}`); return; }
     if (kw === ":noise-rate") {
       if (num(val) != null) n.hz = NOISE_CLOCK / Math.max(1, num(val));
