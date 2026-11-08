@@ -2621,7 +2621,9 @@ machine's channels or dropped:
 - A machine short of channels keeps the parts of its own kind first (FM
   onto FM), then the parts with the most notes — counted as they play, a
   loop's body as many times as it repeats. The song's bass — the part whose
-  notes sit a fifth or more under every other's — is kept before them all,
+  notes sit a fifth or more under every other's (a line doubled at the
+  bottom counts as one: the louder part is the bass, its copy the first to
+  go) — is kept before them all,
   and on a machine with a channel for a bass line (the Famicom's triangle,
   the Game Boy's wave) plays there. Then the melody — of the parts moving
   in a tune's note lengths (not a run of 32nds), the loudest, or of the

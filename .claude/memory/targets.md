@@ -439,7 +439,15 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   3 dB bins, then the highest — named only if it stands out (alone in the
   loudest bin, or MELODY_ABOVE 3 semitones over the next), else none. Pool
   order: bass, melody, own kind, notes. DTWNB: fm4 / fm3 / none (05: two
-  parts alike) / fm3. Inline operator words on such a
+  parts alike) / fm3.
+  The user's BF_4TH.MGS (fc / gb / pce still dropped the melody): its bass
+  is doubled — fm6 and SCC wave1 both at a middle note of 39 — so no part
+  sat a fifth under "the next", no bass was named, and the loud fm6 was
+  taken for the melody, fm1 (65, −4 dB) dropped. Now the parts within
+  BASS_TOGETHER (2) of the lowest are one bass group: its loudest the bass,
+  the others copies, dropped first (pool order: copy last kept, bass,
+  melody, own kind, notes); the melody is never from the group. BF_4TH:
+  fm6 → tri / wave, fm1 kept on all three. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

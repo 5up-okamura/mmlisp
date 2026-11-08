@@ -582,6 +582,21 @@ const port = (src, to, rows) => {
   assert.notEqual(onPce.map.sqr1, "drop", "the bass kept");
   assert.ok(onPce.said.some((w) => /fm1 is the melody/.test(w)), onPce.said.join("\n"));
   for (const t of ["gb", "fc"]) assert.notEqual(portScore(msxSong, t).map.fm1, "drop", `${t}: the melody kept`);
+  // A bass line doubled (an MSX song's FM bass and its SCC copy, both at the
+  // bottom): the pair is the bass, its louder part the bass, the copy the
+  // first to go — and the melody is never a bass part, however loud.
+  const doubled = `(def-score :target msx)
+(import "presets/wavetable/set.mmlisp")
+(fm1 flute :vel 13 :oct 5 :len 8 e d c d e e e4 d d d4 e g g4 e d c d e e e e d d e d c2)
+(fm6 piano :vel 15 :oct 2 :len 8 c c g g a a e e f f c c f f g g c c g g a a e e f f c c f f g g)
+(wave1 saw :vel 10 :oct 2 :len 8 c c g g a a e e f f c c f f g g c c g g a a e e f f c c f f g g)
+(wave2 square :vel 10 :oct 4 :len 4 e g e g e g e g e g e g e g e g)
+(wave3 square :vel 10 :oct 4 :len 4 c e c e c e c e c e c e c e c e)`;
+  const dbl = portScore(doubled, "fc", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), doubled) });
+  assert.equal(dbl.map.fm6, "tri", `the louder of the pair the bass, on the triangle: ${JSON.stringify(dbl.map)}`);
+  assert.notEqual(dbl.map.fm1, "drop", "the melody kept, not the loud bass in its place");
+  assert.equal(dbl.map.wave1, "drop", "the bass's copy the first to go");
+  assert.ok(dbl.said.some((w) => /fm1 is the melody/.test(w)) && dbl.said.some((w) => /fm6 is the bass/.test(w)), dbl.said.join("\n"));
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

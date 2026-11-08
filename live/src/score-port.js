@@ -266,6 +266,7 @@ const LIMIT_LIFT_DB = 3;
 // A song's bass line: the melodic part sitting this far (semitones) under
 // the next lowest, by the median note (import-to-midi.js LOW_APART).
 const BASS_APART = 7;
+const BASS_TOGETHER = 2; // semitones: parts this near the lowest are one bass line
 // A melody: a part playing at least this share of the busiest part's notes,
 // its level read in steps of this many dB (a part 3 dB down is as loud).
 const MELODY_SHARE = 0.25;
@@ -486,12 +487,22 @@ function planRows(s, from, to, loopOf = () => null) {
     }
     return stats;
   };
+  // The bass: the lowest parts — those within BASS_TOGETHER of the lowest,
+  // a bass line doubled (an MSX song's FM bass and its SCC copy) — sitting
+  // BASS_APART under every other; of them the loudest, then the busiest.
+  s.bassGroup = [];
   const bassRow = () => {
     if (s.bass !== null) return s.bass || null;
     s.bass = false;
-    const mids = [...statsOf()].map(([k, st]) => [st.mid, k]).sort((a, b) => a[0] - b[0]);
-    if (mids.length > 1 && mids[1][0] - mids[0][0] >= BASS_APART) s.bass = mids[0][1];
-    return s.bass || null;
+    const st = statsOf();
+    const mids = [...st].map(([k, x]) => [x.mid, k]).sort((a, b) => a[0] - b[0]);
+    if (mids.length < 2) return null;
+    const group = mids.filter(([m]) => m - mids[0][0] <= BASS_TOGETHER);
+    const next = mids[group.length];
+    if (!next || next[0] - mids[0][0] < BASS_APART) return null;
+    s.bassGroup = group.map(([, k]) => k);
+    s.bass = [...s.bassGroup].sort((a, b) => st.get(b).level - st.get(a).level || st.get(b).notes - st.get(a).notes)[0];
+    return s.bass;
   };
   // The song's melody: of the parts that move in a tune's note lengths (a
   // sixth of a beat or longer — a sixteenth with its gate taken off, an MDX's
@@ -505,7 +516,8 @@ function planRows(s, from, to, loopOf = () => null) {
     const st = statsOf();
     const most = Math.max(0, ...[...st.values()].map((x) => x.notes));
     const ppqn = s.compiled()?.ppqn ?? 96;
-    const tunes = [...st].filter(([k, x]) => k !== bassRow() && x.len >= ppqn / 6 && x.notes >= most * MELODY_SHARE);
+    bassRow();
+    const tunes = [...st].filter(([k, x]) => !s.bassGroup.includes(k) && x.len >= ppqn / 6 && x.notes >= most * MELODY_SHARE);
     if (tunes.length < 2) return null; // one part, or none: nothing to tell apart
     // It must stand out: the loudest alone, or of the loudest the one
     // sitting MELODY_ABOVE over the next — parts alike (a doubled line, a
@@ -568,7 +580,10 @@ function planRows(s, from, to, loopOf = () => null) {
     // The bass is kept before every other melodic part.
     const isBass = (g) => g.includes(bassRow());
     const isMelody = (g) => g.includes(melodyRow());
-    const order = (a, b) => (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    // A copy of the bass line (the group's other parts) goes first: the bass
+    // already plays what it plays.
+    const isCopy = (g) => g.some((k) => s.bassGroup.includes(k) && k !== bassRow());
+    const order = (a, b) => (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
   }
