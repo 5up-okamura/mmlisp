@@ -468,6 +468,7 @@ class Porter {
     this.opVoices = new Map(); // `${voice}-op${n}` → [voice, n]
     this.standIns = new Set();
     this.patchCarry = this.readPatch();
+    this.opFormVoice = this.readOpVoices();
     // The FM parts each side writes its voices for, and the voices resolved.
     this.fromFm = from.parts.find((p) => p.kind === "fm" && !p.optional) ?? from.parts.find((p) => p.kind === "fm");
     this.toFm = to.parts.find((p) => p.kind === "fm");
@@ -972,14 +973,16 @@ class Porter {
     // patch's tempo and voice on an operator track, a stand-in voice.
     const first = !this.started?.has(ctx.head);
     (this.started ??= new Set()).add(ctx.head);
-    if (first && ctx.opN && this.patchCarry) {
-      if (this.patchCarry.tempo && !this.tempoCarried) { lead.push(`:tempo ${this.patchCarry.tempo}`); this.tempoCarried = true; }
-      // On a 4-op channel a one-operator voice of the patch; on the OPLL the
-      // patch voice's role or waveform; on a square none.
-      const v = this.patchCarry.voice;
-      if (v && !ctx.hasVoiceFirst && ctx.destPart?.kind === "fm")
-        lead.push(twoOp(ctx.destPart) ? this.voiceRule(v, ctx) ?? v : this.opVoice(v, ctx.opN));
-      if (v && !ctx.hasVoiceFirst && ctx.destPart?.kind === "wave") lead.push(this.voiceOnWave(v, ctx));
+    if (first && ctx.opN && this.patchCarry?.tempo && !this.tempoCarried) { lead.push(`:tempo ${this.patchCarry.tempo}`); this.tempoCarried = true; }
+    // An operator track's form starts under the patch's voice: the patch
+    // form's (first form), or one another operator track's n-th form sets.
+    // On a 4-op channel a one-operator voice of the patch; on the OPLL the
+    // patch voice's role or waveform; on a wave its wave; on a square none.
+    if (ctx.opN && !ctx.hasVoiceFirst) {
+      const j = this.formIndex(n, ctx.head);
+      const v = this.opFormVoice?.get(j) ?? (first ? this.patchCarry?.voice : null);
+      if (v && ctx.destPart?.kind === "fm") lead.push(twoOp(ctx.destPart) ? this.voiceRule(v, ctx) ?? v : this.opVoice(v, ctx.opN));
+      if (v && ctx.destPart?.kind === "wave") lead.push(this.voiceOnWave(v, ctx));
     }
     // An FM track that names no voice plays init-fm, a sine; a wave channel
     // starts on a square.
@@ -1643,6 +1646,32 @@ class Porter {
     if (later.length) this.say(`the FM3 patch's later voices (${[...new Set(later)].join(" ")}) are not followed: the operator tracks keep ${voice}'s`);
     return { voice, tempo };
   }
+
+  // FM3's operator tracks share one patch: a voice written at the head of
+  // one's n-th form (mucom88 writes it on fm3-1 alone) is the patch's from
+  // there, so the others' n-th forms start under it too — a machine of
+  // channels of their own needs it on each. Form index → voice; a voice
+  // written mid-form is that track's alone (said).
+  readOpVoices() {
+    const ops = [...this.s.heads.keys()].filter((h) => /^fm3-\d$/.test(h) && !this.to.channelNames.includes(h));
+    if (!ops.length) return null;
+    const byForm = new Map();
+    let mid = false;
+    for (const h of ops)
+      this.s.heads.get(h).forms.forEach((f, j) => {
+        let before = true;
+        for (const it of f.items.slice(f.items[1]?.value === ":prio" ? 3 : 1)) {
+          if (it.kind === "atom" && (isNote(it.value) || /^_/.test(it.value))) before = false;
+          if (it.kind !== "atom" || !this.s.voices.has(it.value)) continue;
+          if (before) { if (!byForm.has(j)) byForm.set(j, it.value); } else mid = true;
+        }
+      });
+    if (mid) this.say("a voice written mid-form on an FM3 operator track is the shared patch's on fm3; here it plays on that track alone");
+    return byForm;
+  }
+
+  // The form's index among its head's.
+  formIndex(n, head) { return this.s.heads.get(head)?.forms.indexOf(n) ?? -1; }
 
   opVoice(v, n) {
     const name = `${v}-op${n}`;

@@ -2917,7 +2917,7 @@ function mucomToMmlisp(parsed) {
     // A bar a line: the form's text broken after each `|`.
     const text = it.text.replace(/ \| (?=\S)/g, " |\n  ");
     const form = `(${it.ch}${it.prio != null ? ` :prio ${it.prio}` : ""} ${text})${it.comment ? `  ${it.comment}` : ""}`;
-    lines.push(it.commentOut ? `; ${form}` : form);
+    lines.push(it.commentOut ? form.replace(/^/gm, "; ") : form); // every line of it
   }
 
   lines.push("");

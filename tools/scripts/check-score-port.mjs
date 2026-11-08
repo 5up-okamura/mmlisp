@@ -469,4 +469,18 @@ const port = (src, to, rows) => {
   assert.equal(carrierOctave(new Map([["FM_ALG", 7], ["FM_ML4", 3]])), 0, "a 12th is no octave");
 }
 
+// ── mucom88's FM3 operator mode (2026-11-08) ──
+{
+  // The voice written on fm3-1's forms is the four operators' patch: each
+  // operator's channel takes it, at a later form's voice change too.
+  const src = "(def-score :target pc88)\n(def-fm va init-fm :alg 4 :tl1 20)\n(def-fm vb init-fm :alg 7 :tl1 10)\n(fm3-1 va :oct 5 :len 4 c c)\n(fm3-2 :oct 4 :len 4 e e)\n(fm3-1 vb :len 4 g g)\n(fm3-2 :len 4 b b)";
+  const r = port(src, "x68k");
+  assert.match(r.text, /\(fm3 va-op1 :oct 5 :len 4 c c\)\n\(fm\d va-op2 :oct 4 :len 4 e e\)\n\(fm3 vb-op1 :len 4 g g\)\n\(fm\d vb-op2 :len 4 b b\)/);
+  // A part commented out by the mucom88 md writer is commented on every line.
+  const muc = new TextEncoder().encode("#title j\n\nA t120 o4 l8 cdef\nG l8 v15 @1c @8c @2c @8c\nJ o4 l8 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4\n");
+  const j = importMucom(muc, null, null, { target: "md" });
+  assert.ok(j.warnings.some((w) => /part J \(fm6\) is commented out/.test(w)));
+  assert.deepEqual(compile(j.source, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md with part J commented out compiles clean");
+}
+
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

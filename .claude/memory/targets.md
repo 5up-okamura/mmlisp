@@ -242,6 +242,20 @@ written up by `carrierOctave` (voice-port.js): `:oct+ k` at the voice, its
 partial: no shift. Not yet done for an FM voice onto the OPLL's ROM voices
 (their own multiples differ by voice).
 
+## mucom88's FM3 operator mode, real songs (2026-11-08)
+
+The user's "def-fm がなくてデフォルトの音" on mucom88 → x68k: Yuzo Koshiro's
+sampl1.muc (onitama/mucom88 `package/`, with voice.dat; CC BY-NC-SA, not in
+the repo — fetch them to test: raw.githubusercontent.com/onitama/mucom88/
+master/package/sampl{1,2,3}.muc, voice.dat) uses FM3's operator mode, and
+the pc88 writer puts the shared patch's voice on fm3-1's forms alone (no
+note-less `(fm3 v)`). Onto channels of their own each operator track needs
+it: `readOpVoices` reads a voice at the head of any fm3-N's n-th form as the
+patch's for every fm3-N's n-th form (mucom's sections align forms); a voice
+mid-form stays that track's and is said. Also found: the md writer commented
+part J out on its first line only (a parse error) — every line now.
+sampl3 is PSG-only (no FM voices: its x68k is stand-ins, right).
+
 ## Every import onto every machine (2026-11-08)
 
 The user: with every machine converting to every other, no Target list is
