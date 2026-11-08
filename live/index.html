@@ -6157,7 +6157,9 @@
           // No open picker (iOS, Firefox): a plain file input, which gives a
           // File and no handle — Save then asks where. Unfiltered, since iOS
           // greys out what it has no type for (.mmlisp); checked here instead.
-          const file = await pickFileWithInput(null);
+          const files = await pickFileWithInput(null, { multiple: true });
+          if (files.length > 1) return openPickedSet(files);
+          const [file] = files;
           if (!SOURCE_FILE_EXT.test(file.name) && !isSongFile(file.name) && !ARCHIVE_EXT.test(file.name)) {
             log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
             return;
@@ -6165,18 +6167,36 @@
           await openPickedFile(file);
           return;
         }
-        const [handle] = await window.showOpenFilePicker({
+        const handles = await window.showOpenFilePicker({
           types: SOURCE_FILE_TYPES,
-          multiple: false,
+          multiple: true,
           // Start in the opened folder when there is one (an archive's: where
           // it sits), so Open lands on the project rather than wherever the OS
           // picker was left.
           ...(_sourceDir?.handle || _sourceDir?.archive?.handle ? { startIn: _sourceDir.handle ?? _sourceDir.archive.handle } : {}),
         });
-        await openPickedFile(await handle.getFile(), handle);
+        if (handles.length > 1) return openPickedSet(await Promise.all(handles.map((h) => h.getFile())));
+        await openPickedFile(await handles[0].getFile(), handles[0]);
       } catch (e) {
         if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
       }
+    }
+
+    // Several files picked in Open: a song with the banks it names — a mucom88
+    // .muc with its .dat / .bin, an MDX with its PDX — as Import > Song… takes
+    // them, which is how a phone, with no folder to open, hands them over
+    // together. A score is one file.
+    async function openPickedSet(files) {
+      const names = files.map((f) => f.name).join(', ');
+      if (files.some((f) => /\.(muc|mml)$/i.test(f.name))) {
+        const other = files.find((f) => !/\.(muc|mml|dat|bin)$/i.test(f.name));
+        if (other) log(`${other.name} ignored — a mucom88 song opens with its .dat / .bin only`, 'info');
+        return keepingPlayback(() => importMucom88FromFiles(files));
+      }
+      const mdx = files.find((f) => /\.mdx$/i.test(f.name));
+      const pdx = files.find((f) => /\.pdx$/i.test(f.name));
+      if (mdx && pdx && files.length === 2) return keepingPlayback(() => importSongFromFile(mdx, undefined, { pdx }));
+      log(`${names}: Open takes one file, or a song with its banks (a .muc with its .dat / .bin, an .mdx with its .pdx)`, 'err');
     }
 
     // Opening a score from outside the folder leaves it stale — reset. A file

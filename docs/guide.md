@@ -1579,8 +1579,11 @@ format beside it. A song opens as `File > Open…` opens one: converted, through
 the import dialog where it has one, as a new unsaved score. Opened from the folder, it keeps the
 folder, so the next song is one click away, and what the song names beside
 itself is read from there — an MDX's `.pdx`, a mucom88 song's `#voice` and
-`#pcm` banks. Opening a folder opens its first score, or its one file when it
-holds only one; a folder of songs only lists them.
+`#pcm` banks. Without a folder — on a phone — `File > Open…` takes the song
+and its banks selected together (a `.muc` with its `.dat` / `.bin`, an `.mdx`
+with its `.pdx`), as `File > Import > Song…` does. Opening a folder opens its
+first score, or its one file when it holds only one; a folder of songs only
+lists them.
 
 A song or score opened while one plays — from the folder, ← →, Open, Open
 Recent, a drop — plays too, once it has built; opened from silence it stays
