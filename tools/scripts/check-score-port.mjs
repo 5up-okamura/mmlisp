@@ -758,8 +758,24 @@ const port = (src, to, rows) => {
   // A def left empty goes, with every place it is named.
   const sec = port("(def chorus (fm7 c))\n(def-score :target x68k)\n(fm1 c chorus)\nchorus", "gb", { fm7: "drop" });
   assert.doesNotMatch(sec.text, /chorus/);
+  const empty = port("(def-score :target x68k)\n(def wide :pan left)\n(fm7 wide :len 4 c)", "md", { fm7: "sqr1" });
+  assert.doesNotMatch(empty.text, /wide/);
+  // A snippet is read where it plays: a wave on FM is its voice…
   const snip = port("(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(def half :wave (* saw 0.5))\n(wave1 half :len 4 c)", "md");
-  assert.doesNotMatch(snip.text, /half/);
+  assert.match(snip.text, /\(def half wave-saw\)/);
+  // …an FM phrase on a square loses the FM's words (an MDX's fm7 phrase onto
+  // md's sqr1 kept its :pan: E_UNSUPPORTED_TARGET), and one phrase on two
+  // kinds of channel is a def for each.
+  const phrase = port("(def-score :target x68k)\n(def-fm v :alg 7 :fb 0 :tl1 0 :tl2 0 :tl3 0 :tl4 0)\n(def ph v :pan right c d)\n(fm1 :len 8 ph ph)\n(fm7 :len 8 ph e)", "md", { fm7: "sqr1" });
+  assert.deepEqual(compile(phrase.text, "phrase.mmlisp").bad, []);
+  assert.match(phrase.text, /\(def ph v :pan right c d\)\n\(def ph-sqr1 c d\)/);
+  assert.match(phrase.text, /\(fm1 :len 8 ph ph\)/);
+  assert.match(phrase.text, /\(sqr1 :len 8 ph-sqr1 e\)/);
+  // A track's notes in its phrases are its own: short of channels, the
+  // part playing them keeps its channel before one of rests.
+  const busy = portRows("(def-score :target pc88)\n(def a c d e f g a b)\n(fm1 :len 8 a a)\n(fm2 :len 8 a)\n(sqr1 :len 1 _)\n(sqr2 :len 1 _)\n(sqr3 :len 1 _)", "gb");
+  assert.ok(["fm1", "fm2"].every((h) => busy.rows.find((r) => r.head === h).to !== "drop"), "the parts playing notes keep the Game Boy's channels");
+  assert.equal(busy.rows.find((r) => r.head === "fm1").notes, 14);
 }
 
 // ── Every import onto every machine (2026-11-08) ──
@@ -789,8 +805,10 @@ const port = (src, to, rows) => {
 {
   // A split's tone half keeps the layer's :mode across forms when its noise half is dropped.
   assert.match(port("(def-score :target msx)\n(sqr1 :len 8 :mode tone c d :mode noise c c)\n(sqr1 e f :mode tone g a)", "md", { "sqr1/noise": "drop" }).text, /\(sqr1 _ _ g a\)/);
-  // A snippet's :mode the machine's squares have not goes.
-  assert.match(port("(def-score :target pc88)\n(def drum :mode noise c c :mode tone)\n(sqr1 :len 8 drum c)", "md").text, /\(def drum c c\)/);
+  // A snippet's :mode noise notes, which the machine's squares have not, are
+  // the track's: they play on the noise, split as the track's own are.
+  const drum = port("(def-score :target pc88)\n(def drum :mode noise c c :mode tone)\n(sqr1 :len 8 drum c)", "md").text;
+  assert.match(drum, /\(def drum _ _\)\n\(def drum-noise c c\)\n\(sqr1 :len 8 drum c\)\n\(noise :len 8 drum-noise _\)/);
   // A sample track not all kit roles is not offered a ROM rhythm channel.
   assert.ok(portScore('(import "presets/rx5/set.mmlisp")\n(def-pcm mys :file "blip.wav")\n(pcm1 kick mys :len 8 c c)', "pc88", { rows: { pcm1: "rhythm1" } }).error);
   // A role's wave macro cleared at a voice in a later form.

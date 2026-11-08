@@ -57,6 +57,8 @@ const SONG_WORDS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_W
 // Lists whose items are a body's: walked for words, voices and notes. Any
 // other list (a curve, an expression, a glide) is a value and kept whole.
 const DESCEND = new Set(["x", "t", "macro", "let", "if", "for", "echo", "delay"]);
+// A snippet reading's marks in the text until its name is known (Porter.snippetIn).
+const SNIPPET_REF = "\u0000", SNIPPET_AT = "\u0001", SNIPPET_SELF = "\u0002";
 // The SN76489's white noises (Hz) and the rates (125 kHz / n, the OPM's and
 // the SSG's alike) that come nearest them, as the VGM import reads them.
 const WHITE_HZ = [13983, 6991, 3496];
@@ -155,14 +157,25 @@ function survey(text, from, imports) {
     else if (isList(n, "def") && n.items[1]?.kind === "atom") forms.push(...n.items.slice(2).filter(isHead));
   }
   const waveNames = new Set([...defNames(roots, "def-wave"), ...defNames(others, "def-wave")]);
+  // The score's snippets (a def of a body, not a section of channel forms):
+  // a track naming one plays its notes, samples and voices (an import's
+  // phrase `(def fm7-a …)` under `(fm7 … fm7-a …)`).
+  const snippets = snippetDefs(roots, from);
   const heads = new Map();
   for (const f of forms) {
     const head = f.items[0].value;
     const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, noiseNotes: 0, mode: "tone", samples: new Set(), voices: [], voiceNotes: new Map(), voice: null, waves: new Set(), noiseMode: false };
     heads.set(head, h);
     h.forms.push(f);
-    walk(f.items.slice(1), (n, prev, times) => {
+    const inside = [];
+    const visit = (n, prev, times) => {
       if (n.kind !== "atom") return;
+      if (snippets.has(n.value) && !(prev?.kind === "atom" && /^:/.test(prev.value)) && !inside.includes(n.value)) {
+        inside.push(n.value);
+        walk(snippets.get(n.value).items.slice(2), visit, times);
+        inside.pop();
+        return;
+      }
       if (isNote(n.value)) {
         h.notes += times;
         if (NOISY.has(h.mode)) h.noiseNotes += times;
@@ -173,7 +186,8 @@ function survey(text, from, imports) {
       if (waveNames.has(n.value)) h.waves.add(n.value);
       if (prev?.value === ":mode" && NOISY.has(n.value)) h.noiseMode = true;
       if (prev?.value === ":mode" && n.kind === "atom") h.mode = n.value; // the notes after it: tone or noise
-    });
+    };
+    walk(f.items.slice(1), visit);
   }
   // An FDS track's modulation (a depth written above 0), which the PC
   // Engine plays as its LFO (wave-port.js).
@@ -189,7 +203,14 @@ function survey(text, from, imports) {
   // their role off a wave channel.
   const ownDefs = defNames(roots, "def");
   const waveMacros = new Set([...defNames(others, "def"), ...ROLES.map((r) => `wave-${r}`)].filter((n) => /^wave-/.test(n) && !ownDefs.has(n)));
-  return { roots, forms, heads, voices, samples, ownSamples, kit, waves: waveNames, fdsMod, waveMacros };
+  return { roots, forms, heads, voices, samples, ownSamples, kit, waves: waveNames, fdsMod, waveMacros, snippets };
+}
+
+// The score's own snippets: a def of a body (words, notes, a macro), not a
+// section of channel forms — name → its node.
+function snippetDefs(roots, from) {
+  const isForm = (x) => isList(x) && from.channelNames.includes(x.items[0]?.value);
+  return new Map(roots.filter((n) => isList(n, "def") && n.items[1]?.kind === "atom" && !n.items.slice(2).some(isForm)).map((n) => [n.items[1].value, n]));
 }
 
 // Every atom of a body, in order, into the lists a body is made of.
@@ -604,7 +625,9 @@ function planRows(s, from, to, loopOf = () => null) {
     // A copy of the bass line (the group's other parts) goes first: the bass
     // already plays what it plays.
     const isCopy = (g) => g.some((k) => s.bassGroup.includes(k) && k !== bassRow());
-    const order = (a, b) => (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    // A row with no notes (a form of words and rests) goes before any that
+    // sounds: a channel of the machine's own kind is no reason to keep it.
+    const order = (a, b) => ((notes(a) > 0) - (notes(b) > 0)) || (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
   }
@@ -787,6 +810,8 @@ class Porter {
     this.shadowing = new Set(); // def-fm names that would hide the OPLL's ROM voice of that name
     this.replacedWaves = new Set(); // def-wave names a conversion leaves unplayed
     this.replacedSnippets = new Set(); // a def a conversion leaves unnamed (an FDS table's)
+    this.snippetTexts = new Map(); // a snippet → its readings where tracks play it (snippetIn)
+    this.inSnippet = []; // the snippets being read, inner last
     this.waveMacroOn = new Set(); // the heads a role's wave macro is running on
     this.octShift = new Map(); // head → the octaves its stand-in is written up, for its voice's carrier
     this.setupLfo();
@@ -876,6 +901,7 @@ class Porter {
   run(header) {
     const { roots } = this.s;
     const changes = [];
+    const snippets = [];
     const replace = (node, insert) => {
       const sp = this.span(node);
       if (insert !== null) return changes.push({ ...sp, insert });
@@ -898,8 +924,19 @@ class Porter {
       else if (head === "def-se") {
         this.say(`def-se ${n.items[1]?.value ?? ""}: a sound effect is the Mega Drive driver's; taken out`);
         replace(n, null);
-      } else if (head === "def") replace(n, this.def(n));
+      } else if (head === "def" && this.s.snippets.has(n.items[1]?.value)) snippets.push(n);
+      else if (head === "def") replace(n, this.def(n));
     }
+    // A snippet as the tracks playing it read it, each reading a def; one
+    // no kept track plays, as a def is read (and pruned when nothing names it).
+    for (const n of snippets) {
+      const name = n.items[1].value;
+      if (!this.snippetTexts.has(name)) replace(n, this.def(n));
+      else changes.push({ ...this.span(n), snippet: name });
+    }
+    const snippetNames = this.snippetNames();
+    for (const c of changes)
+      if (c.snippet) c.insert = this.snippetTexts.get(c.snippet).map((x, k) => x.text.replace(SNIPPET_SELF, snippetNames.get(c.snippet)[k])).join("\n");
     // The defs the conversion adds: each one-operator voice after its base.
     const added = this.opVoiceDefs();
     for (const [base, defs] of added) {
@@ -917,6 +954,7 @@ class Porter {
       at = c.to;
     }
     out += this.text.slice(at);
+    out = out.replace(new RegExp(`${SNIPPET_REF}([^${SNIPPET_AT}]+)${SNIPPET_AT}(\\d+)${SNIPPET_REF}`, "g"), (_, name, k) => snippetNames.get(name)[Number(k)]);
     if (this.lfoTrack) out = `${out.replace(/\s*$/, "")}\n${this.lfoTrack}\n`;
     out = this.pruneVoices(out);
     out = this.pruneEmptyDefs(out);
@@ -1528,6 +1566,12 @@ class Porter {
       const it = items[i];
       if (it.kind === "atom") {
         const v = it.value;
+        // A snippet the track names is read where it plays: on this
+        // track's channel, from its state (snippetIn).
+        if (ctx.head && this.s.snippets.has(v) && !this.inSnippet.includes(v)) {
+          outs[i] = this.snippetIn(v, ctx);
+          continue;
+        }
         if (ctx.noise && !(ctx.split && v === ":mode") && typeof v === "string" && /^:(mode|noise-rate|oct\+?)$/.test(v) && i + 1 < items.length) {
           this.noiseWord(v, items[i + 1], ctx);
           outs[i] = outs[i + 1] = null;
@@ -1686,6 +1730,42 @@ class Porter {
         if (items[i].value === "~" && [near(i, -1), near(i, 1)].some((o) => typeof o === "string" && o.startsWith("_"))) outs[i] = null;
     }
     return { outs, after };
+  }
+
+  // A snippet named on a track, its words read for the track's channel as
+  // the track's own are (an MDX's fm7 phrase onto a square: its :pan and
+  // voice are the square's to take out). Each distinct reading is a def of
+  // its own — the first under the snippet's name, another (the same phrase
+  // on a channel of another kind) under `<name>-<channel>` — and the place
+  // that names it names that one (snippetNames, at the end of run).
+  snippetIn(name, ctx) {
+    const node = this.s.snippets.get(name);
+    this.inSnippet.push(name);
+    const { outs, after } = this.body(node.items, 2, ctx);
+    this.inSnippet.pop();
+    outs[1] = SNIPPET_SELF;
+    const text = this.renderList(node, outs, after);
+    const list = this.snippetTexts.get(name) ?? this.snippetTexts.set(name, []).get(name);
+    let k = list.findIndex((x) => x.text === text);
+    if (k < 0) k = list.push({ text, dest: ctx.dest }) - 1;
+    return `${SNIPPET_REF}${name}${SNIPPET_AT}${k}${SNIPPET_REF}`;
+  }
+
+  // Each snippet reading's name: the first the snippet's, the others
+  // `<name>-<channel>` (or numbered) where no def has that name.
+  snippetNames() {
+    const used = new Set(this.s.roots.filter((n) => isList(n) && /^def/.test(n.items[0]?.value) && n.items[1]?.kind === "atom").map((n) => n.items[1].value));
+    const names = new Map();
+    for (const [name, list] of this.snippetTexts) {
+      names.set(name, list.map((x, k) => {
+        if (k === 0) return name;
+        let n = `${name}-${x.dest}`;
+        for (let j = 2; used.has(n); j++) n = `${name}-${j}`;
+        used.add(n);
+        return n;
+      }));
+    }
+    return names;
   }
 
   // The noise's state as its source writes it: the octave, the rate (Hz),
