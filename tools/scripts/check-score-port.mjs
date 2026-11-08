@@ -387,6 +387,11 @@ const port = (src, to, rows) => {
   assert.ok(port(pce, "msx", { wave6: "wave5" }).said.some((x) => /share one wave memory/.test(x)));
   // A loop that moves the noise's octave, or a split's :mode, written out pass by pass.
   assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d > :mode white0 c d > :mode white0 c\)/);
+  // A macro's #sus / #rel in the loop are no labels: it is written out too.
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 (macro :vel [15 #sus 12 #rel 0]) c >) c)", "md").text, /\(noise \(macro :vel \[15 #sus 12 #rel 0\]\) :mode white2 c > \(macro/);
+  // A (macro :wave …) off a wave channel with nothing else goes, and the waves only it named.
+  const mac = port("(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 (macro :wave [saw saw]) :len 4 c)", "fc").text;
+  assert.doesNotMatch(mac, /\(macro\)|def-wave saw/);
   const split = port("(def-score :target x68k)\n(fm8 :len 8 (x 2 c :mode noise c) c)", "md").text;
   assert.match(split, /\(noise :len 8 _ c c c c\)/);
 }

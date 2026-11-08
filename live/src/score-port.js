@@ -1025,6 +1025,7 @@ class Porter {
         // A loop's next pass starts from where its last ended: the noise's
         // state is written again inside it and after it.
         if (ctx.noise) ctx.noise.last = null;
+        const isMacro = it.items[0].value === "macro";
         const oct = ctx.noise?.oct;
         const mode = ctx.state?.mode;
         const inner = this.body(it.items, 1, it.items[0].value === "macro" ? { ...ctx, macro: true } : ctx);
@@ -1037,7 +1038,10 @@ class Porter {
         // Such a loop is written out a pass after another, each from where
         // the last ended — unless it holds a label or a (break), which a
         // copy cannot: then its later passes are read as its first, said.
-        const fixed = (n) => (n?.kind === "atom" && /^#./.test(n.value)) || isList(n, "break") || (n?.kind === "list" && n.items.some(fixed));
+        // (A macro's #sus / #rel are its steps' marks, not labels: a macro or
+        // a step vector is not looked into.)
+        const fixed = (n) => (n?.kind === "atom" && /^#./.test(n.value)) || isList(n, "break")
+          || (isList(n) && DESCEND.has(n.items[0]?.value) && n.items[0].value !== "macro" && n.items.some(fixed));
         if (moves && !it.items.slice(2).some(fixed)) {
           const bodyText = (r) => {
             const outs2 = [...r.outs];
@@ -1057,7 +1061,9 @@ class Porter {
         if (moves && ctx.noise && ctx.noise.oct !== oct) ctx.noise.oct += (times - 1) * (ctx.noise.oct - oct);
         if (moves && ctx.split !== "noise")
           this.say(`a loop on ${this.nameOf(ctx.head)} ${ctx.split ? "ends in another :mode than it starts" : "moves the noise's octave"} and holds a label or a (break): its later passes are read as its first`);
-        outs[i] = this.renderList(it, inner.outs, inner.after);
+        // A macro with none of its steps left is no macro.
+        if (isMacro && it.items.length > 1 && it.items.slice(1).every((_, j) => inner.outs[j + 1] === null)) outs[i] = null;
+        else outs[i] = this.renderList(it, inner.outs, inner.after);
       }
     }
     // A tie into or out of a note the split made a rest ties nothing.
@@ -1372,6 +1378,11 @@ class Porter {
     // A track's `:wave (expr)` off a wave channel: the wave it folds to (the
     // compile names it by its place, `wave1@3:14`), read as a named one is.
     // One that follows a $slot has no steps to read.
+    // The waves a :wave off a wave channel names go if nothing else plays them.
+    if (w === "WAVE" && ctx.destPart && ctx.destPart.kind !== "wave") {
+      const walkNames = (n) => { if (n?.kind === "atom" && this.s.waves.has(n.value)) this.replacedWaves.add(n.value); if (n?.kind === "list") n.items.forEach(walkNames); };
+      walkNames(val);
+    }
     if (w === "WAVE" && ctx.srcPart?.kind === "wave" && ctx.destPart && ctx.destPart.kind !== "wave" && !ctx.macro) {
       if (val.kind === "atom" && this.s.waves.has(val.value)) {
         const r = this.waveRule(val.value, ctx);
