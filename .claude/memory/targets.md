@@ -218,6 +218,13 @@ Decisions on the way:
   is no use of it: pruning counts uses outside the def.
 - The check: a channel the source shared between kinds (pce) keeps every
   note it played (a superset there).
+- A review (2026-11-08) fixed: presets/wavetable's `wave-<role>` macros
+  off a wave channel are their role; the FDS LFO's rate rides on the
+  generated wave2 track and a depth written before a track's first note
+  starts wave1; wave2 is no row's choice while it is the LFO; a voice after
+  a role macro clears its waves (`(macro :wave none)`); fc's tri / vrc6-saw
+  keep their shape on a wave; a :duty over half is its mirror; the envelope
+  starts at key-on; a quiet wave's repeat tolerance is 3 % of its swing.
 - Open: inline `:wave (expr)` off a wave channel is dropped, not classified;
   the SCC's wave4 / wave5 share one memory (the compiler says so); a noise
   loop moving the octave onto the SN's modes plays every pass as the first.

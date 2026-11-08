@@ -59,7 +59,10 @@ export function shapeOf(steps) {
   // A wave that repeats within its cycle (a square drawn twice: an octave
   // up) is read on one repeat, each step held as the chip would not.
   let xs = wave32(steps);
-  while (xs.length >= 8 && xs.slice(0, xs.length / 2).every((x, i) => Math.abs(x - xs[i + xs.length / 2]) <= 8))
+  const range = Math.max(...xs) - Math.min(...xs);
+  if (range === 0) return "sine"; // a silent wave: no shape, and nothing loud for it
+  const tol = Math.max(1, range * 0.03); // a repeat to within 3 % of its swing
+  while (xs.length >= 8 && xs.slice(0, xs.length / 2).every((x, i) => Math.abs(x - xs[i + xs.length / 2]) <= tol))
     xs = xs.slice(0, xs.length / 2);
   if (xs.length < N) xs = Array.from({ length: N }, (_, i) => xs[Math.floor((i * xs.length) / N)]);
   const s = spectrum(xs);
@@ -103,8 +106,10 @@ function egFrames(op) {
       if (state === 1 && att >= sl) state = 2;
     }
   };
-  const held = [];
-  for (let f = 0; f < KEY_FRAMES; f++) {
+  // The first frame is the key-on: what the attack starts from (at AR 31,
+  // the level at once).
+  const held = [att];
+  for (let f = 1; f < KEY_FRAMES; f++) {
     for (let t = 0; t < perFrame; t++) tick();
     held.push(att);
     // Settled: held still (no sustain rate), or gone.

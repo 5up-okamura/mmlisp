@@ -144,8 +144,19 @@ function survey(text, from, imports) {
   const waves = new Set([...defNames(roots, "def-wave"), ...defNames(others, "def-wave")]);
   // An FDS track's modulation (a depth written above 0), which the PC
   // Engine plays as its LFO (wave-port.js).
-  const fdsMod = from.name === "fc" && heads.has("fds-wave") && /:lfo-pmd\s+(?!0\b)[^\s)]/.test(text);
-  return { roots, forms, heads, voices, samples, ownSamples, kit, waves, fdsMod };
+  let fdsMod = false;
+  const findPmd = (n) => {
+    if (n?.kind !== "list") return;
+    n.items.forEach((m, i) => { if (m.value === ":lfo-pmd" && n.items[i + 1] && n.items[i + 1].value !== "0") fdsMod = true; });
+    n.items.forEach(findPmd);
+  };
+  if (from.name === "fc" && heads.has("fds-wave")) roots.forEach(findPmd);
+  // The wavetable's role macros (`wave-piano`: its waves and levels), an
+  // import's snippet the conversion cannot rewrite: named, they are read as
+  // their role off a wave channel.
+  const ownDefs = defNames(roots, "def");
+  const waveMacros = new Set([...defNames(others, "def"), ...ROLES.map((r) => `wave-${r}`)].filter((n) => /^wave-/.test(n) && !ownDefs.has(n)));
+  return { roots, forms, heads, voices, samples, ownSamples, kit, waves, fdsMod, waveMacros };
 }
 
 // Every atom of a body, in order, into the lists a body is made of.
@@ -294,6 +305,8 @@ function planRows(s, from, to) {
     for (const g of [...groups.values()].sort((a, b) => notes(a) - notes(b)).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = "drop";
   }
+  // With the FDS's track dropped there is no LFO to keep wave2 for.
+  if (reserved.length && dest["fds-wave"] === "drop") { takenBy.delete(to.voiceKey("wave2")); reserved.length = 0; }
   // The FDS's modulating track on wave1, the PC Engine's one swayed channel.
   if (reserved.length && keys.includes("fds-wave") && dest["fds-wave"] !== "drop" && free("fds-wave", "wave1")) dest["fds-wave"] = claim("fds-wave", "wave1");
   // First the channels the destination has as they are: the noise before a
@@ -336,7 +349,7 @@ function planRows(s, from, to) {
     const kind = kindOf(from, k);
     if (to.partOf(k)?.kind === kind && !to.partOf(k).kit && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
     if (k === "fm3-csm-rate") return ["drop"];
-    if (["fm", "tone", "wave"].includes(kind)) return [...channelsOf(to, "fm"), ...channelsOf(to, "wave"), ...channelsOf(to, "tone"), "drop"];
+    if (["fm", "tone", "wave"].includes(kind)) return [...channelsOf(to, "fm"), ...channelsOf(to, "wave").filter((h) => !reserved.includes(h)), ...channelsOf(to, "tone"), "drop"];
     if (kind === "noise") return [...channelsOf(to, "noise"), "drop"];
     return [...channelsOf(to, "sample"), ...channelsOf(to, "sample", { kit: true }), "drop"];
   };
@@ -380,7 +393,8 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
     if (h === "drop" || to.partOf(h).kit) continue;
     const key = to.voiceKey(h);
     const prev = seen.get(key);
-    if (prev && (prev.h === h || srcKey(prev.k) !== srcKey(k))) return { error: `${prev.k} and ${k} both go to ${h}` };
+    if (prev && (prev.h === h || srcKey(prev.k) !== srcKey(k)))
+      return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
   }
   if (to.name === "md" && Object.values(map).some((h) => /^pcm/.test(h)) && Object.values(map).includes("fm6"))
@@ -883,9 +897,11 @@ class Porter {
       lead.push("sine");
     }
     if (first && ctx.srcPart.kind === "tone" && ctx.destPart.kind === "wave") {
+      // The 2A03's triangle and the VRC6's saw keep their shape.
+      const shape = { "fc-tri": "triangle", "vrc6-saw": "saw" }[ctx.srcPart.name] ?? "square";
       this.needsWaves = true;
-      lead.push("square");
-      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} as presets/wavetable's square`);
+      lead.push(shape);
+      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} as presets/wavetable's ${shape}`);
     }
     if (first && ctx.srcPart.kind !== "fm" && ctx.srcPart.kind !== "wave" && ctx.destPart.kind === "fm") {
       const v = this.standIn(ctx.destPart);
@@ -905,6 +921,7 @@ class Porter {
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} at c4: the ${ctx.destPart.label} has one pitch a sound`);
     }
     if (first && this.lfoLead && ctx.dest === "fds-wave") lead.push(this.lfoLead);
+    if (first && this.leadOn?.[ctx.dest]) lead.push(this.leadOn[ctx.dest]);
     if (lead.length) after.set(at, [...lead, ...(after.get(at) ?? [])]);
     return this.renderList(n, outs, after);
   }
@@ -941,6 +958,17 @@ class Porter {
           if (r.drop) outs[i] = outs[i + 1] = null;
           else if (r.replace != null) { outs[i] = r.replace; outs[i + 1] = null; }
           i++;
+          continue;
+        }
+        if (ctx.head && ctx.srcPart?.kind === "wave" && ctx.destPart?.kind !== "wave" && this.s.waveMacros.has(v)) {
+          const role = v.slice(5);
+          if (ROLES.includes(role)) {
+            const r = this.waveRule(role, ctx);
+            if (r !== undefined) outs[i] = r;
+          } else {
+            this.say(`${v} on ${this.nameOf(ctx.head)}: presets/wavetable's macro of waves, which ${ctx.dest} has not; taken out`);
+            outs[i] = null;
+          }
           continue;
         }
         if (ctx.head && ctx.srcPart?.kind === "wave" && this.s.waves.has(v)) {
@@ -1101,20 +1129,37 @@ class Porter {
       return node?.kind === "list" && node.bracket === "[]" ? node.items.map((x) => (x.value === "reset" ? "reset" : Number(x.value))) : null;
     };
     if (this.from.name === "fc" && this.to.name === "pce" && this.map["fds-wave"] === "wave1" && this.s.fdsMod) {
-      const table = tableOf(words.find(([k]) => k === ":lfo-wave")?.[1]) ?? Array(32).fill(0);
+      const tableWord = words.find(([k]) => k === ":lfo-wave")?.[1];
+      const table = tableOf(tableWord) ?? Array(32).fill(0);
+      // The table is wave2's wave now: its def goes, whichever track named it.
+      if (tableWord?.kind === "atom") this.replacedSnippets.add(tableWord.value);
       const n = num(first(":lfo-freq")) ?? 0;
       const midi = this.middleNote("fds-wave");
       const peak = Math.max(1, ...fdsCounter(table).map(Math.abs));
       const p = fdsAsPce({ table, n, pmd: num(first(":lfo-pmd")) ?? 0, midi });
       const NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
-      this.lfoTrack = `(def-wave fds-lfo :wave [${p.wave.join(" ")}])\n(wave2 fds-lfo :vol 0 :oct ${Math.floor(p.note / 12) - 1} ${NAMES[p.note % 12]}0) ; the FDS's modulation: wave2 is the LFO wave1 takes`;
+      // wave2 holds the LFO's wave, its rate's :lfo-freq with it (the score's
+      // own, read below, follow it); wave1 starts at the first depth.
+      this.lfoTrack = `(def-wave fds-lfo :wave [${p.wave.join(" ")}])\n(wave2 fds-lfo :lfo-freq ${p.lfoFreq} :vol 0 :oct ${Math.floor(p.note / 12) - 1} ${NAMES[p.note % 12]}0) ; the FDS's modulation: wave2 is the LFO wave1 takes`;
+      // A depth a track writes before its first note is the song's from its
+      // start: wave1 starts at it (one written later is that track's own).
+      const opening = this.s.forms.flatMap((f) => {
+        const out = [];
+        for (let i = 1; i < f.items.length; i++) {
+          const it = f.items[i];
+          if (it.kind === "atom" && (isNote(it.value) || /^_/.test(it.value))) break;
+          if (it.value === ":lfo-pmd" && num(f.items[i + 1]) != null) out.push(num(f.items[i + 1]));
+        }
+        return out;
+      });
+      if (opening.length && opening[0] > 0) this.leadOn = { wave1: `:fms ${pceFmsOf((opening[0] * peak) / 1024, midi)}` };
       this.say(`the FDS's modulation is the ${this.to.system}'s LFO: wave2 plays its table's sway at ${p.note} (:vol 0, held), wave1 takes it (:fms), :lfo-freq read with wave2's pitch`);
       let saidTable = false;
       this.lfo = { rule: (w, val, ctx) => {
         if (num(val) == null && w !== "LFO_WAVE") { this.say(`${w === "LFO_FREQ" ? ":lfo-freq" : ":lfo-pmd"} (a sweep): the ${this.to.system}'s LFO takes a value; taken out`); return { drop: true }; }
         if (w === "LFO_FREQ") return { replace: `:lfo-freq ${fdsFreqAsPce(num(val), p.note)}` };
         if (w === "LFO_PMD") {
-          if (ctx.dest !== "wave1") { this.say(`:lfo-pmd on ${this.nameOf(ctx.head)}: the ${this.to.system}'s depth is wave1's :fms; taken out`); return { drop: true }; }
+          if (ctx.dest !== "wave1") { this.say(`:lfo-pmd on ${this.nameOf(ctx.head)}: the ${this.to.system}'s depth is wave1's :fms (the first one written is at wave1's start); taken out`); return { drop: true }; }
           return { replace: `:fms ${pceFmsOf((num(val) * peak) / 1024, midi)}` };
         }
         if (w === "LFO_WAVE" && !saidTable) { saidTable = true; if (val.kind === "atom") this.replacedSnippets.add(val.value); return { drop: true }; }
@@ -1131,8 +1176,13 @@ class Porter {
       const midi = this.middleNote("wave1");
       const firstFms = num(words.find(([k, v]) => k === ":fms" && num(v) > 0)?.[1]) ?? 1;
       const p = pceAsFds({ wave: wave32(steps), note, lfoFreq, fms: firstFms, midi });
-      this.lfoLead = `:lfo-wave [${p.table.join(" ")}]${first(":lfo-freq") ? "" : ` :lfo-freq ${p.n}`}`;
-      this.say(`the ${this.from.system}'s LFO (wave2 swaying wave1) is the FDS's modulation: its table from wave2's wave '${name ?? "sine"}', its rate from wave2's pitch; wave2 still plays as written`);
+      // The rate in the lead unless wave1 writes one before its first note.
+      const ownRate = this.s.heads.get("wave1")?.forms.some((f) => {
+        for (const it of f.items.slice(1)) { if (it.kind === "atom" && isNote(it.value)) return false; if (it.value === ":lfo-freq") return true; }
+        return false;
+      });
+      this.lfoLead = `:lfo-wave [${p.table.join(" ")}]${ownRate ? "" : ` :lfo-freq ${p.n}`}`;
+      this.say(`the ${this.from.system}'s LFO (wave2 swaying wave1) is the FDS's modulation: its table from wave2's wave '${name ?? "sine"}', its rate from wave2's pitch${this.map.wave2 === "drop" ? "" : "; wave2 still plays as written"}`);
       const pmdOf = (k) => pceAsFds({ wave: wave32(steps), note, lfoFreq, fms: k, midi }).pmd;
       this.lfo = { rule: (w, val, ctx) => {
         if (w === "LFO_FREQ" && num(val) != null) return { replace: `:lfo-freq ${pceFreqAsFds(num(val), note)}` };
@@ -1163,7 +1213,7 @@ class Porter {
       this.say(`wave '${v}' on ${this.nameOf(ctx.head)}: ${ctx.dest}'s ${duty === 8 ? "square" : `pulse (:duty ${duty})`}`);
       return `:duty ${duty}`;
     }
-    this.say(`wave '${v}' on ${this.nameOf(ctx.head)}: ${ctx.dest} plays its own square`);
+    this.say(`wave '${v}' on ${this.nameOf(ctx.head)}: ${ctx.dest} plays its own ${{ "fc-tri": "triangle", "vrc6-saw": "saw" }[dst.name] ?? "square"}`);
     return null;
   }
 
@@ -1174,7 +1224,11 @@ class Porter {
     this.replaced.add(v);
     this.needsWaves = true;
     const role = roleOf(v);
+    // A role's macro steps the channel's waves on every note: a voice after
+    // it clears them.
+    const clear = ctx.waveMacro ? "(macro :wave none) " : "";
     if (role) {
+      ctx.waveMacro = true;
       this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${role} (wave-${role}: its wave and level over a note)`);
       return `wave-${role}`;
     }
@@ -1184,7 +1238,8 @@ class Porter {
     const env = `${v}-env`;
     if (!this.envDefs.has(env)) this.envDefs.set(env, `(def ${env} (macro :vel+ ${envelopeOf(words)}))`);
     this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${wave} under ${env}, its carrier's envelope`);
-    return `${wave} ${env}`;
+    ctx.waveMacro = false;
+    return `${clear}${wave} ${env}`;
   }
 
   voiceRule(v, ctx) {
@@ -1265,7 +1320,7 @@ class Porter {
     // A pulse's width onto a wave channel: the wavetable's pulse of it.
     if (w === "DUTY" && ctx.destPart?.kind === "wave" && num(val) != null && !ctx.macro) {
       this.needsWaves = true;
-      const d = num(val);
+      const d = Math.min(num(val), 16 - num(val)); // 75 % sounds as 25 %
       return { replace: d <= 3 ? "pulse12" : d <= 6 ? "pulse25" : "square" };
     }
     const owners = partsWithWord(w);

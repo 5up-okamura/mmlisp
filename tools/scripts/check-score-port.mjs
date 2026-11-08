@@ -340,7 +340,7 @@ const port = (src, to, rows) => {
   // The FDS's modulation is the PC Engine's LFO: wave2 at :vol 0, wave1 its :fms.
   const fds = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "pce");
   assert.equal(fds.map["fds-wave"], "wave1");
-  assert.match(fds.text, /\(wave2 fds-lfo :vol 0 :oct \d [a-g]\+?0\)/);
+  assert.match(fds.text, /\(wave2 fds-lfo :lfo-freq \d+ :vol 0 :oct \d [a-g]\+?0\)/);
   assert.match(fds.text, /\(wave1 tri :lfo-freq \d+ .*:fms \d/);
   // …and the PC Engine's LFO the FDS's: wave2's triangle a table summing to it.
   const pce = port("(def-score :target pce)\n(def-wave tri :wave (triangle -128..127))\n(def-wave lead :wave (saw -128..127))\n(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)\n(wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)", "fc", { wave1: "fds-wave" });
@@ -348,6 +348,33 @@ const port = (src, to, rows) => {
   // The FDS's 64 steps onto a 32-step chip: written at the 32 it plays.
   const w64 = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "msx", { "fds-wave": "wave1" });
   assert.match(w64.text, /\(def-wave sine64 :wave \[(-?\d+ ){31}-?\d+\]\)/);
+}
+
+// ── What a review of the wave memories found (2026-11-08) ──
+{
+  // presets/wavetable's role macro off a wave channel is its role: a voice, a square.
+  const pce = '(def-score :target pce)\n(import "presets/wavetable/set.mmlisp")\n(wave3 wave-piano :len 4 g g g g)';
+  assert.match(port(pce, "md").text, /\(fm\d piano :len 4 g g g g\)/);
+  port(pce, "fc");
+  // …and the converter's own: md's piano onto pce and back.
+  port(port("(fm1 piano :len 4 c e)", "pce").text, "md");
+  // The FDS's depth written on another track still sways wave1; the LFO's
+  // rate rides on wave2, whichever track is dropped.
+  const fds = "(def-score :target fc)\n(def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])\n(sqr1 :lfo-wave vib :lfo-freq 20 :lfo-pmd 8 :len 4 c c)\n(fds-wave :len 4 c e g e)";
+  const r = port(fds, "pce", { sqr1: "drop" });
+  assert.match(r.text, /\(wave1 :fms \d/);
+  assert.match(r.text, /\(wave2 fds-lfo :lfo-freq \d+ /);
+  assert.doesNotMatch(r.text, /\(def vib/);
+  assert.ok(!portRows(fds, "pce").rows.find((x) => x.key === "sqr1").choices.includes("wave2"), "wave2 is the LFO: no row's");
+  // A voice after a role's macro clears its waves.
+  assert.match(port("(def-fm lead init-fm :alg 4 :tl1 20)\n(fm1 piano :len 4 c c lead c c)", "pce").text, /wave-piano :len 4 c c \(macro :wave none\) \w+ lead-env c c/);
+  // The 2A03's triangle a triangle on a wave channel; a 75 % duty the 25 % pulse.
+  assert.match(port("(def-score :target fc)\n(tri :len 4 c e)\n(sqr1 :duty 12 :len 4 c)", "pce").text, /\(wave\d triangle :len 4 c e\)[\s\S]*\(wave\d square pulse25 /);
+  // A quiet saw reads as a saw; a silent wave is no pulse.
+  assert.equal(shapeOf(Array.from({ length: 32 }, (_, i) => Math.round(-8 + i / 2))), "saw");
+  assert.equal(shapeOf(Array(32).fill(0)), "sine");
+  // Two kinds on one of pce's channels: said as one channel.
+  assert.match(portScore("(fm1 c)\n(noise c)", "pce", { rows: { fm1: "wave5", noise: "noise5" } }).error, /fm1 \(to wave5\) and noise \(to noise5\) are one channel/);
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);
