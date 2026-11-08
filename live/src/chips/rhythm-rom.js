@@ -15,6 +15,9 @@ export const rhythmRom = {
   level: { stepDb: 0.75, steps: 32 }, // the IL, 31 loud .. 0
   points: false,
   kit: { kick: "bd", snare: "sd", ride: "top", hat: "hh", tom4: "tom", rim: "rim" },
+  // Its sounds are the user's ROM (Yamaha's, not shipped); without it a
+  // score's kit under the roles' names stands in (below), or it is silent.
+  userRom: true,
   checkNote({ sample, sampleName, pitch, mode, target, once }) {
     const file = target.headsOf("adpcm-b")[0];
     const elsewhere = file ? `play its :file on ${file} (the ADPCM-B)` : "it has no sound here";

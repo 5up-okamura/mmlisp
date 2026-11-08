@@ -711,6 +711,16 @@ class Porter {
     this.userVoice = this.pickUserVoice();
     this.layerPrio = this.placeLayers();
     this.mix = this.mixBalance();
+    // Drums onto a ROM kit the user brings (the PC-8801's rhythm): without
+    // the ROM the score's samples under the roles' names stand in, so a
+    // score with none for the roles it plays takes presets/rx5's, as a
+    // mucom88 import does — else, ROM-less, they would be silent.
+    const romRows = Object.entries(map).filter(([, h]) => h !== "drop" && to.partOf(h)?.kit && to.partOf(h).userRom);
+    const roles = new Set(romRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])].map((n) => this.s.byEar?.get(n) ?? n)));
+    if ([...roles].some((r) => !this.s.samples.has(r))) {
+      this.needsKit = true;
+      this.say(`the ${to.system}'s rhythm plays from your YM2608 rhythm ROM (File > Import > YM2608 Rhythm ROM…); without it presets/rx5's samples stand in`);
+    }
     if (this.s.bass && this.map[this.s.bass] && this.map[this.s.bass] !== "drop") {
       const h = this.map[this.s.bass];
       this.say(`${this.nameOf(this.s.bass)} is the bass (its notes sit a fifth or more under the rest): ${this.to.partOf(h)?.bass ? `it plays on ${h}, the ${this.to.system}'s bass channel` : `kept, on ${h}`}`);

@@ -553,6 +553,16 @@ const port = (src, to, rows) => {
   // Without a part that low, no bass is picked, and the rows go by notes.
   const noBass = portScore(bassSrc.replace("(fm1 :oct 2", "(fm1 :oct 4"), "fc");
   assert.equal(noBass.map.fm1, "drop", `no bass: the fewest notes go: ${JSON.stringify(noBass.map)}`);
+  // The FM-PAC's rhythm (made by the chip) onto the PC-8801's (the user's
+  // ROM): without the ROM a kit's samples stand in, so the conversion
+  // imports presets/rx5 for the roles it plays, as a mucom88 import does —
+  // a score that has the roles' samples keeps its own.
+  const fmPac = port("(def-score :target msx)\n(fm1 piano :len 4 c e)\n(rhythm1 kick :len 2 c c)\n(rhythm2 hat :len 4 c c c c)", "pc88");
+  assert.deepEqual([fmPac.map.rhythm1, fmPac.map.rhythm2], ["rhythm1", "rhythm2"]);
+  assert.match(fmPac.text, /\(import "presets\/rx5\/set\.mmlisp"\)/, fmPac.text);
+  assert.ok(fmPac.said.some((w) => /YM2608 Rhythm ROM/.test(w)));
+  const ownKit = port('(def-score :target msx)\n(import "presets/tr808/set.mmlisp")\n(rhythm1 kick :len 2 c c)', "pc88");
+  assert.doesNotMatch(ownKit.text, /presets\/rx5/, "the score's own kit stands in");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

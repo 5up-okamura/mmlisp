@@ -421,7 +421,14 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   NOISE_DRUMS has tom (d+5, 4096 Hz, 10f), rim (g6, 3f), cymbal (a6, 30f
   line), hat (a+6, 3f) beside kick / snare; `knownRank` (name or heard,
   null for neither) picks a sample's drum, noiseDrumOf(rank) its sound; a
-  row of any known drum goes to the noise, layered by rank. Inline operator words on such a
+  row of any known drum goes to the noise, layered by rank.
+- **MGS onto pc88: the drums were silent** (user, 2026-11-08). The FM-PAC
+  rhythm rows went to pc88's rhythm1-5, right, but that part plays the
+  user's YM2608 ROM, and without it only samples under the roles' names
+  stand in — the conversion imported none. `userRom: true` on rhythmRom
+  (chips/rhythm-rom.js, parts.js): rows onto such a kit whose roles the
+  score has no samples for set needsKit → `(import "presets/rx5/set.mmlisp")`
+  as import-mucom does; said. Measured: silent without, −29 dBFS with. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

@@ -84,6 +84,9 @@
 //             (the 2A03's triangle, the Game Boy's wave) — a conversion
 //             puts the score's bass part there (score-port.js)
 //   kit       kit role → its sound: samples built in under those names
+//   userRom   true: a kit whose sounds are a ROM the user brings (the
+//             YM2608's rhythm); without it the score's samples under the
+//             roles' names stand in — a conversion onto it imports a kit
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score
 //   checkTracks({ tracks, named, push }) → the part's rules over what its
