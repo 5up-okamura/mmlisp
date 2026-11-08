@@ -95,6 +95,14 @@ const OWN_CHIPS = {
   md: { ym2612: {}, sn76489: {} },
 };
 const ownChip = (tg, chip) => OWN_CHIPS[tg]?.[chip] ?? null;
+// A module chip whose volume column is in log steps: its dB a step (the
+// source's, wherever the channel plays), and `oldScaling` where Furnace,
+// without newVolumeScaling, puts its volume macro with the column per
+// level (the OPLL's family). The rest are linear over their channel's top.
+const LOG_COLUMN = {
+  pce: { db: 1.5 }, ssg: { db: 3 }, "opna-rhythm": { db: 0.75 },
+  opll: { db: 3, oldScaling: true }, vrc7: { db: 3, oldScaling: true }, "opll-rhythm": { db: 3, oldScaling: true },
+};
 // A module chip's channels on its own machine: the machine's channels of the
 // chip it plays on, in its table's order, which is Furnace's.
 const chipHeads = (tg, chip) => targetProfile(tg).headsOfChip(ownChip(tg, chip)?.on ?? chip);
@@ -593,15 +601,17 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // `note`: the row's note, for an arp with fixed steps (each step's :semi
   // is its note less this one); `pceNoise`: a PC Engine noise note.
   // `vm`: how the volume macro meets the column on the target's own chip —
-  // "log": its steps added to the column's, 3 dB each (the OPLL's), "log31"
-  // 0.75 dB each of 31 (the YM2608's rhythm); "ssg" as "log", and its wave
+  // "log": its steps added to the column's, each the part's level step in dB
+  // (the OPLL's 3, the YM2608 rhythm's 0.75); "ssg" as "log", and its wave
   // macro the mixer, its duty macro the noise period, as `:mode` and
-  // `:noise-rate` macros; "lin": a ratio of it (the SCC's), "lin63" of 63
-  // (the VRC6's saw), "vrc6" as "lin" with its duty macro as `:duty`;
-  // "gb", "gbpulse" (its duty macro) and "gbwave" (NR32's levels) as "lin",
-  // a macro only under the instrument's software envelope, else that envelope
-  // baked (gbEnvLevels), which starts from the column.
-  const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false, vm = null) => {
+  // `:noise-rate` macros; "lin": a ratio of it (the SCC's, the N163's, the
+  // VRC6's saw), "vrc6" as "lin" with its duty macro as `:duty`, "fds" as
+  // "lin" on 64-step waves; "gb", "gbpulse" (its duty macro) and "gbwave"
+  // (NR32's levels) as "lin", a macro only under the instrument's software
+  // envelope, else that envelope baked (gbEnvLevels), which starts from the
+  // column. `level`: the column's top (the module channel's, 15 unless it
+  // says) and the part's dB a step where its scale is a log one.
+  const env = (i, nz = null, onWave = false, fc = null, col = null, note = null, pceNoise = false, vm = null, level = { top: 15, stepDb: null }) => {
     const am = t.instruments[i]?.arp;
     const moves = !!am?.fixed || !!am?.values.some((x) => x !== 0);
     if (!moves) nz = null;
@@ -611,8 +621,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // whole steps (Furnace's VOL_SCALE_*: the 2A03's, the SCC's, the
     // VRC6's, an older song's OPLL), a def for each column level it plays at.
     const gbVm = vm === "gb" || vm === "gbpulse" || vm === "gbwave";
-    const linVm = vm === "lin" || vm === "vrc6" || vm === "lin63" || vm === "fds" || gbVm;
-    const perCol = (fc && fc !== "tri") || linVm || (vm === "log" && t.newVolumeScaling === false);
+    const linVm = vm === "lin" || vm === "vrc6" || vm === "fds" || gbVm;
+    const perCol = (fc && fc !== "tri") || linVm || (vm === "log" && level.oldScaling && t.newVolumeScaling === false);
     const gbEnv = gbVm ? t.instruments[i]?.gb ?? GB_DEFAULT_ENV : null;
     const gbHw = !!gbEnv && !gbEnv.soft;
     // (A flat envelope, and the wave's, read no column: one def for all.)
@@ -622,7 +632,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const waveNames = onWave && wm?.values.some((x) => x !== wm.values[0]) ? wm.values.map((x) => waveDef(x, vm === "fds" ? 64 : 32)) : null;
     if (waveNames?.includes(null)) waveMacroSteps++;
     const waves = waveNames?.every((n) => n) ? waveNames : null;
-    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}${vm ? `:${vm}` : ""}`;
+    // (The column's scale tells defs apart only where the volume reads it.)
+    const usesLevel = perCol || vm === "lin" || vm === "vrc6" || vm === "log" || vm === "ssg" || pceSong;
+    const key = `env:${i}${nz == null ? "" : `:nz${nz}`}${note == null ? "" : `:n${note}`}${waves ? ":w" : ""}${fc ? `:${fc}` : ""}${col == null ? "" : `:v${col}`}${vm ? `:${vm}` : ""}${usesLevel ? `:t${level.top}:d${level.stepDb}` : ""}`;
     return defs.of(key, () => {
       const ins = t.instruments[i];
       const parts = [];
@@ -659,24 +671,20 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         // VOL_SCALE_LOG, the two added less the top. As dB on the chip's
         // own scale (linear, or the OPLL's 3 dB steps), a fader under the
         // column's :vel.
-        const top = vm === "lin63" ? 63 : vm === "fds" ? 32 : 15;
+        const { top } = level;
         const linear = linVm || (fc ? t.newVolumeScaling !== false : true);
         const out = (x) => (linear ? Math.floor((col * Math.min(top, x)) / top) : Math.max(0, Math.min(top, col + Math.min(top, x) - top)));
-        const level = (v) => (vm === "gbwave" ? GB_WAVE_COL[v >> 2] : v);
-        const db = (v) => (vm === "log" ? 3 * (v - top) : 20 * Math.log10(level(v) / top));
-        parts.push(`:vol ${arr(ins.vol, (x) => (level(out(x)) <= 0 || level(col) <= 0 ? 0 : Math.max(1, Math.round(31 + (db(out(x)) - db(col)) / 2))))}`);
+        const lv = (v) => (vm === "gbwave" ? GB_WAVE_COL[v >> 2] : v);
+        const db = (v) => (vm === "log" ? level.stepDb * (v - top) : 20 * Math.log10(lv(v) / top));
+        parts.push(`:vol ${arr(ins.vol, (x) => (lv(out(x)) <= 0 || lv(col) <= 0 ? 0 : Math.max(1, Math.round(31 + (db(out(x)) - db(col)) / 2))))}`);
       } else if (ins.vol?.values.length && fc)
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + linDb(x) / 2))))}`);
-      else if (ins.vol?.values.length && (vm === "lin" || vm === "vrc6" || vm === "lin63")) {
-        const top = vm === "lin63" ? 63 : 15;
-        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 + (20 * Math.log10(Math.min(top, x) / top)) / 2))))}`);
-      }
-      else if (ins.vol?.values.length && (vm === "log" || vm === "ssg" || vm === "log31")) {
-        const [top, stepDb] = vm === "log31" ? [31, 0.75] : [15, 3];
+      // A log column (the SSG's, the OPLL's, the YM2608 rhythm's, a PC Engine
+      // module's on any machine): each step its chip's dB under its top.
+      else if (ins.vol?.values.length && (vm === "log" || vm === "ssg" || pceSong) && level.stepDb) {
+        const { top, stepDb } = level;
         parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((top - Math.min(top, x)) * stepDb) / 2))))}`);
       }
-      else if (ins.vol?.values.length && pceSong)
-        parts.push(`:vol ${arr(ins.vol, (x) => (x <= 0 ? 0 : Math.max(1, Math.round(31 - ((31 - Math.min(31, x)) * 1.5) / 2))))}`);
       else if (ins.vol?.values.length)
         parts.push(`:vel* ${arr(ins.vol, (x) => Math.max(0, Math.min(1, Math.round((x * 100) / volMax) / 100)))}`);
       const rate = (k) => PCE_NOISE_TABLE[((k % 12) + 12) % 12];
@@ -1064,14 +1072,15 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     // The VRC6 on fc: a pulse (its eight duties) or the saw, each column
     // linear (the saw's to 63) and its volume macro a ratio of it.
     const vrc6Ch = onFc && chn.chip === "vrc6" && ch.dest.startsWith("vrc6-") ? (ch.dest === "vrc6-saw" ? "saw" : "pulse") : null;
-    // A column in log steps of this many dB (the PC Engine's 1.5, the SSG's
-    // and the OPLL's 3, the YM2608 rhythm's 0.75); the SCC's is linear.
-    const logStep = pceVol ? 1.5 : ssgCh || opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? 3
-      : rhythmCh && chn.chip === "opna-rhythm" ? 0.75 : 0;
-    // (A rhythm sound's: the OPLL's 3 dB steps, the YM2608's 0.75.)
-    const vm = ssgCh ? "ssg" : opllCh || (rhythmCh && chn.chip === "opll-rhythm") ? "log"
-      : rhythmCh && chn.chip === "opna-rhythm" ? "log31" : sccCh ? "lin"
-      : vrc6Ch === "pulse" ? "vrc6" : vrc6Ch === "saw" ? "lin63" : fdsCh ? "fds"
+    // A column in log steps of its chip's dB (LOG_COLUMN: the PC Engine's
+    // 1.5, the SSG's and the OPLL's 3, the YM2608 rhythm's 0.75); the SCC's
+    // and the others' linear. Its top is the module channel's.
+    const rhythmSound = rhythmCh && chn.kind === "rhythm"; // a rhythm chip's sound on a rhythm track
+    const logCol = LOG_COLUMN[chn.chip];
+    const logStep = pceVol || ssgCh || opllCh || rhythmSound ? logCol?.db ?? 0 : 0;
+    const level = { top: chn.volMax ?? 15, stepDb: logCol?.db ?? null, oldScaling: !!logCol?.oldScaling };
+    const vm = ssgCh ? "ssg" : opllCh || rhythmSound ? "log" : sccCh || vrc6Ch === "saw" ? "lin"
+      : vrc6Ch === "pulse" ? "vrc6" : fdsCh ? "fds"
       : gbCh === "pulse" ? "gbpulse" : gbCh === "wave" ? "gbwave" : gbCh ? "gb" : null;
     const linCh = sccCh || !!vrc6Ch || fdsCh || !!gbCh; // a linear column (the SCC's, the VRC6's, the FDS's, the Game Boy's)
     const fmPan = (onFm || !!gbCh) && !!part?.words("PAN");
@@ -1166,12 +1175,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
       if (rhythmCh) {
         if (!chn.drum) return [];
         // Its instrument's volume macro, as the sound's :vol.
-        if (vm && it?.kind === "std" && it.vol?.values.length) { usedMacro = true; return [chn.drum, env(ins, null, false, null, vol < 0 ? colMax : vol, null, false, vm)]; }
+        if (vm && it?.kind === "std" && it.vol?.values.length) { usedMacro = true; return [chn.drum, env(ins, null, false, null, vol < 0 ? colMax : vol, null, false, vm, level)]; }
         return usedMacro ? [chn.drum, "(macro none)"] : [chn.drum];
       }
       if (opllCh) {
         const v = it?.fm ? opllVoice(ins, part.romNames ?? OPLL_ROM_NAMES) : null;
-        if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, vol < 0 ? colMax : vol, note, false, vm)]; }
+        if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, vol < 0 ? colMax : vol, note, false, vm, level)]; }
         return usedMacro ? [...(v ? [v] : []), "(macro none)"] : v ? [v] : [];
       }
       if (!it) {
@@ -1185,7 +1194,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? ["(macro none)"] : [];
       }
       usedMacro = true;
-      const e = env(ins, nz, onWave, fcCh, vol < 0 ? colMax : vol, note, toNoise, vm);
+      const e = env(ins, nz, onWave, fcCh, vol < 0 ? colMax : vol, note, toNoise, vm, level);
       if (onFm) { standIns.add(standIn); return [standIn, e]; }
       return [e];
     };
