@@ -6171,7 +6171,7 @@
           // File and no handle — Save then asks where. Unfiltered, since iOS
           // greys out what it has no type for (.mmlisp); checked here instead.
           const files = await pickFileWithInput(null, { multiple: true });
-          if (files.length > 1 || isSongBank(files[0].name)) return openPickedSet(files);
+          if (files.length > 1 || isSongBank(files[0].name)) { await openPickedSet(files); return; }
           const [file] = files;
           if (!SOURCE_FILE_EXT.test(file.name) && !isSongFile(file.name) && !ARCHIVE_EXT.test(file.name)) {
             log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}) with their banks (${SONG_BANK_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
@@ -6188,7 +6188,7 @@
           // picker was left.
           ...(_sourceDir?.handle || _sourceDir?.archive?.handle ? { startIn: _sourceDir.handle ?? _sourceDir.archive.handle } : {}),
         });
-        if (handles.length > 1 || isSongBank(handles[0].name)) return openPickedSet(await Promise.all(handles.map((h) => h.getFile())));
+        if (handles.length > 1 || isSongBank(handles[0].name)) { await openPickedSet(await Promise.all(handles.map((h) => h.getFile()))); return; }
         await openPickedFile(await handles[0].getFile(), handles[0]);
       } catch (e) {
         if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');

@@ -39,7 +39,7 @@ import { opllRomVoices } from "./chips/ym2413.js";
 import * as fcApu from "./chips/rp2a03.js";
 import * as gbApu from "./chips/lr35902.js";
 import * as pcePsg from "./chips/huc6280.js";
-import { compileMMLisp, convertCountedJumps } from "./mmlisp2ir.js";
+import { compileMMLisp } from "./mmlisp2ir.js";
 import { PART_LEVELS } from "./part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi, expandLoops, VEL_DB_PER_STEP } from "./ir-utils.js";
@@ -321,7 +321,6 @@ function patchHeads(s, to) {
   return new Set(["fm3", "fm3-csm"].filter((h) => s.heads.get(h) && s.heads.get(h).notes === 0));
 }
 
-const allRoles = (h, kit) => h.samples.size > 0 && [...h.samples].every((x) => kit.has(x));
 // A role heard (import-to-midi.js sampleRole, heardBeat) as a kit's role.
 const KIT_OF_HEARD = { kick: "kick", snare: "snare", tom: "tom4", tom3: "tom4", crash: "ride", hat: "hat", "hat-open": "hat" };
 
@@ -346,20 +345,23 @@ function planFor(text, toName, imports, heard = null) {
   let s;
   try { s = survey(text, from, imports); } catch (e) { return { error: `the score does not parse: ${e.message}` }; }
   s.heard = heardBeat(heard, text);
-  // Each track's endless loop, as [from, to] ticks (null: none), read off
-  // the score compiled — once, and only if rows are to share a channel.
+  // The score compiled, once, when something asks (the rows' loops, the
+  // porter's middle notes and waves): on the survey for both.
+  s.compiled = () => {
+    if (s.ir === undefined) {
+      try { s.ir = compileMMLisp(text, "score.mmlisp", { imports: imports ?? new Map() }).ir ?? null; } catch { s.ir = null; }
+    }
+    return s.ir;
+  };
+  // Each track's endless loop, as "from-to" ticks (null: none), at the
+  // ticks they play, as the compiler's layering reads them (alignLayerLoops:
+  // the counted loops written out) — only if rows are to share a channel.
   let loops;
   const loopOf = (head) => {
     if (!loops) {
       loops = new Map();
-      let ir = null;
-      try { ir = compileMMLisp(text, "score.mmlisp", { imports: imports ?? new Map() }).ir; } catch { /* none read */ }
-      // At the ticks they play, as the compiler's layering reads them
-      // (alignLayerLoops): the counted loops written out first.
-      for (const t of ir?.tracks ?? []) {
-        const track = { ...t, events: t.events.map((e) => (e.args ? { ...e, args: { ...e.args } } : e)) };
-        convertCountedJumps(track);
-        const evs = track.events.some((e) => e.cmd === "LOOP_BEGIN") ? expandLoops(track.events) : track.events;
+      for (const t of s.compiled()?.tracks ?? []) {
+        const evs = t.events.some((e) => e.cmd === "LOOP_BEGIN") ? expandLoops(t.events) : t.events;
         const jumps = evs.filter((e) => e.cmd === "JUMP");
         const mark = jumps.length === 1 && evs.find((e) => e.cmd === "MARKER" && e.args?.id === jumps[0].args?.to);
         if (mark) loops.set(t.scoreChannel ?? t.channel, `${mark.tick}-${jumps[0].tick}`);
@@ -888,36 +890,18 @@ class Porter {
       out = out.replace(new RegExp(`^[ \\t]*\\(import\\s+"${FM_ROLES_SET.replace(/[./]/g, "\\$&")}"\\)[^\\n]*\\n?`, "m"), "");
       if (out !== before) this.say(`presets/fm-roles: the ${this.toFm.label}'s ROM voices are the roles; its import is taken out`);
     }
-    for (let pass = 0; pass < 4 && (this.replaced.size || this.shadowing.size || this.replacedWaves.size || this.replacedSnippets.size); pass++) {
-      let roots;
-      try { roots = parse(out); } catch { return out; }
-      const named = new Map();
-      const count = (n, skip) => {
-        if (n === skip) return;
-        if (n?.kind === "atom") named.set(n.value, (named.get(n.value) ?? 0) + 1);
-        if (n?.kind === "list") n.items.forEach((m) => count(m, skip));
-      };
-      const defs = roots.filter((n) => (isList(n, "def-fm") && (this.replaced.has(n.items[1]?.value) || this.shadowing.has(n.items[1]?.value)))
-        || (isList(n, "def-wave") && this.replacedWaves.has(n.items[1]?.value))
-        || (isList(n, "def") && this.replacedSnippets.has(n.items[1]?.value)));
-      roots.forEach((n) => count(n));
-      const starts = lineStarts(out);
-      // Its name's uses outside it (a def-wave's own curve can be named so: `(saw …)`).
-      const inside = (n, name) => { let c = 0; const w = (m) => { if (m?.kind === "atom" && m.value === name) c++; if (m?.kind === "list") m.items.forEach(w); }; w(n); return c; };
-      const unused = (n) => named.get(n.items[1].value) - inside(n, n.items[1].value) === 0;
-      const gone = defs.filter((n) => unused(n) || this.shadowing.has(n.items[1].value)).map((n) => {
-        const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
-        return { from, to: out[to] === "\n" ? to + 1 : to };
-      });
-      if (!gone.length) break;
-      // The voice a gone one extended may be named by nothing now: the next
-      // pass looks at it.
-      for (const n of defs.filter((n) => unused(n) || this.shadowing.has(n.items[1].value))) {
-        const base = n.items[2];
-        if (base?.kind === "atom" && !String(base.value).startsWith(":")) this.replaced.add(base.value);
-      }
-      for (const g of gone.sort((a, b) => b.from - a.from)) out = out.slice(0, g.from) + out.slice(g.to);
-    }
+    // A 4-op def under a ROM voice's name would hide it: it goes, named or
+    // not (its name then plays the ROM's). Every other def a rule left
+    // unnamed goes with the rest (pruneUnnamed).
+    if (!this.shadowing.size) return out;
+    let roots;
+    try { roots = parse(out); } catch { return out; }
+    const starts = lineStarts(out);
+    const gone = roots.filter((n) => isList(n, "def-fm") && this.shadowing.has(n.items[1]?.value)).map((n) => {
+      const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
+      return { from, to: out[to] === "\n" ? to + 1 : to };
+    });
+    for (const g of gone.sort((a, b) => b.from - a.from)) out = out.slice(0, g.from) + out.slice(g.to);
     return out;
   }
 
@@ -1194,8 +1178,16 @@ class Porter {
   // a variant of it takes its base's.
   louder(n, text) {
     const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
-    if (!onSamples || !n.items.some((x) => x.value === ":file") || /\(normalize\b/.test(text)) return text;
-    const tail = ` (normalize)${this.mix?.limit ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}`;
+    // A def of its own :file, or a variant with an :fx of its own (which
+    // replaces its base's chain, normalize and all); one without takes its
+    // base's. Limited only where it is a drum (a name or a sound that says
+    // so): a pad driven into a limiter is squashed, and the lift was
+    // measured on hits.
+    const own = n.items.some((x) => x.value === ":file") || n.items.some((x) => x.value === ":fx");
+    if (!onSamples || !own || /\(normalize\b/.test(text)) return text;
+    const name = n.items[1]?.value;
+    const drum = rankOfName(name) != null || this.s.heard?.has(name);
+    const tail = ` (normalize)${this.mix?.limit && drum ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}`;
     if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
     const fx = text.match(/:fx\s*\[/);
     if (fx) {
@@ -1629,10 +1621,7 @@ class Porter {
   // The source score compiled, once: its waves as the chip plays them, its
   // tracks' notes. Null where it does not compile.
   compiled() {
-    if (this.ir === undefined) {
-      try { this.ir = compileMMLisp(this.text, "score.mmlisp", { imports: this.imports ?? new Map() }).ir ?? null; } catch { this.ir = null; }
-    }
-    return this.ir;
+    return this.s.compiled();
   }
 
   waveSteps(name) {

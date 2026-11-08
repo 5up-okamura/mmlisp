@@ -515,12 +515,14 @@ const port = (src, to, rows) => {
   const want = (to, room = 0) => (LV.x68k.fm - LV.x68k.sample - room) - (LV[to].fm - LV[to].sample);
   const louder = (to) => Math.max(0, LV[to].fm - LV.x68k.fm);
   assert.ok(want("md") < -louder("md"), "the Mega Drive cannot reach the balance by lowering alone");
-  const mdMix = portScore(mixSrc, "md");
+  const drum = new Map([["smp-k", "kick"]]);
+  const mdMix = portScore(mixSrc, "md", { heard: drum });
   const mdSteps = Math.round(Math.max(want("md") + 3, -louder("md")) / 2);
   assert.match(mdMix.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${mdSteps}\\)`), mdMix.text);
   assert.match(mdMix.text, /:fx \[\(normalize\) \(gain 6\) \(limit\)\]/, "the samples limited");
+  assert.match(portScore(mixSrc, "md").text, /:fx \[\(normalize\)\]/, "a sample not known as a drum is not limited (a pad would be squashed)");
   assert.ok(mdSteps >= -Math.round(louder("md") / 2) - 0, "no further down than the Mega Drive plays it louder");
-  const mdRoom = portScore(mixSrc, "md", { peaks: new Map([["smp-k", -12]]) });
+  const mdRoom = portScore(mixSrc, "md", { heard: drum, peaks: new Map([["smp-k", -12]]) });
   const roomSteps = Math.round(Math.max(want("md", -12) + (want("md", -12) < -louder("md") ? 3 : 0), -louder("md")) / 2);
   assert.ok(roomSteps > mdSteps, "less, by the sample's headroom");
   assert.match(mdRoom.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${roomSteps}\\)`), mdRoom.text);
@@ -539,7 +541,8 @@ const port = (src, to, rows) => {
 (pcm1 kick :len 4 c snare c kick-hot c hat c)`, "pce");
   assert.match(loud.text, /\(def-pcm kick :file "a\.wav" :fx \[\(normalize\)\]\)/);
   assert.match(loud.text, /\(def-pcm snare :file "b\.wav" :fx \[\(gain 3\) \(hpf 100\) \(normalize\)\]\)/);
-  assert.match(loud.text, /\(def-pcm kick-hot kick :fx \[\(gain 6\)\]\)/, "a variant: its base's level");
+  assert.match(loud.text, /\(def-pcm kick-hot kick :fx \[\(gain 6\) \(normalize\)\]\)/, "a variant with an :fx of its own (which replaces its base's) is normalized too");
+  assert.match(port(`(def-pcm kick :file "a.wav")\n(def-pcm kick-soft kick)\n(pcm1 kick-soft :len 4 c)`, "pce").text, /\(def-pcm kick-soft kick\)/, "a variant without takes its base's");
   assert.match(loud.text, /\(def-pcm hat :file "c\.wav" :fx \[\(normalize :peak -3\)\]\)/, "a normalize of its own stays");
   // The PC Engine's drivers stream samples on one channel: a score's drum
   // rows are :prio layers on it, the kick and snare over the hats, each

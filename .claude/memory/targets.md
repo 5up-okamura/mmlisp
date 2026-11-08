@@ -393,7 +393,18 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   (VOL_UNITY is the top). The user: a level change to the score is a
   def-mod — so the samples' own move is `def-mod :voice [names] :vel+ N`
   too (it was a `(gain -N)` in their :fx); only the normalize and the
-  limiter, which shape the sound, stay in the def-pcm's :fx. Inline operator words on such a
+  limiter, which shape the sound, stay in the def-pcm's :fx.
+- **Review of the day's conversion work** (2026-11-08), fixed: a `:len Nf`
+  curve reaches its end on frame N − 1 (the player samples k/(N−1)), so a
+  line's `b` is the span's last frame, not the next (lineVector); a
+  def-pcm variant with an :fx of its own replaces its base's chain
+  (mmlisp2ir resolve) so it is normalized too, one without inherits; the
+  limiter only on drums (a name or a heard role), not a pad; one compile
+  per conversion (`s.compiled()`, shared by loopOf and the Porter);
+  convertCountedJumps is the compiler's own pass, gone from loopOf;
+  pruneVoices now only drops a def that hides a ROM voice (shadowing) and
+  the fm-roles import — every other unnamed def is pruneUnnamedDefs';
+  allRoles gone; Open's set path awaited inside its try. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
