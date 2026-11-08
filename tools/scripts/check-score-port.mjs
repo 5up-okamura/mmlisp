@@ -27,7 +27,7 @@ import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
-import { WAVEFORM_WORDS, waveformOf } from "../../live/src/voice-port.js";
+import { WAVEFORM_WORDS, waveformOf, carrierOctave } from "../../live/src/voice-port.js";
 import { shapeOf } from "../../live/src/wave-port.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
 import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
@@ -81,7 +81,9 @@ function check(file, src, to) {
     // A voice across the FM families is a role's or a waveform's, whose
     // `:key` sounds it in its own register: the onsets are what is kept.
     const twoOp = (t, h) => !!TARGETS[t].partOf(h)?.romNames;
-    const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && TARGETS[to].partOf(dest).kind === "fm" && twoOp(from, row.head) !== twoOp(to, dest));
+    // (And an FM voice onto a wave or a square is written at its sounding
+    // octave: carrierOctave.)
+    const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && (TARGETS[to].partOf(dest).kind !== "fm" || twoOp(from, row.head) !== twoOp(to, dest)));
     const was = notesOf(before.ir, row.head, kind, until, keyed);
     const now = notesOf(after.ir, dest, kind, until, keyed);
     // A channel the source machine shared between parts (the PC Engine's
@@ -291,8 +293,9 @@ const port = (src, to, rows) => {
 {
   // A machine short of channels keeps the parts with the most notes.
   const r = port("(fm1 :len 8 c d e f g a b c)\n(fm2 :len 2 c c)\n(sqr1 :len 4 c e g e)\n(sqr2 :len 1 c)", "gb");
-  // (gb's three: two pulses and its wave channel.)
-  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["wave", "sqr2", "sqr1", "drop"]);
+  // (gb's three: its two pulses to the squares, their own kind, its wave to
+  // the busier FM row.)
+  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["wave", "drop", "sqr1", "sqr2"]);
 }
 
 // ── What a review found (2026-11-08) ──
@@ -447,6 +450,23 @@ const port = (src, to, rows) => {
   assert.match(port("(def-fm lead init-fm :alg 4 :tl1 20)\n(fm1 piano :len 4 c d)\n(fm1 lead e f)", "gb").text, /\(wave \(macro :wave none\) \w+ lead-env e f\)/);
   // The log calls :lfo-freq the rate, and a machine with no LFO so.
   assert.ok(port("(def-score :target x68k)\n(fm1 :lfo-freq 100 :len 4 c)", "gb").said.some((x) => /:lfo-freq: the Game Boy has no LFO/.test(x)));
+}
+
+// ── FM kept on FM; a voice's sounding octave on a wave or square (2026-11-08) ──
+{
+  // Short of channels, a row of the machine's own kind keeps its channel
+  // before a stand-in, whatever their notes: md's 6 FM + 3 squares onto
+  // x68k's 8 FM drop a square, not the quietest FM.
+  const r = portRows("(fm1 c)\n(fm2 c)\n(fm3 c)\n(fm4 c)\n(fm5 c)\n(fm6 c)\n(sqr1 :len 8 c c c c c c c c)\n(sqr2 :len 8 c c c c c c c c)\n(sqr3 :len 8 c c c c c c c c)", "x68k").rows;
+  assert.ok(r.filter((x) => /^fm/.test(x.key)).every((x) => /^fm/.test(x.to)), "every FM row on FM");
+  assert.equal(r.filter((x) => x.to === "drop").length, 1);
+  assert.match(r.find((x) => x.to === "drop").key, /^sqr/);
+  // A voice whose carrier is at :ml 2 sounds an octave up: on a wave or a
+  // square its track is written an octave up, its :oct writes and glides too.
+  const bass = "(def-fm bass init-fm :alg 4 :tl1 30 :ml1 4 :tl2 0 :ml2 2 :tl3 127 :tl4 127)\n(def-fm lead init-fm :alg 7 :tl1 127 :tl2 127 :tl3 127 :tl4 0)\n(fm1 bass :oct 2 :len 4 c (glide c2 8) e :oct 3 g lead :oct 4 c)";
+  assert.match(port(bass, "pce").text, /\(wave1 \w+ bass-env :oct\+ 1 :oct 3 :len 4 c \(glide c3 8\) e :oct 4 g \w+ lead-env :oct\+ -1 :oct 4 c\)/);
+  assert.match(port(bass, "gb", { fm1: "sqr1" }).text, /\(sqr1 :oct\+ 1 :oct 3 :len 4 c \(glide c3 8\) e :oct 4 g :oct\+ -1 :oct 4 c\)/);
+  assert.equal(carrierOctave(new Map([["FM_ALG", 7], ["FM_ML4", 3]])), 0, "a 12th is no octave");
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

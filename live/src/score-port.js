@@ -42,7 +42,7 @@ import * as pcePsg from "./chips/huc6280.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "./ir-utils.js";
-import { waveformOf, ROLES, ROM_OF_WAVE } from "./voice-port.js";
+import { waveformOf, carrierOctave, carrierMultiple, ROLES, ROM_OF_WAVE } from "./voice-port.js";
 import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
@@ -341,7 +341,11 @@ function planRows(s, from, to) {
     for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
     if (groups.size <= room) continue;
     const notes = (g) => g.reduce((n, k) => n + notesOf(k), 0);
-    for (const g of [...groups.values()].sort((a, b) => notes(a) - notes(b)).slice(0, groups.size - Math.max(0, room)))
+    // A row of a kind the machine has (FM onto FM) keeps its channel before
+    // one that would play a stand-in (the user, 2026-11-08); among those
+    // alike, the most notes.
+    const own = (g) => g.some((k) => channelsOf(to, kindOf(from, k), { board: true }).length > 0);
+    for (const g of [...groups.values()].sort((a, b) => (own(a) - own(b)) || (notes(a) - notes(b))).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = "drop";
   }
   // With the FDS's track dropped there is no LFO to keep wave2 for.
@@ -477,6 +481,7 @@ class Porter {
     this.replacedWaves = new Set(); // def-wave names a conversion leaves unplayed
     this.replacedSnippets = new Set(); // a def a conversion leaves unnamed (an FDS table's)
     this.waveMacroOn = new Set(); // the heads a role's wave macro is running on
+    this.octShift = new Map(); // head → the octaves its stand-in is written up, for its voice's carrier
     this.setupLfo();
     // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
     // the wave written last plays on both — said where their waves differ.
@@ -1039,6 +1044,8 @@ class Porter {
           outs[i] = ctx.split && ctx.state.mode !== ctx.split ? restOf(v) : this.noiseNote(v, ctx);
           continue;
         }
+        const shift = ctx.head ? this.octShift.get(ctx.head) ?? 0 : 0;
+        if (shift && v === ":oct" && num(items[i + 1]) != null) { outs[i + 1] = String(num(items[i + 1]) + shift); i++; continue; }
         if (typeof v === "string" && /^:[a-z]/.test(v) && i + 1 < items.length) {
           const r = this.wordRule(v, items[i + 1], ctx);
           if (r.drop) outs[i] = outs[i + 1] = null;
@@ -1080,6 +1087,12 @@ class Porter {
           continue;
         }
         if (ctx.destPart?.kind === "sample" && !this.toKit.size && this.from.parts.some((p) => p.kit?.[v]) && !this.s.samples.has(v)) this.needsKit = true;
+      } else if (ctx.head && this.octShift.get(ctx.head) && isList(it, "glide") && /^[a-g][+-]?\d+$/.test(String(it.items[1]?.value))) {
+        // A glide's start note, written at its octave: raised with the rest.
+        const m = /^([a-g][+-]?)(\d+)$/.exec(it.items[1].value);
+        const outs2 = [];
+        outs2[1] = `${m[1]}${Number(m[2]) + this.octShift.get(ctx.head)}`;
+        outs[i] = this.renderList(it, outs2);
       } else if ((ctx.noBend || ctx.flatPitch) && isList(it, "glide")) {
         this.say(`(glide …) on ${this.nameOf(ctx.head)}: ${ctx.dest} plays a sound at its own pitch; taken out`);
         outs[i] = null;
@@ -1332,6 +1345,22 @@ class Porter {
     return null;
   }
 
+  // A voice's sounding octave (its main carrier's multiple) on a channel
+  // that plays the written note: the track moves up that far — `:oct+` at
+  // the switch, its `:oct` writes and glides after it raised (body).
+  octaveFor(v, ctx) {
+    const def = this.voices.get(v);
+    const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
+    const k = roleOf(v) ? 0 : carrierOctave(words);
+    const was = this.octShift.get(ctx.head) ?? 0;
+    this.octShift.set(ctx.head, k);
+    if (k !== 0 && !this.saidOct?.has(v)) {
+      (this.saidOct ??= new Set()).add(v);
+      this.say(`'${v}' sounds ${Math.abs(k)} octave${Math.abs(k) === 1 ? "" : "s"} ${k > 0 ? "up" : "down"} on FM (its carrier's :ml ${carrierMultiple(words)}); on ${ctx.dest} its notes are written so`);
+    }
+    return k === was ? "" : ` :oct+ ${k - was}`;
+  }
+
   // An FM voice onto a wave channel: a role's wave and its macro (the
   // wavetable's `wave-piano`); any other its waveform's wave, under an
   // envelope read off its main carrier.
@@ -1345,7 +1374,7 @@ class Porter {
     if (role) {
       this.waveMacroOn.add(ctx.head);
       this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${role} (wave-${role}: its wave and level over a note)`);
-      return `wave-${role}`;
+      return `wave-${role}${this.octaveFor(v, ctx)}`;
     }
     const def = this.voices.get(v);
     const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
@@ -1354,13 +1383,17 @@ class Porter {
     if (!this.envDefs.has(env)) this.envDefs.set(env, `(def ${env} (macro :vel+ ${envelopeOf(words)}))`);
     this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${wave} under ${env}, its carrier's envelope`);
     this.waveMacroOn.delete(ctx.head);
-    return `${clear}${wave} ${env}`;
+    return `${clear}${wave} ${env}${this.octaveFor(v, ctx)}`;
   }
 
   voiceRule(v, ctx) {
     if (!ctx.destPart) return undefined;
     if (ctx.destPart.kind === "wave" && ctx.srcPart?.kind === "fm") return this.voiceOnWave(v, ctx);
-    if (ctx.destPart.kind !== "fm") { this.replaced.add(v); return null; }
+    if (ctx.destPart.kind !== "fm") {
+      this.replaced.add(v);
+      const oct = ctx.destPart.kind === "tone" ? this.octaveFor(v, ctx).trim() : "";
+      return oct || null;
+    }
     if (ctx.opN && !twoOp(ctx.destPart)) return this.opVoice(v, ctx.opN);
     const def = this.voices.get(v);
     // 4-op onto the OPLL: a role's ROM voice, else its waveform's.

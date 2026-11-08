@@ -228,6 +228,20 @@ Decisions on the way:
   passes move the noise's octave or a split's :mode is written out pass by
   pass (not when it holds a label or a (break): said).
 
+## FM kept on FM; the carrier's octave (2026-11-08)
+
+The user, on a mucom88 song onto x68k ("FM同士はなるべく活かしてほしい"):
+short of channels, a row of the machine's own kind keeps its channel before
+a stand-in (then the most notes), so x68k's eight FM take md's six FM and
+two of its squares. And onto pce "オクターブが低い印象": an FM voice whose
+main carrier is at :ml 2 / 4 / 8 sounds that many octaves above the written
+note; a wave or a square plays the written note. Onto them the track is
+written up by `carrierOctave` (voice-port.js): `:oct+ k` at the voice, its
+`:oct N` writes and `(glide cN …)` raised, back at the next voice (a role's
+0: fm-roles' `:key` is theirs). A non-power-of-two multiple (3, 5) is a
+partial: no shift. Not yet done for an FM voice onto the OPLL's ROM voices
+(their own multiples differ by voice).
+
 ## Every import onto every machine (2026-11-08)
 
 The user: with every machine converting to every other, no Target list is

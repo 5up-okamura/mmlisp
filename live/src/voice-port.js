@@ -124,6 +124,28 @@ export function voiceTable(text, imports, part) {
 /** A voice's words over the 4-op init voice's: every word the weighing reads is there. */
 const full4op = (words) => new Map([...fmInitVoice(null), ...words]);
 
+/**
+ * The octaves a 4-op voice sounds above its written note: its main carrier's
+ * multiple, where that is a power of two (ML 2 one up, 4 two, 0 — a half —
+ * one down); any other multiple (3, 5 …) is a partial, 0. A wave or a
+ * square plays the written note: it is written that many octaves up.
+ */
+export function carrierOctave(words) {
+  const ml = carrierMultiple(words);
+  if (ml === 0) return -1;
+  const k = Math.log2(ml);
+  return Number.isInteger(k) ? k : 0;
+}
+/** A 4-op voice's main carrier's multiple (:ml, the loudest carrier's). */
+export function carrierMultiple(words) {
+  const w = full4op(words);
+  const carriers = CARRIERS_OF[w.get("FM_ALG") ?? 7];
+  const main = [...carriers].sort((a, b) => (w.get(`FM_TL${a}`) ?? 0) - (w.get(`FM_TL${b}`) ?? 0))[0];
+  return w.get(`FM_ML${main}`) ?? 1;
+}
+// Each algorithm's carriers, op 1-4 (fm-model.js CARRIERS, 1-based).
+const CARRIERS_OF = [[4], [4], [4], [4], [2, 4], [2, 3, 4], [2, 3, 4], [1, 2, 3, 4]];
+
 /** The waveform of presets/waveforms nearest a 4-op voice's words. */
 export function waveformOf(words) {
   const w = full4op(words);

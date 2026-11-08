@@ -2611,7 +2611,8 @@ machine's channels or dropped:
   to sample channels playing `presets/rx5` under the same names.
 - On the Famicom the defaults are its own chips; a cartridge's channels
   (the VRC6, the VRC7 …) are there to pick.
-- A machine short of channels keeps the parts with the most notes.
+- A machine short of channels keeps the parts of its own kind first (FM
+  onto FM), then the parts with the most notes.
 
 A voice crossing between the FM chips with 4 operators (OPN, OPM) and the
 OPLL's 2 (the FM-PAC, the VRC7) plays as follows:
@@ -2647,7 +2648,11 @@ Game Boy's `wave`) take FM, squares and one another's waves the same way:
   wave and macro for it (`wave-piano`: the steps of wave and level that make
   the instrument); any other its waveform's wave under an envelope read off
   its main carrier (`pad-env`, a `:vel+` macro). A square plays the
-  wavetable's `square`, its `:duty` the pulse of that width.
+  wavetable's `square`, its `:duty` the pulse of that width. A voice whose
+  main carrier is at `:ml 2` (4, 8) sounds an octave (two, three) above the
+  written note; on a wave or a square, which play the written note, its
+  track is written that far up (`:oct+ 1`, its `:oct` writes and glides
+  raised), and the log says so.
 - The FDS's modulation and the PC Engine's LFO (wave2 swaying wave1) are one
   another's: the FDS's table summed is wave2's wave, held at `:vol 0`; its
   rate is wave2's pitch with `:lfo-freq`; its depth is wave1's nearest
