@@ -2623,8 +2623,8 @@ machine's channels or dropped:
   loop's body as many times as it repeats.
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
-  forms, language.md §1): the kick and snare first, then toms, a rim or
-  clap, cymbals, and the hats last; each hit holds the channel a tick
+  forms, language.md §1), a `:prio` each: the kick and snare first, then
+  toms, a rim or clap, cymbals, and the hats last; each hit holds the channel a tick
   (`:gate 1t`, a shot plays out anyway), so where two strike at once the
   higher sounds, and otherwise the latest. The other five channels stay the
   melody's. A channel has one loop, so the parts sharing it must loop over

@@ -284,7 +284,11 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   exported, + expandLoops — a JUMP's own tick is the written one, 504 for
   a 6144-tick loop), keeps the group with the most notes (no-loop rows join
   any), its busiest row the channel's; the others drop, `loopWhy` saying so
-  (the user's pcmt13.muc: part K beside part G's rhythm1-6). Inline operator words on such a
+  (the user's pcmt13.muc: part K beside part G's rhythm1-6). Its real
+  cause was elsewhere: part K's and part G's loops matched, but pcm1 took
+  :prio 2 as the snare row did — forms of an equal :prio append, not layer,
+  which moved the loop. placeLayers now numbers the rows 1…n in DRUM_RANKS
+  order (the busier first among alike). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

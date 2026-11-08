@@ -408,6 +408,16 @@ const port = (src, to, rows) => {
   const dda = compile(drums.text, join(repo, "tools/tests/t.mmlisp")).ir.tracks.find((t) => /^pcm/.test(t.channel));
   assert.deepEqual([...new Set(dda.events.filter((e) => e.cmd === "PCM_NOTE_ON").map((e) => e.args.sample))].sort(), ["hat", "kick", "snare"], "each hit plays its own sample");
   assert.ok(drums.said.some((w) => /share pcm\d as :prio layers \(the PC Engine's drivers stream samples on one channel\)/.test(w)));
+  // Two rows of one drum (a mucom88 song's part K beside part G's snare)
+  // take a :prio each: forms of an equal one append rather than layer,
+  // which moved the loop (E_PRIO_LAYER_LOOP).
+  const alike = port(`(def-score :target pc88)
+(import "presets/rx5/set.mmlisp")
+(fm1 :len 4 c e g c)
+(rhythm2 snare :len 4 _1 #loop (x 4 c c c c) (go loop))
+(pcm1 snare :len 4 _1 #loop (x 4 _ c _ c) (go loop))`, "pce");
+  const prios = [...alike.text.matchAll(/^\(pcm\d :prio (\d+)/gm)].map((m) => m[1]);
+  assert.equal(new Set(prios).size, 2, `a :prio each:\n${alike.text}`);
   // A channel has one loop: rows looping over other ticks cannot be its
   // layers — the group playing the most notes keeps it (the loops read at
   // the ticks they play, a counted loop written out), the other is said.

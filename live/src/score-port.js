@@ -956,8 +956,11 @@ class Porter {
     this.shotRows = new Set();
     for (const [h, ks] of byDest) {
       if (ks.length < 2) continue;
+      // Each its own :prio — forms of an equal one append, not layer — in
+      // the drums' order, the busier first among alike.
+      const order = [...ks].sort((a, b) => drumRank(this.s.heads.get(a)) - drumRank(this.s.heads.get(b)) || (this.s.heads.get(b)?.notes ?? 0) - (this.s.heads.get(a)?.notes ?? 0));
       for (const k of ks) {
-        out.set(k, drumRank(this.s.heads.get(k)));
+        out.set(k, order.indexOf(k) + 1);
         const words = this.s.heads.get(k)?.forms.map((f) => this.text.slice(this.starts[f.line - 1] + f.column - 1, this.starts[f.endLine - 1] + f.endColumn - 1)).join(" ") ?? "";
         if (!/:mode|:gate/.test(words)) this.shotRows.add(k);
       }
