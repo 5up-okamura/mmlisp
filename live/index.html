@@ -1153,7 +1153,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import-midi.js';
-    import { chipScoreToMidi, heardRoles } from './src/import-to-midi.js';
+    import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import-to-midi.js';
     import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
@@ -3651,7 +3651,7 @@
     // whose name says nothing — which keeps a channel when they are short.
     async function portImported(res, target, { fileName, rows = undefined, names = undefined, header = false }) {
       const imports = await readImportSources(res.source, mmlispName(fileName));
-      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm) });
+      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), peaks: samplePeaks(res.pcm) });
       if (out.error) throw new Error(out.error);
       return out;
     }
@@ -4457,8 +4457,8 @@
       const choices = withMidi(near, from);
       const imports = _importSources;
       // The score's samples by their sound, as the import heard them.
-      let heard = null;
-      try { heard = heardRoles(await scorePcm(_lastGoodIR)); } catch { /* by their names alone */ }
+      let heard = null, peaks = null;
+      try { const pcm = await scorePcm(_lastGoodIR); heard = heardRoles(pcm); peaks = samplePeaks(pcm); } catch { /* by their names alone */ }
       const rowsFor = (target) => (target === from ? [] : conversionRows(text, target, { imports, heard }));
       const got = await showImportDialog({
         title: 'Convert to Machine',
@@ -4481,7 +4481,7 @@
           out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
           said = res.warnings;
         } else {
-          const res = portScore(text, to, { rows: got.rows, imports, heard });
+          const res = portScore(text, to, { rows: got.rows, imports, heard, peaks });
           if (res.error) throw new Error(res.error);
           out = res.text;
           said = res.said;

@@ -8,6 +8,8 @@
     "gen:wavetable": "node scripts/gen-wavetable.mjs",
     "check:wavetable": "node scripts/gen-wavetable.mjs --check",
     "gen:fm-roles": "node scripts/gen-fm-roles.mjs",
+    "check:part-levels": "node scripts/gen-part-levels.mjs --check",
+    "gen:part-levels": "node scripts/gen-part-levels.mjs",
     "check:fm-roles": "node scripts/gen-fm-roles.mjs --check",
     "gen:snippet-targets": "node scripts/gen-snippet-targets.mjs",
     "check:snippet-targets": "node scripts/gen-snippet-targets.mjs --check",

@@ -123,7 +123,10 @@ The driver has gates — `cd drv && npm run verify:all` must be green — and
 `cd tools && npm run check:mmlisp-strict` (with `check:cheatsheet`,
 `check:reference` and `check:sample-fx`) checks the compiler.
 `check:wavetable` and `check:fm-roles` hold the generated preset sets to their
-scripts (`gen:wavetable`, `gen:fm-roles`).
+scripts (`gen:wavetable`, `gen:fm-roles`); `check:part-levels` holds
+`live/src/part-levels.js` (each machine's parts at full level, which a
+conversion keeps a score's samples beside its melody by) to the renders
+(`gen:part-levels`).
 `npm run check:snapshot` holds the toolchain's whole output (IR, the
 preview's register log, MMB, VGM) for every test score to its baseline: a
 refactor that must not change behavior keeps it green. To write or

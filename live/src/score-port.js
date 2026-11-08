@@ -40,8 +40,9 @@ import * as fcApu from "./chips/rp2a03.js";
 import * as gbApu from "./chips/lr35902.js";
 import * as pcePsg from "./chips/huc6280.js";
 import { compileMMLisp, convertCountedJumps } from "./mmlisp2ir.js";
+import { PART_LEVELS } from "./part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
-import { pitchToMidi, expandLoops } from "./ir-utils.js";
+import { pitchToMidi, expandLoops, VEL_DB_PER_STEP } from "./ir-utils.js";
 import { waveformOf, carrierOctave, carrierMultiple, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
 import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
@@ -598,8 +599,9 @@ function planRows(s, from, to, loopOf = () => null) {
  *   names: a channel → the name the log calls it by (an MDX's parts)
  * @returns {{text: string, map: Record<string,string>, said: string[]} | {error: string}}
  */
-export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null } = {}) {
+export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null, peaks = null } = {}) {
   const plan = planFor(text, toName, imports, heard);
+  if (plan.s) plan.s.peaks = peaks ?? new Map();
   if (plan.error) return { error: plan.error };
   const from = TARGETS[plan.from];
   const to = TARGETS[toName];
@@ -662,6 +664,7 @@ class Porter {
     this.setupLfo();
     this.userVoice = this.pickUserVoice();
     this.layerPrio = this.placeLayers();
+    this.mix = this.mixBalance();
     // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
     // the wave written last plays on both — said where their waves differ.
     const byRam = new Map();
@@ -925,6 +928,8 @@ class Porter {
     if (this.needsWaves && !imported(WAVETABLE_SET)) lines.push(`(import "${WAVETABLE_SET}")`);
     lines.push(...this.envDefs.values());
     lines.push(...opDefs);
+    // The mix kept (mixBalance): a channel's notes moved by a def-mod.
+    for (const [n, hs] of this.mix?.steps ?? []) lines.push(`(def-mod :ch ${hs.length > 1 ? `[${hs.join(" ")}]` : hs[0]} :vel+ ${n}) ; beside the samples, as on the ${this.from.system}`);
     if (!this.s.roots.some((n) => isList(n, "def-score"))) lines.unshift(`(def-score :target ${this.to.name}${this.pcmVoices() ? ` :pcm-voices ${this.pcmVoices()}` : ""})`);
     let head = "";
     let body = out;
@@ -1122,6 +1127,45 @@ class Porter {
     return this.renderList(n, outs);
   }
 
+  // The score's samples where they sat beside its melody: each machine's
+  // parts at full level (part-levels.js) differ — the X68000's ADPCM 17 dB
+  // over its FM, the Mega Drive's DAC one FM channel's — so a melodic track
+  // is moved by what its part and the samples' gained or lost between the
+  // two, less the samples' own headroom (`peaks`, the normalize below lifts
+  // them by it). A track that would have to go up takes everything else
+  // down instead, the samples by a (gain) after their normalize. Written as
+  // `def-mod :ch […] :vel+ N` lines (2 dB a step), one a step.
+  mixBalance() {
+    const L = (t, kind) => PART_LEVELS[t]?.[kind === "noise" ? "tone" : kind];
+    const from = this.from.name, to = this.to.name;
+    const sampleRows = Object.entries(this.map).filter(([k, h]) => h !== "drop" && this.from.partOf(splitHead(k))?.kind === "sample" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
+    if (!sampleRows.length || L(from, "sample") == null || L(to, "sample") == null) return null;
+    // The samples' headroom: the middle of the played ones' peaks (dBFS).
+    const played = [...new Set(sampleRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])]))];
+    const known = played.map((n) => this.s.peaks?.get(n)).filter((x) => x != null).sort((a, b) => a - b);
+    const room = known.length ? Math.min(0, known[Math.floor(known.length / 2)]) : 0;
+    const adj = new Map();
+    for (const [k, h] of Object.entries(this.map)) {
+      if (h === "drop") continue;
+      const sk = isSplit(k) ? "noise" : this.from.partOf(k)?.kind, dk = this.to.partOf(h)?.kind;
+      if (!["fm", "tone", "wave", "noise"].includes(sk) || !["fm", "tone", "wave", "noise"].includes(dk)) continue;
+      const a = L(from, sk), b = L(to, dk);
+      if (a == null || b == null) continue;
+      adj.set(h, a - L(from, "sample") - room - b + L(to, "sample"));
+    }
+    if (!adj.size) return null;
+    const up = Math.max(0, ...adj.values());
+    const steps = new Map();
+    for (const [h, d] of adj) {
+      const n = Math.round((d - up) / VEL_DB_PER_STEP);
+      if (n) steps.set(n, [...(steps.get(n) ?? []), h]);
+    }
+    const gain = Math.round(up);
+    if (!steps.size && !gain) return null;
+    this.say(`the samples kept where they sat beside the melody: the ${this.from.system}'s ${from === to ? "" : "parts and the "}${this.to.system}'s play at other levels (part-levels.js)${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod)` : ""}${gain ? `; the samples ${-gain} dB` : ""}`);
+    return { steps, gain };
+  }
+
   // A sample onto another machine plays at its peak (`:fx` … (normalize)):
   // the machine's sample output is its own — the Mega Drive's DAC one FM
   // channel's level, the PC Engine's DDA 5 bits — and a sample left at the
@@ -1131,6 +1175,7 @@ class Porter {
   louder(n, text) {
     const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
     if (!onSamples || !n.items.some((x) => x.value === ":file") || /\(normalize\b/.test(text)) return text;
+    const tail = this.mix?.gain ? ` (normalize) (gain ${-this.mix.gain})` : " (normalize)";
     if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
     const fx = text.match(/:fx\s*\[/);
     if (fx) {
@@ -1138,11 +1183,11 @@ class Porter {
       let depth = 0;
       for (let i = fx.index + fx[0].length - 1; i < text.length; i++) {
         if (text[i] === "[") depth++;
-        else if (text[i] === "]" && --depth === 0) return `${text.slice(0, i)} (normalize)${text.slice(i)}`;
+        else if (text[i] === "]" && --depth === 0) return `${text.slice(0, i)}${tail}${text.slice(i)}`;
       }
       return text;
     }
-    return text.replace(/\)\s*$/, " :fx [(normalize)])");
+    return text.replace(/\)\s*$/, ` :fx [${tail.trim()}])`);
   }
 
   // `:ch` names channels: the ones the rows moved, the dropped ones out.

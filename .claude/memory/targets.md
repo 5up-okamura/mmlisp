@@ -366,7 +366,21 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   (it was a jump to −15 and a wait). Over 957 voices (the mucom songs, the
   MDX set) every held length kept, within a step of the old staircase
   (0.23 on average), text 2.5× shorter. A line of fewer than four frames
-  or under a step is not worth its words. Inline operator words on such a
+  or under a step is not worth its words.
+- **The mix kept** (user: "MDX onto pce / md, the PCM is quiet",
+  2026-11-08, option 1 of three put to them): `live/src/part-levels.js`
+  (generated, `gen:part-levels` / `check:part-levels`: one note at :vel 15
+  a part, peak dBFS — FM a single carrier, a square / wave its default
+  (steady part), a sample a full-scale square (from its start: the DMC's is
+  short)). Porter.mixBalance: each melodic track moved by
+  (src part − src sample − the samples' headroom) − (dst part − dst
+  sample), dB → :vel+ steps (2 dB), written as `def-mod :ch [...] :vel+ N`
+  lines; a track that would go up takes the rest down and the samples by
+  `(gain -M)` after their normalize. `peaks` (name → dBFS, import-to-midi.js
+  samplePeaks) from the app (the import's pcm, Convert's scorePcm); none →
+  headroom 0. DTWNB00: md FM −6 / PSG −4, pce waves −6, pc88 FM −2 and
+  samples −4 dB; melody vs PCM 3.2 dB (md) / 2.6 dB (pce) apart against the
+  X68000's 2.8. The mix is quieter overall (md −11.4 → −20.4 dBFS RMS). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

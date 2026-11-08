@@ -169,6 +169,18 @@ export function heardRoles(pcm) {
   return out;
 }
 
+/** Each sample's own peak, dBFS (`pcm` as heardRoles): its headroom, which a conversion's normalize lifts it by. */
+export function samplePeaks(pcm) {
+  const out = new Map();
+  for (const sm of pcm?.entries ?? []) {
+    const x = pcm.mono.subarray(sm.offset, sm.offset + sm.frames);
+    let peak = 0;
+    for (let i = 0; i < x.length; i++) peak = Math.max(peak, Math.abs(x[i]));
+    if (peak > 0) out.set(sm.name, 20 * Math.log10(peak));
+  }
+  return out;
+}
+
 // Roles for the sounds heard (or guessed) as `firsts` — [name, role, zcr],
 // most played first — each taking its family's next role not `taken`: of
 // the low ones the most played kick is the kick and the rest are toms, low to
