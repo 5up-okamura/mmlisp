@@ -3485,7 +3485,9 @@
       }
     }
 
-    async function importMidiBytes(bytes, fileName) {
+    // `as`: another caller's dialog — Convert to Machine's, its title, its
+    // button, the machines it offers (not the score's own).
+    async function importMidiBytes(bytes, fileName, as = null) {
       const parsed = parseMidi(bytes);
       const a = analyzeMidi(parsed);
       const def = defaultMidiOptions(a);
@@ -3498,9 +3500,11 @@
       const fileBpm = round(a.bpm);
       const beatBpm = round(a.beat.bpm);
       const shownFor = (timing) => (timing === 'beats' ? beatBpm : fileBpm);
+      const machines = Object.values(TARGETS).filter((t) => !as?.not?.includes(t.name));
+      const target = machines.some((t) => t.name === def.target) ? def.target : machines[0].name;
       const fields = [
-        { key: 'target', label: 'Target', type: 'select', value: def.target, rebuildsRows: true,
-          choices: Object.values(TARGETS).map((t) => [t.name, `${t.system} (:target ${t.name})`]),
+        { key: 'target', label: 'Target', type: 'select', value: target, rebuildsRows: true,
+          choices: machines.map((t) => [t.name, `${t.system} (:target ${t.name})`]),
           hint: 'a program plays its gm voice on 4-op FM, its nearest ROM voice or wave elsewhere, its family’s envelope on a square; drums play samples, the ROM rhythm or the noise' },
         { key: 'timing', label: 'Timing', type: 'select', value: def.timing,
           choices: [['file', 'the file’s tempo map'], ['beats', 'the beat estimated from the notes']],
@@ -3512,15 +3516,18 @@
         { key: 'grid', label: 'Quantize (file timing)', type: 'select', value: String(def.grid),
           choices: GRIDS.map((g) => [String(g), gridLabel(g)]) },
       ];
-      fields.push({ key: 'loop', label: a.loop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: def.loop });
+      // A file rarely marks its loop, so the box loops the whole song; a
+      // score converted (`as`) loops as it did, its MIDI's marks saying so.
+      fields.push({ key: 'loop', label: a.loop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: as ? !!a.loop : def.loop });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
-        title: `Import ${fileName}`,
-        summary: `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
+        title: as?.title ?? `Import ${fileName}`,
+        summary: (as?.summary ?? '') + `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
           'A channel that plays chords is split into lanes, one a track; what does not fit is dropped.',
         fields,
-        rows: rowsFor(def.target),
+        rows: rowsFor(target),
         rowsFor,
+        ...(as?.okLabel ? { okLabel: as.okLabel } : {}),
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -4420,8 +4427,30 @@
       const text = view.state.doc.toString();
       const from = scoreTargetOf(text);
       const sys = (t) => targetProfile(t).system;
+      // A General MIDI score goes the MIDI import's road: its own MIDI, read
+      // onto the machine by the import's dialog.
       if (from === 'midi') {
-        log('Convert to Machine: a General MIDI score has no chip to read; File > Import > MIDI puts a MIDI file on a machine', 'err');
+        let res;
+        try {
+          const { ir, diagnostics } = compileMMLisp(text, _lastFileName, { imports: _importSources });
+          const errors = diagnostics.filter((d) => d.severity === 'error');
+          if (errors.length) throw new Error(`the score does not compile: ${errors[0].message}`);
+          res = await importMidiBytes(exportMidi(ir).bytes, _lastFileName, {
+            title: 'Convert to Machine', okLabel: 'Convert', not: ['midi'],
+            summary: 'The score is General MIDI’s (:target midi): it is read as its MIDI, as File > Import > MIDI reads a file. ',
+          });
+        } catch (e) {
+          log(`Convert to Machine: ${e?.message || e}`, 'err');
+          return;
+        }
+        if (!res) return;
+        const to = scoreTargetOf(res.source);
+        const out = res.source.replace(/^; Imported from [^\n]*/, '; Converted from :target midi, through its MIDI');
+        view.dispatch({ changes: { from: 0, to: text.length, insert: out }, userEvent: 'input.convert' });
+        await refreshImportsAndCompile();
+        log(`Convert to Machine: the General MIDI score onto the ${sys(to)} — Undo takes it back`, 'info');
+        for (const w of res.warnings ?? []) log(`Convert to Machine: ${w}`, 'info');
+        view.focus();
         return;
       }
       const near = PORT_TARGETS.includes(from) ? PORT_TARGETS.filter((t) => t !== from) : [];

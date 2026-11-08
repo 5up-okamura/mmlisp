@@ -2587,6 +2587,9 @@ shortcuts keep their normal meaning.
 words' level. The voices, loops, gates, curves and comments stay as written;
 only what the other machine lacks changes. Every machine's score can also go
 to General MIDI, read as it plays (as a song import's last Target is, above).
+A General MIDI score goes onto any machine through its own MIDI, in the
+dialog File ▸ Import ▸ MIDI shows — the rows, the timing, the loop (ticked
+when the score loops).
 A wave memory's channels (the SCC, the N163, the FDS, the Game Boy's `wave`,
 the PC Engine's) are not converted yet: they are dropped and said.
 
