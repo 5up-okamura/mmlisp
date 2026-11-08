@@ -28,7 +28,7 @@ import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
 import { WAVEFORM_WORDS, waveformOf, carrierOctave, opnAs2op } from "../../live/src/voice-port.js";
-import { shapeOf } from "../../live/src/wave-port.js";
+import { shapeOf, envelopeOf } from "../../live/src/wave-port.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
 import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
 
@@ -258,7 +258,9 @@ const port = (src, to, rows) => {
   assert.match(two4.text, /\(def-fm lead :fb 5 /, "the busier voice is the user voice, as two operators");
   assert.doesNotMatch(two4.text, /def-fm bass/, "the other's def goes");
   assert.match(two4.text, /\(fm2 (?!bass)[\w-]+ :len 4 c g\)/, "the other plays a ROM voice");
-  assert.match(two4.text, /\(def-fm spare /, "a def no track named stays");
+  assert.doesNotMatch(two4.text, /def-fm spare/, "a 4-op def no track names cannot play on the OPLL: it goes");
+  assert.match(port("(def-fm spare init-fm :alg 7)\n(fm1 :len 4 c)", "x68k").text, /\(def-fm spare /, "on a 4-op chip it stays, the score's library");
+  assert.doesNotMatch(port("(def-fm spare init-fm :alg 7)\n(fm1 :len 4 c)", "pce").text, /def-fm/, "with no FM it goes");
   assert.ok(two4.said.some((w) => /one user voice: 'lead' \(8 notes\)/.test(w)), "the choice is said");
   // A 4-op voice's modulators and carrier chosen: alg 4's op3 → op4 chain
   // when op4 is the louder carrier; the detune and the other pair said.
@@ -361,6 +363,12 @@ const port = (src, to, rows) => {
   assert.match(fm.text, /\(wave1 wave-piano :len 4 c\)/);
   assert.match(fm.text, /\(def pad-env \(macro :vel\+ \[-15 .*#sus 0 #rel/);
   assert.match(fm.text, /\(wave2 sine pad-env :len 2 c\)/);
+  // The key scaling: a slow attack at KS 3 is quick on a high note (as the
+  // chip plays it), the same at KS 0 is not.
+  const slow = (ks) => new Map([["FM_ALG", 7], ["FM_AR4", 4], ["FM_KS4", ks], ["FM_TL1", 127], ["FM_TL2", 127], ["FM_TL3", 127]]);
+  const firstLoud = (v) => { let f = 0; for (const m of v.matchAll(/(-?\d+)(?: \(wait (\d+)f\))?/g)) { if (Number(m[1]) > -4) return f; f += Number(m[2] ?? 1); } return Infinity; };
+  assert.ok(firstLoud(envelopeOf(slow(3), 84)) < 10, `KS 3 at c6: ${envelopeOf(slow(3), 84).slice(0, 60)}`);
+  assert.ok(firstLoud(envelopeOf(slow(0), 84)) > 30, `KS 0 at c6: ${envelopeOf(slow(0), 84).slice(0, 60)}`);
   // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)
   // The FDS's modulation is the PC Engine's LFO: wave2 at :vol 0, wave1 its :fms.
   const fds = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "pce");

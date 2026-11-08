@@ -257,7 +257,12 @@ hard to hear: each key-on rewrote the others' sound). Roles and ROM-named
 voices still play the ROM; imported voices (no def to rewrite) and waves
 still the ROM by shape. pruneVoices takes every def a source track named
 as a candidate, so a def whose rows went to waves / squares / drop goes;
-one no track named stays (a mucom song's unused bank voices). Inline operator words on such a
+one no track named stays (a mucom song's unused bank voices) — but only
+where FM can play it: with no row on FM, or a 4-op score onto the OPLL,
+an unnamed def-fm goes too. envelopeOf reads the carrier's rates with its
+key scaling at the track's middle note (`kc >> (3 − ks)`, as fm-model.js):
+without it a mucom voice of AR 4 / KS 3 at o5–6 read as a second of
+silence and the pce waves were near inaudible (user: "only the PCM plays"). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

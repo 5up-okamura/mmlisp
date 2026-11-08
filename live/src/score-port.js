@@ -700,8 +700,12 @@ class Porter {
     }
     // Every voice the score's tracks played may be named by none now (its
     // rows a wave's, a square's, dropped): a def nothing names goes. A def
-    // no track named before stays, as the score's own library.
+    // no track named before stays, as the score's own library, where FM is.
     for (const h of this.s.heads.values()) for (const v of h.voices) this.replaced.add(v);
+    // With no row on FM, or a 4-op score onto the OPLL (only the one user
+    // voice is rewritten), a def-fm nothing names cannot play: it goes too.
+    if (!Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm") || (twoOp(this.toFm) && !twoOp(this.fromFm)))
+      for (const n of parse(out)) if (isList(n, "def-fm")) this.replaced.add(n.items[1]?.value);
     for (let pass = 0; pass < 4 && (this.replaced.size || this.shadowing.size || this.replacedWaves.size || this.replacedSnippets.size); pass++) {
       let roots;
       try { roots = parse(out); } catch { return out; }
@@ -1424,7 +1428,8 @@ class Porter {
     const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
     const wave = waveformOf(words).slice(5);
     const env = `${v}-env`;
-    if (!this.envDefs.has(env)) this.envDefs.set(env, `(def ${env} (macro :vel+ ${envelopeOf(words)}))`);
+    // Its rates as the key scaling makes them at the track's middle note.
+    if (!this.envDefs.has(env)) this.envDefs.set(env, `(def ${env} (macro :vel+ ${envelopeOf(words, this.middleNote(ctx.head))}))`);
     this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${wave} under ${env}, its carrier's envelope`);
     this.waveMacroOn.delete(ctx.head);
     return `${clear}${wave} ${env}${this.octaveFor(v, ctx)}`;

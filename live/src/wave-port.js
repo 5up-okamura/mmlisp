@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { egStep, CARRIERS } from "./fm-model.js";
+import { midiToFnumBlock } from "./ir-utils.js";
 import { FDS_MOD_STEPS } from "./chips/fds.js";
 
 export const WAVETABLE_SET = "presets/wavetable/set.mmlisp";
@@ -88,9 +89,12 @@ const REL_FRAMES = 60;
 
 // The main carrier's attenuation (EG units) at each frame: held for up to
 // KEY_FRAMES, until it settles, then released for up to REL_FRAMES.
-function egFrames(op) {
-  const rate = (r) => (r === 0 ? 0 : Math.min(63, 2 * r));
-  const ar = rate(op.ar), dr = rate(op.dr), sr = rate(op.sr), rr = Math.min(63, 4 * op.rr + 2);
+function egFrames(op, kc = 0) {
+  // The key scaling: KS 3 adds the key code whole, a high note's envelope
+  // the faster (as fm-model.js runs it).
+  const ksr = kc >> (3 - (op.ks & 3));
+  const rate = (r) => (r === 0 ? 0 : Math.min(63, 2 * r + ksr));
+  const ar = rate(op.ar), dr = rate(op.dr), sr = rate(op.sr), rr = Math.min(63, 4 * op.rr + 2 + ksr);
   const sl = op.sl === 15 ? 1023 : op.sl << 5;
   let att = ar >= 62 ? 0 : 1023, state = ar >= 62 ? 1 : 0, counter = 0;
   const perFrame = Math.round(EG_HZ / FRAME_HZ);
@@ -141,14 +145,16 @@ function stepVector(values) {
  * A 4-op voice's (its words, a Map) level over a note as a `:vel+` macro's
  * vector, presets/envelopes' way: the main carrier's EG a frame at a time,
  * `#sus` where it holds, `#rel` its release; 2 dB a step, −15 the floor.
+ * `midi`: the note its key scaling (KS) is read at.
  */
-export function envelopeOf(words) {
+export function envelopeOf(words, midi = 72) {
   const carriers = CARRIERS[words.get("FM_ALG") ?? 7].map((i) => i + 1);
   const main = carriers.sort((a, b) => (words.get(`FM_TL${a}`) ?? 0) - (words.get(`FM_TL${b}`) ?? 0))[0];
-  const op = Object.fromEntries(["ar", "dr", "sr", "rr", "sl"].map((k) => [k, words.get(`FM_${k.toUpperCase()}${main}`) ?? 0]));
+  const op = Object.fromEntries(["ar", "dr", "sr", "rr", "sl", "ks"].map((k) => [k, words.get(`FM_${k.toUpperCase()}${main}`) ?? 0]));
   if (op.ar === 0) op.ar = 31; // a voice that never sounds: read as struck
   const vel = (att) => Math.max(-15, -Math.round((att * DB_PER_UNIT) / VEL_DB));
-  const { held, released } = egFrames(op);
+  const { fnum, block } = midiToFnumBlock(midi);
+  const { held, released } = egFrames(op, (block << 2) | ((fnum >> 9) & 3));
   const h = held.map(vel), r = released.map(vel);
   while (h.length > 1 && h.at(-1) === h.at(-2)) h.pop(); // the held level once
   const sus = h.pop();
