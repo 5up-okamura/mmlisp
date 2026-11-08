@@ -409,7 +409,8 @@ export function chipScoreToMidi(ir, { source = "", pcm = null, fileName, from, s
   const { ir: gm, said } = gmReading(ir, { pcm, names: instrumentNames(source) });
   const { bytes, notes } = exportMidi(gm);
   const parsed = parseMidi(bytes);
-  const a = analyzeMidi(parsed);
+  // Its tracks are the chip's channels, each one voice: a lane a track.
+  const a = analyzeMidi(parsed, { mono: true });
   const read = midiToMmlisp(parsed, { ...defaultMidiOptions(a, "midi"), structure, fileName, from }, a);
   return {
     source: read.source,

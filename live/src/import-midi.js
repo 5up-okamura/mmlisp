@@ -216,7 +216,10 @@ function decodeText(d) {
  * @returns {{ title, division, tempos, timeSigs, loop, notes, lanes, counts }}
  *   lanes: [{key, ch, lane, drums, program, voice, notes, label}]
  */
-export function analyzeMidi(parsed) {
+// `mono`: the file is a score's own export (a chip song read as General MIDI),
+// each of its tracks one voice — a lane is its track, a note running into the
+// next is cut there, and a fast run (notes closer than a 32nd) is no chord.
+export function analyzeMidi(parsed, { mono = false } = {}) {
   const all = [];
   parsed.tracks.forEach((tr, ti) => tr.forEach((e, i) => all.push({ ...e, ti, i })));
   // Same tick: offs before ons, so a repeated key is released then struck.
@@ -288,7 +291,7 @@ export function analyzeMidi(parsed) {
         const prev = sounding.get(k);
         if (prev?.length) for (const n of prev.splice(0)) close(n, e.tick);
         const n = {
-          tick: e.tick, end: null, ch: e.ch, key: e.a, vel: e.b, program: program[e.ch],
+          tick: e.tick, end: null, ch: e.ch, key: e.a, vel: e.b, program: program[e.ch], ti: e.ti,
           level: gainDb(e.b) + gainDb(vol[e.ch]) + gainDb(expr[e.ch]),
         };
         notes.push(n);
@@ -321,15 +324,28 @@ export function analyzeMidi(parsed) {
   const slack = parsed.division / 8;
   for (const [ch, list] of [...byCh].sort((a, b) => a[0] - b[0])) {
     const drums = ch === DRUM_CH;
-    // A chord, even a played one, is laned top note first.
-    list.sort((a, b) => Math.round(a.tick / slack) - Math.round(b.tick / slack) || b.key - a.key);
     const ends = [];
-    for (const n of list) {
-      const end = drums ? n.tick + slack : n.end;
-      let l = ends.findIndex((x) => x <= n.tick + (drums ? 0 : slack));
-      if (l < 0) { l = ends.length; ends.push(0); }
-      ends[l] = end;
-      n.lane = l;
+    if (mono) {
+      const order = [...new Set(list.map((n) => n.ti))];
+      list.sort((a, b) => a.tick - b.tick || b.key - a.key);
+      const prev = new Map();
+      for (const n of list) {
+        n.lane = order.indexOf(n.ti);
+        const p = prev.get(n.lane);
+        if (p && !drums && p.end > n.tick) p.end = n.tick;
+        prev.set(n.lane, n);
+        ends[n.lane] = n.end;
+      }
+    } else {
+      // A chord, even a played one, is laned top note first.
+      list.sort((a, b) => Math.round(a.tick / slack) - Math.round(b.tick / slack) || b.key - a.key);
+      for (const n of list) {
+        const end = drums ? n.tick + slack : n.end;
+        let l = ends.findIndex((x) => x <= n.tick + (drums ? 0 : slack));
+        if (l < 0) { l = ends.length; ends.push(0); }
+        ends[l] = end;
+        n.lane = l;
+      }
     }
     for (let l = 0; l < ends.length; l++) {
       const mine = list.filter((n) => n.lane === l);

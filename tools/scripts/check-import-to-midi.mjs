@@ -59,6 +59,14 @@ assert.deepEqual(melodicKeys(midiIr), melodicKeys(chipIr), "every melodic note k
 assert.deepEqual(voicesOf(out.source).map((v) => v.split(":")[1]).sort(), ["gm-bass-finger", "gm-ep1", "gm-lead-square"], "a low FM the bass, the lead FM an EP, the square the square lead");
 assert.match(out.source, /\(drum1 [^\n]*\n\s*#top hat\b/, "the noise ticking 8ths: a hat");
 assert.match(out.source, /vib-30-8-p0/, "the vibrato kept as a pitch macro");
+// A chip channel is one voice: a channel each, however fast its notes (a run
+// closer than a 32nd is no chord), and the noise one drum track.
+{
+  const runs = compile("(def-score :target fc)\n(sqr1 :len 2f c d e f g a b > c)\n(tri :len 8 c e g e)\n(noise :len 2f c c c c c c c c)", { voiceStamps: true });
+  const r = chipScoreToMidi(runs, { source: "", fileName: "runs.vgm", from: "VGM, read as fc, then as MIDI" });
+  const heads = [...new Set((r.source.match(/^\((ch\d+|drum\d+)/gm) ?? []).map((x) => x.slice(1)))];
+  assert.deepEqual(heads, ["ch1", "ch2", "drum1"], "three chip channels, three tracks");
+}
 
 // ── A DefleMask module (PC Engine): instruments named "lead" and "bass" ──
 function pceDmf() {
