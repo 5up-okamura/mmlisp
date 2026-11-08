@@ -255,11 +255,12 @@ channel's, so the own voice with the most notes on rows going to FM keeps
 it, the others the ROM by shape (the user found several sounding at once
 hard to hear: each key-on rewrote the others' sound). Roles and ROM-named
 voices still play the ROM; imported voices (no def to rewrite) and waves
-still the ROM by shape. pruneVoices takes every def a source track named
-as a candidate, so a def whose rows went to waves / squares / drop goes;
-one no track named stays (a mucom song's unused bank voices) — but only
-where FM can play it: with no row on FM, or a 4-op score onto the OPLL,
-an unnamed def-fm goes too. envelopeOf reads the carrier's rates with its
+still the ROM by shape. A converted score holds only what it plays
+(user, 2026-11-08): `pruneUnnamedDefs` (exported) takes out every def /
+def-fm / def-wave / def-pcm nothing names, then what only those named — a
+dropped track's macros, a replaced voice, a score's unused library alike
+(no "library stays" exception any more); the mucom importer's own pc88 /
+md writers run it too (a song's voice list it never plays). envelopeOf reads the carrier's rates with its
 key scaling at the track's middle note (`kc >> (3 − ks)`, as fm-model.js):
 without it a mucom voice of AR 4 / KS 3 at o5–6 read as a second of
 silence and the pce waves were near inaudible (user: "only the PCM plays").

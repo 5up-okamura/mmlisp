@@ -19,7 +19,7 @@ import { encodeMmb } from "./export-mmb.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
 import { ym2608 } from "./chips/ym2608.js";
 import { envCycle } from "./chips/ssg.js";
-import { portScore, PORT_TARGETS } from "./score-port.js";
+import { portScore, pruneUnnamedDefs, PORT_TARGETS } from "./score-port.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -3025,6 +3025,11 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = 
     const port = portScore(out.source, target, { header: false });
     if (port.error) throw new Error(port.error);
     out = { ...out, source: `; Imported as pc88, then onto ${target}\n${port.text}`, warnings: [...out.warnings, ...port.said] };
+  } else {
+    // The song's score holds what it plays: a voice of its list no part
+    // names, a macro of a part left out, goes (as a conversion's do).
+    const { text, gone } = pruneUnnamedDefs(out.source);
+    if (gone.length) out = { ...out, source: text, warnings: [...out.warnings, `defs nothing plays taken out: ${gone.join(" ")}`] };
   }
   // `pcm` rides along so the caller can save `wav` as `wavFile` beside the score
   // (what the emitted defs reference) and play `mono` before it exists on disk.

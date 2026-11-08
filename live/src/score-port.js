@@ -212,6 +212,43 @@ function drumRank(h) {
   return ranks.length ? Math.min(...ranks) : 4;
 }
 
+/**
+ * A score with the defs nothing names taken out — a macro, a voice, a wave,
+ * a sample of a dropped track's, one a rule replaced, one only kept — and
+ * then what only they named: { text, gone } (the names, in the score's order).
+ */
+export function pruneUnnamedDefs(text) {
+  const gone = [];
+  let out = text;
+  for (let pass = 0; pass < 8; pass++) {
+    let roots;
+    try { roots = parse(out); } catch { break; }
+    const named = new Map();
+    const count = (n) => {
+      if (n?.kind === "atom") for (const v of new Set([n.value, String(n.value).replace(/^[$']/, "")])) named.set(v, (named.get(v) ?? 0) + 1);
+      if (n?.kind === "list") n.items.forEach(count);
+    };
+    roots.forEach(count);
+    const inside = (n, name) => { let c = 0; const w = (m) => { if (m?.kind === "atom" && m.value === name) c++; if (m?.kind === "list") m.items.forEach(w); }; w(n); return c; };
+    const defs = roots.filter((n) => ["def", "def-fm", "def-wave", "def-pcm"].some((h) => isList(n, h)) && n.items[1]?.kind === "atom"
+      && named.get(n.items[1].value) - inside(n, n.items[1].value) === 0);
+    if (!defs.length) break;
+    const starts = lineStarts(out);
+    const names = [];
+    for (const n of defs.sort((a, b) => b.line - a.line || b.column - a.column)) {
+      const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
+      // Its line too where it stood alone on it, and a blank line after.
+      const lineStart = out.lastIndexOf("\n", from - 1) + 1;
+      const alone = /^[ \t]*$/.test(out.slice(lineStart, from)) && out[to] === "\n";
+      const end = alone && out[to + 1] === "\n" && (lineStart === 0 || out[lineStart - 2] === "\n") ? to + 2 : alone ? to + 1 : to;
+      out = out.slice(0, alone ? lineStart : from) + out.slice(end);
+      names.unshift(n.items[1].value);
+    }
+    gone.push(...names);
+  }
+  return { text: out, gone };
+}
+
 // ── The rows ─────────────────────────────────────────────────────────────
 
 // A machine's channels of one kind a track can be written on: not another
@@ -625,6 +662,7 @@ class Porter {
     if (this.lfoTrack) out = `${out.replace(/\s*$/, "")}\n${this.lfoTrack}\n`;
     out = this.pruneVoices(out);
     out = this.pruneEmptyDefs(out);
+    out = this.pruneUnnamed(out);
     out = this.placeLfo(out);
     out = this.addHeader(out, [...added.values()].flat(), header);
     return { text: out, map: this.map, said: [...this.said] };
@@ -659,6 +697,13 @@ class Porter {
     for (const name of empty) this.say(`${name}: nothing of it is left on the ${this.to.system}; the def and the places it is named are taken out`);
     for (const [a, b] of cuts.sort((x, y) => y[0] - x[0])) out = out.slice(0, a) + out.slice(b);
     return out;
+  }
+
+  // The converted score holds only what it plays (pruneUnnamedDefs).
+  pruneUnnamed(out) {
+    const { text, gone } = pruneUnnamedDefs(out);
+    if (gone.length) this.say(`defs nothing plays on the ${this.to.system} taken out: ${gone.join(" ")}`);
+    return text;
   }
 
   // The song's LFO, on for the OPLL's vibrato and tremolo read as :fms /
@@ -723,14 +768,6 @@ class Porter {
       out = out.replace(new RegExp(`^[ \\t]*\\(import\\s+"${FM_ROLES_SET.replace(/[./]/g, "\\$&")}"\\)[^\\n]*\\n?`, "m"), "");
       if (out !== before) this.say(`presets/fm-roles: the ${this.toFm.label}'s ROM voices are the roles; its import is taken out`);
     }
-    // Every voice the score's tracks played may be named by none now (its
-    // rows a wave's, a square's, dropped): a def nothing names goes. A def
-    // no track named before stays, as the score's own library, where FM is.
-    for (const h of this.s.heads.values()) for (const v of h.voices) this.replaced.add(v);
-    // With no row on FM, or a 4-op score onto the OPLL (only the one user
-    // voice is rewritten), a def-fm nothing names cannot play: it goes too.
-    if (!Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm") || (twoOp(this.toFm) && !twoOp(this.fromFm)))
-      for (const n of parse(out)) if (isList(n, "def-fm")) this.replaced.add(n.items[1]?.value);
     for (let pass = 0; pass < 4 && (this.replaced.size || this.shadowing.size || this.replacedWaves.size || this.replacedSnippets.size); pass++) {
       let roots;
       try { roots = parse(out); } catch { return out; }

@@ -265,7 +265,18 @@ const port = (src, to, rows) => {
   assert.doesNotMatch(two4.text, /def-fm bass/, "the other's def goes");
   assert.match(two4.text, /\(fm2 (?!bass)[\w-]+ :len 4 c g\)/, "the other plays a ROM voice");
   assert.doesNotMatch(two4.text, /def-fm spare/, "a 4-op def no track names cannot play on the OPLL: it goes");
-  assert.match(port("(def-fm spare init-fm :alg 7)\n(fm1 :len 4 c)", "x68k").text, /\(def-fm spare /, "on a 4-op chip it stays, the score's library");
+  // The converted score holds what it plays: a def nothing names goes, and
+  // then what only it named; one a track plays stays.
+  const kept = port(`(def env-a (macro :vel+ [0 -1]))
+(def env-b (macro :vel+ [0 -2]))
+(def-fm spare init-fm :alg 7)
+(def-fm lead init-fm :alg 4 :tl1 20)
+(def-fm uses-env lead)
+(fm1 lead env-a :len 4 c)`, "x68k");
+  assert.doesNotMatch(kept.text, /spare|env-b|uses-env/, `the unnamed go:\n${kept.text}`);
+  assert.match(kept.text, /\(def-fm lead /);
+  assert.match(kept.text, /\(def env-a /);
+  assert.ok(kept.said.some((w) => /taken out: env-b spare uses-env/.test(w)), kept.said.join("\n"));
   assert.doesNotMatch(port("(def-fm spare init-fm :alg 7)\n(fm1 :len 4 c)", "pce").text, /def-fm/, "with no FM it goes");
   assert.ok(two4.said.some((w) => /one user voice: 'lead' \(8 notes\)/.test(w)), "the choice is said");
   // A 4-op voice's modulators and carrier chosen: alg 4's op3 → op4 chain

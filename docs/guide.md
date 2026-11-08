@@ -2615,6 +2615,9 @@ machine's channels or dropped:
   to sample channels playing `presets/rx5` under the same names.
 - On the Famicom the defaults are its own chips; a cartridge's channels
   (the VRC6, the VRC7 …) are there to pick.
+- The converted score keeps only what it plays: a def — a macro, a voice,
+  a wave, a sample — that nothing names any more goes, as does one the score
+  only kept (the log lists them). A mucom88 import does the same.
 - A machine short of channels keeps the parts of its own kind first (FM
   onto FM), then the parts with the most notes — counted as they play, a
   loop's body as many times as it repeats.
