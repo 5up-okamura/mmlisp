@@ -146,6 +146,54 @@ export function carrierMultiple(words) {
 // Each algorithm's carriers, op 1-4 (fm-model.js CARRIERS, 1-based).
 const CARRIERS_OF = [[4], [4], [4], [4], [2, 4], [2, 3, 4], [2, 3, 4], [1, 2, 3, 4]];
 
+// ── A 4-op voice as the OPLL's two operators ────────────────────────────
+// Each algorithm's operators that modulate each carrier (op 1-4): the OPN's
+// eight (chips/opn-fm.js). The chosen pair is the main carrier and the
+// loudest of its modulators.
+const MODULATORS_OF = [
+  { 4: [3] }, { 4: [3] }, { 4: [1, 3] }, { 4: [2, 3] },
+  { 2: [1], 4: [3] }, { 2: [1], 3: [1], 4: [1] }, { 2: [1], 3: [], 4: [] }, { 1: [], 2: [], 3: [], 4: [] },
+];
+// The OPLL's multiples (its ML code's), and the code nearest an OPN multiple.
+const OPLL_MULTIPLES = [0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15];
+const opllMl = (ml) => OPLL_MULTIPLES.indexOf(OPLL_MULTIPLES.reduce((b, m) => (Math.abs(m - (ml || 0.5)) < Math.abs(b - (ml || 0.5)) ? m : b), 1));
+
+/**
+ * A 4-op voice's words as a 2-op def-fm for the OPLL (the FM-PAC, the
+ * VRC7), named `name`: its main carrier under the loudest of the carrier's
+ * modulators — the rates halved to the chip's 0-15, the modulator's level to
+ * 0-63, the feedback where op1 is the modulator, a sustain rate as the
+ * percussive envelope (EG 0), the detune and the other two operators gone.
+ * { text, without: what it plays without }.
+ */
+export function opnAs2op(name, words) {
+  const w = full4op(words);
+  const alg = w.get("FM_ALG") ?? 7;
+  const car = carrierMainOf(w);
+  const mods = MODULATORS_OF[alg][car] ?? [];
+  const mod = [...mods].sort((a, b) => (w.get(`FM_TL${a}`) ?? 0) - (w.get(`FM_TL${b}`) ?? 0))[0] ?? null;
+  const g = (k, n) => w.get(`FM_${k}${n}`) ?? 0;
+  const op = (n, isMod) => {
+    const eg = g("SR", n) > 0 ? 0 : 1; // a level that falls while held: percussive
+    return [`:ar${isMod ? 1 : 2} ${g("AR", n) >> 1}`, `:dr${isMod ? 1 : 2} ${g("DR", n) >> 1}`, `:sl${isMod ? 1 : 2} ${g("SL", n)}`,
+      // (percussive: RR is the fall while held; the key-off's is the chip's)
+      `:rr${isMod ? 1 : 2} ${eg ? g("RR", n) : g("SR", n) >> 1}`, `:ks${isMod ? 1 : 2} ${g("KS", n) >> 1}`,
+      `:ml${isMod ? 1 : 2} ${opllMl(g("ML", n))}`, `:am${isMod ? 1 : 2} ${g("AMEN", n)}`, `:eg${isMod ? 1 : 2} ${eg}`].join(" ");
+  };
+  const modLine = mod != null ? `:tl1 ${Math.min(63, g("TL", mod) >> 1)} ${op(mod, true)}` : ":tl1 63 :ar1 15 :dr1 0 :sl1 0 :rr1 15 :ks1 0 :ml1 1 :am1 0 :eg1 1";
+  const fb = mod === 1 ? w.get("FM_FB") ?? 0 : 0;
+  const without = [];
+  const others = [1, 2, 3, 4].filter((n) => n !== car && n !== mod && (w.get(`FM_TL${n}`) ?? 127) < 100);
+  if (others.length) without.push(`operator${others.length > 1 ? "s" : ""} ${others.join(", ")}`);
+  if ([1, 2, 3, 4].some((n) => (w.get(`FM_DT${n}`) ?? 0) !== 0)) without.push("the detune");
+  if (mods.length > 1) without.push(`modulator${mods.length - 1 > 1 ? "s" : ""} ${mods.filter((n) => n !== mod).join(", ")}`);
+  return { text: `(def-fm ${name} :fb ${fb} ${modLine}\n  ${op(car, false)})`, without };
+}
+function carrierMainOf(w) {
+  const carriers = CARRIERS_OF[w.get("FM_ALG") ?? 7];
+  return [...carriers].sort((a, b) => (w.get(`FM_TL${a}`) ?? 0) - (w.get(`FM_TL${b}`) ?? 0))[0];
+}
+
 /** The waveform of presets/waveforms nearest a 4-op voice's words. */
 export function waveformOf(words) {
   const w = full4op(words);

@@ -42,7 +42,7 @@ import * as pcePsg from "./chips/huc6280.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "./ir-utils.js";
-import { waveformOf, carrierOctave, carrierMultiple, ROLES, ROM_OF_WAVE } from "./voice-port.js";
+import { waveformOf, carrierOctave, carrierMultiple, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
 import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
@@ -807,9 +807,17 @@ class Porter {
   defFm(n) {
     const fm = this.toFm;
     const name = n.items[1]?.value;
-    // A 4-op voice onto a machine of the OPLL (or none) is played as its
-    // role or waveform there: the def stays, and goes if nothing plays it.
-    if (!fm || (twoOp(fm) && !twoOp(this.fromFm))) return this.slice(n);
+    if (!fm) return this.slice(n); // played as a wave or a square: the def goes if nothing plays it
+    // A 4-op voice onto the OPLL: a role's (or a ROM name's) plays the ROM
+    // and its def goes if nothing plays it; any other is read as two operators.
+    if (twoOp(fm) && !twoOp(this.fromFm)) {
+      const d = this.voices.get(name);
+      const onFm = Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm");
+      if (!d || !onFm || roleOf(name) || fm.romNames.includes(name)) return this.slice(n);
+      const r = opnAs2op(name, d.words);
+      if (r.without.length) this.say(`'${name}' as two operators plays without ${r.without.join(", ")}`);
+      return r.text;
+    }
     if (twoOp(this.fromFm) && twoOp(fm)) return this.slice(n);
     // An OPLL user voice onto 4-op: the same voice, read as 4-op.
     if (twoOp(this.fromFm)) {
@@ -1401,6 +1409,13 @@ class Porter {
     const def = this.voices.get(v);
     // 4-op onto the OPLL: a role's ROM voice, else its waveform's.
     if (ctx.family && !twoOp(ctx.srcPart)) {
+      // A role's voice is the ROM's; the score's own other voices stay as
+      // themselves, read as two operators (defFm) — the chip's one user
+      // voice, which the note keyed last sets, as its drivers play.
+      if (!roleOf(v) && def && !def.imported && !ctx.destPart.romNames.includes(v)) {
+        if (!this.saidUser) { this.saidUser = true; this.say(`the ${ctx.destPart.label} has one user voice: the score's own voices are read as two operators, and where two sound at once the note keyed last sets it (the compiler says where)`); }
+        return undefined;
+      }
       const r = onOpll(v, def?.words ?? new Map(), ctx.destPart);
       if (r.why) this.say(r.why);
       if (r.name !== v) this.replaced.add(v);

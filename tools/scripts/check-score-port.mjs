@@ -27,7 +27,7 @@ import { IRPlayer } from "../../live/src/ir-player.js";
 import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
-import { WAVEFORM_WORDS, waveformOf, carrierOctave } from "../../live/src/voice-port.js";
+import { WAVEFORM_WORDS, waveformOf, carrierOctave, opnAs2op } from "../../live/src/voice-port.js";
 import { shapeOf } from "../../live/src/wave-port.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
 import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
@@ -243,9 +243,15 @@ const port = (src, to, rows) => {
 (fm2 organ :len 4 c)
 (fm3 gm-piano :len 4 c)`;
   const r = port(md, "msx");
-  assert.match(r.text, /\(fm1 synth :len 4 c e g\)/, "a bright non-role voice: the saw's ROM voice, its op words gone");
+  assert.match(r.text, /\(def-fm lead :fb 5 :tl1 \d+ :ar1 \d+ .*:eg1 \d\n  :ar2 /, "the score's own voice stays, read as two operators");
+  assert.match(r.text, /\(fm1 lead :len 4 c e g\)/, "its op words gone");
   assert.match(r.text, /\(fm2 organ /);
-  assert.doesNotMatch(r.text, /def-fm organ|def-fm lead/, "the 4-op defs go: one hid the ROM's organ, one nothing plays");
+  assert.doesNotMatch(r.text, /def-fm organ/, "the 4-op def that hid the ROM's organ goes");
+  // A 4-op voice's modulators and carrier chosen: alg 4's op3 → op4 chain
+  // when op4 is the louder carrier; the detune and the other pair said.
+  const two = opnAs2op("v", new Map([["FM_ALG", 4], ["FM_TL2", 10], ["FM_TL4", 0], ["FM_TL3", 40], ["FM_TL1", 20], ["FM_ML3", 3], ["FM_DT1", 1], ["FM_SR4", 6], ["FM_RR4", 9]]));
+  assert.match(two.text, /:tl1 20 .*:ml1 3 .*\n  :ar2 .*:rr2 3 .*:eg2 0/);
+  assert.deepEqual(two.without, ["operators 1, 2", "the detune"]);
   assert.match(r.text, /\(fm3 piano :len 4 c\)/, "gm-piano is the piano");
   // …and back: the ROM voices are presets/fm-roles' under the same names.
   const back = port(r.text, "md");

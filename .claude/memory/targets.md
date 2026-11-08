@@ -242,6 +242,19 @@ written up by `carrierOctave` (voice-port.js): `:oct+ k` at the voice, its
 partial: no shift. Not yet done for an FM voice onto the OPLL's ROM voices
 (their own multiples differ by voice).
 
+## 4-op onto the OPLL: the score's own voices kept (2026-11-08)
+
+The user ("同じFMなのに音色定義捨ててるの、roleに寄りすぎてるんじゃない？"):
+a non-role voice of the score's own onto the FM-PAC / VRC7 is no longer a
+ROM voice by shape — it stays as a 2-op `def-fm` (`opnAs2op`: the main
+carrier and the loudest of its modulators per MODULATORS_OF, rates >> 1,
+modulator TL >> 1, FB where op1 is the modulator, SR > 0 → EG 0 with
+RR = SR >> 1, OPLL ML nearest; the other operators and DT said). The one
+user voice: the note keyed last sets it (the compiler's W_TARGET). Roles
+and ROM-named voices still play the ROM; imported voices (no def to
+rewrite) and waves still the ROM by shape. Inline operator words on such a
+track are still dropped (the operators are not the 4-op's).
+
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
 
 The user's "def-fm がなくてデフォルトの音" on mucom88 → x68k: Yuzo Koshiro's
