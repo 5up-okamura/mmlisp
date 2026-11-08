@@ -57,7 +57,18 @@ function check(file, src, to) {
   const { rows } = portRows(src, to, { imports });
   for (const row of rows) {
     const dest = r.map[row.key];
-    if (dest === "drop" || row.key === "fm8/noise" || row.head === "fm8" && rows.some((x) => x.key === "fm8/noise")) continue;
+    if (dest === "drop" || row.key.endsWith("/noise")) continue;
+    // A split track's notes are on two channels, its tone and its noise
+    // half: together they keep its onsets.
+    const noise = r.map[`${row.head}/noise`];
+    if (noise) {
+      const until = Math.min(midiPlan(before.ir).endTick, midiPlan(after.ir).endTick);
+      if (noise === "drop") continue;
+      const both = [...notesOf(after.ir, dest, "noise", until, false), ...notesOf(after.ir, noise, "noise", until, false)].sort();
+      assert.deepEqual(both, notesOf(before.ir, row.head, "noise", until, false), `${file} → ${to}: ${row.head} on ${dest} and ${noise} keeps its onsets`);
+      tracks++;
+      continue;
+    }
     const kind = TARGETS[from].partOf(row.head).kind;
     // A sample on the ROM rhythm plays its role's ROM sound; a role played
     // on a sample channel, its kit's sample: the names are the roles both ways.
@@ -248,6 +259,24 @@ const port = (src, to, rows) => {
   // The SSG's rate on the Game Boy, its pitch.
   const gb = port("(def-score :target pc88)\n(noise :noise-rate 4 :len 8 c c)", "gb");
   assert.match(gb.text, /\(noise :len 8 :mode white :oct \d [a-g]\+? [a-g]\+?\)/);
+}
+{
+  // The FM-PAC's vibrato and tremolo on 4-op: the channel's :fms / :ams, the
+  // song's LFO on once.
+  const r = port("(def-score :target msx)\n(def-fm reed :fb 3 :tl1 30 :ar1 15 :ar2 12 :eg2 1 :vib2 1 :am2 1)\n(fm1 reed :len 4 c :vib1 0 d (macro :vib2 [1 0]) e)", "md");
+  assert.match(r.text, /\(def-fm reed :alg 4 :fb 3 :ams 2 :fms 4\n/);
+  assert.match(r.text, /\(fm1 :lfo-rate 4 reed :len 4 c :fms 0 d \(macro :fms \[4 0\]\) e\)/);
+}
+{
+  // An SSG square's noise notes (a PSG drum) onto a machine whose squares
+  // have no noise: the noise's row, the tone notes rests there; the tempo
+  // with the tone half. On the PC-8801's SSG it stays as written.
+  const src = "(def-score :target msx)\n(sqr2 :tempo 140 :noise-rate 8 :len 8 :mode tone c :mode noise c c :mode both c :mode tone e)";
+  const md = port(src, "md");
+  assert.match(md.text, /\(sqr2 :tempo 140 :len 8 c _ _ _ e\)\n\(noise :mode white0 :len 8 _ c c c _\)/);
+  const gb = port(src, "gb", { sqr2: "drop" });
+  assert.match(gb.text, /\(noise :tempo 140 :len 8 _ :mode white :oct \d [a-g]\+? [a-g]\+? [a-g]\+? _\)/, "the tone half dropped: the tempo with the noise");
+  assert.equal(portRows(src, "pc88").rows.length, 1, "pc88's SSG plays its modes");
 }
 {
   // A machine short of channels keeps the parts with the most notes.

@@ -4648,6 +4648,7 @@ function compileChannelBody(
               // of another machine's (targets/), else the part's error.
               // A channel may have its own (the OPM's fm8: its noise).
               const { part, target: machine } = trackState;
+              if (!part) break; // a channel the machine has not: said where the track is read
               const own = machine.channels?.[trackState.head];
               const modes = own?.modes ?? part.modes;
               const modeError = own?.modes ? own.modeError : part.modeError;

@@ -415,6 +415,12 @@ async function main() {
       src: "(def s (fm1 c))\n(fm2 c s)",
       expected: ["E_UNKNOWN_LIST"],
     },
+    {
+      // Its body is still read: a :mode there has no part to ask.
+      label: "a channel the machine has not, with a :mode",
+      src: "(def-score :target pce)\n(noise :mode white1 :len 8 c)",
+      expected: ["E_TARGET"],
+    },
   ];
 
   for (const testCase of cases) {

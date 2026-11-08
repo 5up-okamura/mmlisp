@@ -160,16 +160,30 @@ export function romOn4op(name) {
 }
 
 // The OPLL's words with no 4-op register: said when a voice goes without them.
-const OPLL_ONLY = { FM_WS: ":ws (the rectified sine)", FM_KSL: ":ksl", FM_VIB: ":vib (the chip's vibrato)" };
+const OPLL_ONLY = { FM_WS: ":ws (the rectified sine)", FM_KSL: ":ksl" };
+
+// The OPLL's LFOs are fixed (ymfm's ymfm_opl.cpp): the vibrato about ±12
+// cents at 6.1 Hz, the tremolo 4.8 dB, each an operator's on or off. On a
+// 4-op chip they are the channel's sensitivities to the one LFO: :fms 4
+// (±14 cents) and :ams 2 (5.9 dB), the LFO at :lfo-rate 4 (6.37 Hz on the
+// OPN; the OPM reads the rate as its nearest).
+export const OPLL_VIB_FMS = 4;
+export const OPLL_AM_AMS = 2;
+export const OPLL_LFO_RATE = 4;
 
 /**
- * An OPLL user voice's words as a 4-op def-fm, named `name`: { text, without }
- * — `without` the OPLL's words it set that the 4-op chip has not.
+ * An OPLL user voice's words as a 4-op def-fm, named `name`: { text, without,
+ * lfo } — `without` the OPLL's words it set that the 4-op chip has not, `lfo`
+ * whether it needs the song's LFO (its vibrato or tremolo).
  */
 export function opllDefAs4op(name, words) {
   const w = opllWordsAs4op(words);
-  const without = Object.entries(OPLL_ONLY).filter(([k]) => [1, 2].some((n) => words.get(`${k}${n}`) > 0)).map(([, v]) => v);
+  const on = (k) => [1, 2].some((n) => words.get(`${k}${n}`) > 0);
+  const without = Object.entries(OPLL_ONLY).filter(([k]) => on(k)).map(([, v]) => v);
+  const fms = on("FM_VIB") ? OPLL_VIB_FMS : 0;
+  const ams = on("FM_AMEN") ? OPLL_AM_AMS : 0;
   const opw = (n) => ["ar", "dr", "sr", "rr", "sl", "tl", "ks", "ml", "am"]
     .map((k) => `:${k}${n} ${w.get(`FM_${k === "am" ? "AMEN" : k.toUpperCase()}${n}`) ?? 0}`).join(" ");
-  return { text: `(def-fm ${name} :alg ${w.get("FM_ALG")} :fb ${w.get("FM_FB") ?? 0}\n  ${[1, 2, 3, 4].map(opw).join("\n  ")})`, without };
+  const lfo = fms || ams ? ` :ams ${ams} :fms ${fms}` : "";
+  return { text: `(def-fm ${name} :alg ${w.get("FM_ALG")} :fb ${w.get("FM_FB") ?? 0}${lfo}\n  ${[1, 2, 3, 4].map(opw).join("\n  ")})`, without, lfo: !!(fms || ams) };
 }

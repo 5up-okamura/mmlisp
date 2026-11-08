@@ -2600,7 +2600,10 @@ machine's channels or dropped:
   one-operator voice made from the patch's (`kit-op2`); CSM's notes play as
   plain notes.
 - A square goes to a free square, else to a free FM channel.
-- The noise stays the noise; x68k `fm8`'s `:mode noise` notes go to it too.
+- The noise stays the noise. Notes a channel plays as noise by its `:mode` —
+  x68k `fm8`'s `:mode noise`, an SSG square's `:mode noise` / `both` (a PSG
+  drum) — go to it too, onto a machine whose squares cannot; its tone notes
+  stay on its row's channel.
 - A sample track that plays only kit roles (`kick`, `snare` …) goes to a
   machine's ROM rhythm (the PC-8801's, the FM-PAC's), and a ROM rhythm goes
   to sample channels playing `presets/rx5` under the same names.
@@ -2620,7 +2623,10 @@ OPLL's 2 (the FM-PAC, the VRC7) plays as follows:
   ROM voice of that shape (`clarinet`, `synth`, `flute`), so a conversion
   never uses the chip's one user voice.
 - An FM-PAC voice of your own goes onto a 4-operator chip as itself, read
-  as 4 operators.
+  as 4 operators. Its vibrato and tremolo (`:vib`, `:am`, in the voice, on
+  a track or in a macro) become the channel's `:fms 4` / `:ams 2` on the
+  song's LFO, which `:lfo-rate 4` turns on (the OPLL's are fixed, about
+  ±12 cents at 6 Hz and 4.8 dB).
 
 A square on an FM channel plays the waveforms' square (the OPLL's
 `clarinet`).

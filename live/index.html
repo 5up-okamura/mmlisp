@@ -3672,7 +3672,7 @@
         if (plan.error) return [];
         return plan.rows.map((r) => ({
           key: r.key,
-          label: `${r.key === 'fm8/noise' ? `${partOf.fm8} · its noise notes` : name(r.head)} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
+          label: `${name(r.head)}${r.key.endsWith('/noise') ? ' · its noise notes' : ''} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
           value: r.to,
           choices: r.choices,
         }));
@@ -4434,7 +4434,7 @@
         return plan.rows.map((r) => ({
           key: r.key,
           // A note-less form is a patch (fm3's beside its operator tracks).
-          label: `${r.key === 'fm8/noise' ? 'fm8 · its noise notes' : r.head} · ${r.notes ? `${r.notes} note${r.notes === 1 ? '' : 's'}` : 'no notes'}`,
+          label: `${r.head}${r.key.endsWith('/noise') ? ' · its noise notes' : ''} · ${r.notes ? `${r.notes} note${r.notes === 1 ? '' : 's'}` : 'no notes'}`,
           value: r.to,
           choices: r.choices,
         }));

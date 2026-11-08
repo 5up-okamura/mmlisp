@@ -171,8 +171,10 @@ to Machine, and the MDX's and the MGS's Target with rows). Decisions:
   conversion writes the one user voice. A 4-op def under a ROM name (or an
   imported fm-roles) would hide the ROM voice: it goes. fm-roles' `:key`
   moves the sounding key: the check compares onsets only across the families.
-- An OPLL user voice onto 4-op is read as 4-op (opllWordsAs4op), `:ws`,
-  `:ksl`, `:vib` said; `:vib` is not made `:fms` (plan said so; not done).
+- An OPLL user voice onto 4-op is read as 4-op (opllWordsAs4op), `:ws` and
+  `:ksl` said. `:vib` / `:am` (def, inline, macro) are `:fms 4` / `:ams 2`
+  (ymfm's OPLL: ±12 cents at 6.1 Hz, 4.8 dB), the LFO `:lfo-rate 4` once at
+  the first channel form.
 - The noise by Hz across its three writings: the SN's mode, a song-wide
   `:noise-rate`, the 2A03's / Game Boy's note pitch (noiseHzOfNote /
   noiseNoteOfHz in the chips), written again at each change and at a loop's
@@ -183,15 +185,14 @@ to Machine, and the MDX's and the MGS's Target with rows). Decisions:
 - fc's defaults are its own board (listsExpansions); the cartridges are
   choices. A song word counts as the target's only where its part is on the
   board or a row goes there (fc's 5B has :noise-rate, the 2A03 not).
-- Open: a PSG channel in `:mode noise` (an SSG drum) plays as tone, said, not
-  moved to the noise; an SCC song's dead def-wave / wave macros stay.
+- A split (`<head>/noise`): x68k fm8's `:mode noise` and an SSG square's
+  `:mode noise` / `both` (MSX songs' PSG drums) go to the noise where the
+  destination's own squares have no noise mode; the tone half keeps the
+  song's words (tempo, master, LFO). A mode stepped by a macro is not split.
+- Open (stage 3): an SCC song's dead def-wave / wave macros stay.
 
 Stage 3: the wave memories (SCC, N163, FDS, gb wave, pce) — their rows drop
 now.
-
-Seen on the way: p3-se-noise.mmlisp swapped onto pce throws in the compiler
-(`null.modes`: a def-se noise part on a machine with no `noise` channel) —
-a compiler bug to fix apart.
 
 ## The PC Engine (pce; built 2026-10-27)
 

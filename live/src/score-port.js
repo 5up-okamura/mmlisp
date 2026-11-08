@@ -38,7 +38,7 @@ import { OPN_LFO_HZ, lfoHz } from "./chips/ym2151.js";
 import { opllRomVoices } from "./chips/ym2413.js";
 import * as fcApu from "./chips/rp2a03.js";
 import * as gbApu from "./chips/lr35902.js";
-import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET } from "./voice-port.js";
+import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
 /** The machines a score can be converted between. */
 export const PORT_TARGETS = ["md", "pc88", "x68k", "msx", "fc", "gb"];
@@ -78,7 +78,14 @@ const isList = (n, head) => n?.kind === "list" && n.bracket === "()" && (head ==
 // The two FM families: the OPLL's 2 operators (a ROM of voices, `romNames`)
 // and the OPN's and OPM's 4. A voice goes as written within one.
 const twoOp = (part) => !!part?.romNames;
-const NOISE_SPLIT = "fm8/noise"; // the row of x68k fm8's :mode noise notes
+// A track whose notes are tone and noise by turns — x68k fm8's `:mode noise`,
+// an SSG square's `:mode noise` / `both` (a PSG drum) — on a machine whose
+// channel cannot: its noise notes are a row of their own, `<head>/noise`,
+// onto the noise; its tone notes stay on its row's channel.
+const splitKey = (head) => `${head}/noise`;
+const isSplit = (k) => /\/noise$/.test(k);
+const splitHead = (k) => (isSplit(k) ? k.slice(0, -6) : k);
+const NOISY = new Set(["noise", "both"]); // the modes that sound the noise
 const notes = (n) => `${n} note${n === 1 ? "" : "s"}`;
 
 /** The `:target` a score names, or md. */
@@ -124,7 +131,7 @@ function survey(text, from, imports) {
       if (isNote(n.value)) h.notes++;
       else if (samples.has(n.value) || kit.has(n.value)) h.samples.add(n.value);
       else if (voices.has(n.value)) h.voices.push(n.value);
-      if (prev?.value === ":mode" && n.value === "noise") h.noiseMode = true;
+      if (prev?.value === ":mode" && NOISY.has(n.value)) h.noiseMode = true;
     });
   }
   return { roots, forms, heads, voices, samples, ownSamples, kit };
@@ -156,7 +163,17 @@ function channelsOf(target, kind, { kit = false, board = false } = {}) {
 }
 
 // The kind of sound a row is.
-const kindOf = (from, key) => (key === NOISE_SPLIT ? "noise" : from.partOf(key)?.kind);
+const kindOf = (from, key) => (isSplit(key) ? "noise" : from.partOf(key)?.kind);
+
+// Whether `head`'s noise notes split off onto `to`'s noise: its own channel
+// plays them by its :mode (x68k fm8, an SSG square), and `to`'s own squares
+// cannot (the PC-8801's and the MSX's SSG can: there it stays as written).
+function splits(from, to, head) {
+  if (from.name === "x68k") return head === "fm8" && to.name !== "x68k";
+  const p = from.partOf(head);
+  if (p?.kind !== "tone" || !Object.hasOwn(p.modes ?? {}, "noise")) return false;
+  return !channelsOf(to, "tone", { board: true }).some((h) => Object.hasOwn(to.partOf(h).modes ?? {}, "noise"));
+}
 
 // FM3's patch: `(fm3 voice)` or `(fm3-csm voice)` with no notes, beside
 // fm3-1…fm3-4, on a machine without them — its voice goes into the operator
@@ -191,7 +208,7 @@ function planRows(s, from, to) {
     const h = s.heads.get(head);
     if (!h || patch.has(head)) continue;
     // fm8's :mode noise notes are a row of their own, onto the noise.
-    if (from.name === "x68k" && head === "fm8" && h.noiseMode && to.name !== "x68k") keys.push(NOISE_SPLIT);
+    if (h.noiseMode && splits(from, to, head)) keys.push(splitKey(head));
     keys.push(head);
   }
   const roleKit = to.parts.some((p) => p.kit);
@@ -205,7 +222,7 @@ function planRows(s, from, to) {
   const sampleRows = keys.some((k) => kindOf(from, k) === "sample" && s.heads.get(k)?.notes);
   // The Mega Drive's PCM owns fm6 (its DAC).
   if (to.name === "md" && sampleRows) takenBy.set(to.voiceKey("fm6"), "dac");
-  const srcKey = (k) => (k === NOISE_SPLIT ? "noise-split" : from.voiceKey(k));
+  const srcKey = (k) => (isSplit(k) ? k : from.voiceKey(k));
   const free = (k, h) => {
     if (taken.has(h)) return false;
     if (to.partOf(h).kit) return true;
@@ -218,7 +235,7 @@ function planRows(s, from, to) {
     return h;
   };
   const dest = {};
-  const notesOf = (k) => s.heads.get(k === NOISE_SPLIT ? "fm8" : k)?.notes ?? 0;
+  const notesOf = (k) => s.heads.get(splitHead(k))?.notes ?? 0;
   // A machine short of channels keeps the parts that play the most notes
   // (the user, 2026-11-08): past its melodic channels — FM and squares, less
   // a square its noise is and fm6 under the Mega Drive's PCM — and past its
@@ -280,9 +297,9 @@ function planRows(s, from, to) {
   };
   return keys.map((k) => ({
     key: k,
-    head: k === NOISE_SPLIT ? "fm8" : k,
+    head: splitHead(k),
     kind: kindOf(from, k),
-    notes: s.heads.get(k === NOISE_SPLIT ? "fm8" : k)?.notes ?? 0,
+    notes: s.heads.get(splitHead(k))?.notes ?? 0,
     to: dest[k],
     choices: choicesOf(k),
   }));
@@ -313,7 +330,7 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
   // One channel a row, and one physical voice a source voice: fm3 and
   // fm3-1 are one channel on both machines, md's sqr3 and noise are not.
   const seen = new Map();
-  const srcKey = (k) => (k === NOISE_SPLIT ? k : from.voiceKey(k));
+  const srcKey = (k) => (isSplit(k) ? k : from.voiceKey(k));
   for (const [k, h] of Object.entries(map)) {
     if (h === "drop" || to.partOf(h).kit) continue;
     const key = to.voiceKey(h);
@@ -352,14 +369,14 @@ class Porter {
     this.toParts = new Set(to.channelNames.filter((h) => !(to.listsExpansions && to.chipOf(h).optional) || used.has(h)).map((h) => to.partOf(h)));
     this.replaced = new Set(); // def-fm names a conversion leaves unplayed
     this.shadowing = new Set(); // def-fm names that would hide the OPLL's ROM voice of that name
-    this.fm8Split = from.name === "x68k" && !!this.s.heads.get("fm8")?.noiseMode;
+    this.splits = new Set(Object.keys(map).filter(isSplit).map(splitHead));
   }
 
   say(line) { this.said.add(line); }
   toHas(w) { return [...this.toParts].some((p) => p.words(w) || p.songWords?.(w)); }
   // A source channel as the log names it: the song's own name for it where
   // the caller has one (an MDX's FM G for fm7), else the channel.
-  nameOf(head) { return head == null ? "a def" : head === NOISE_SPLIT ? this.nameOf("fm8") : this.names[head] ?? head; }
+  nameOf(head) { return head == null ? "a def" : isSplit(head) ? this.nameOf(splitHead(head)) : this.names[head] ?? head; }
 
   span(node) {
     const from = this.starts[node.line - 1] + node.column - 1;
@@ -445,8 +462,26 @@ class Porter {
     }
     out += this.text.slice(at);
     out = this.pruneVoices(out);
+    out = this.placeLfo(out);
     out = this.addHeader(out, [...added.values()].flat(), header);
     return { text: out, map: this.map, said: [...this.said] };
+  }
+
+  // The song's LFO, on for the OPLL's vibrato and tremolo read as :fms /
+  // :ams: written once, after the head of the score's first channel form
+  // (a song word goes on any track), unless the score sets one.
+  placeLfo(out) {
+    if (!this.needsLfo || /:lfo-rate\b/.test(out)) return out;
+    let roots;
+    try { roots = parse(out); } catch { return out; }
+    const isForm = (n) => isList(n) && this.to.channelNames.includes(n.items[0]?.value);
+    const form = roots.flatMap((n) => (isList(n, "def") ? n.items.slice(2) : [n])).find(isForm);
+    if (!form) return out;
+    const head = form.items[form.items[1]?.value === ":prio" ? 2 : 0];
+    const starts = [0];
+    for (let i = 0; i < out.length; i++) if (out[i] === "\n") starts.push(i + 1);
+    const at = starts[head.line - 1] + head.column - 1 + String(head.value).length;
+    return `${out.slice(0, at)} :lfo-rate ${OPLL_LFO_RATE}${out.slice(at)}`;
   }
 
   // A def-fm the conversion leaves unplayed (its tracks play a role's or a
@@ -560,6 +595,10 @@ class Porter {
       if (!d) return this.slice(n);
       const r = opllDefAs4op(name, d.words);
       if (r.without.length) this.say(`'${name}' plays without ${r.without.join(", ")}: a 4-op chip has none`);
+      if (r.lfo) {
+        this.needsLfo = true;
+        this.say(`'${name}': the ${this.fromFm.label}'s vibrato / tremolo read as :fms ${OPLL_VIB_FMS} / :ams ${OPLL_AM_AMS} on the song's LFO (:lfo-rate ${OPLL_LFO_RATE})`);
+      }
       return r.text;
     }
     const outs = [];
@@ -638,7 +677,8 @@ class Porter {
     const c = {
       head,
       dest,
-      srcPart: head ? this.from.partOf(head === NOISE_SPLIT ? "noise" : head) : null, // fm8's noise notes are the OPM's noise
+      // A split's noise notes are the source machine's noise.
+      srcPart: head ? (isSplit(head) ? this.from.partOf("noise") ?? this.from.partOf(splitHead(head)) : this.from.partOf(head)) : null,
       destPart: dest && dest !== "drop" ? this.to.partOf(dest) : null,
       destChannel: dest && dest !== "drop" ? this.to.channels[dest] : null,
       opN: head && /^fm3-\d$/.test(head) && !this.to.channelNames.includes(head) ? Number(head.slice(4)) : null,
@@ -664,15 +704,15 @@ class Porter {
   form(n) {
     const head = n.items[0].value;
     if (this.patch.has(head)) return null;
-    if (head === "fm8" && this.fm8Split) {
+    if (this.splits.has(head)) {
       const state = { mode: "tone" };
-      const fm = this.map.fm8 === "drop" ? null : this.oneForm(n, this.ctx("fm8", { split: "tone", state: { ...state } }));
-      const noise = this.map[NOISE_SPLIT] === "drop" ? null : this.oneForm(n, this.ctx(NOISE_SPLIT, { split: "noise", state: { ...state } }));
-      if (fm == null && noise == null) {
-        this.say(`${this.nameOf("fm8")} (${notes(this.s.heads.get("fm8").notes)}) is not converted`);
+      const tone = this.map[head] === "drop" ? null : this.oneForm(n, this.ctx(head, { split: "tone", state: { ...state } }));
+      const noise = this.map[splitKey(head)] === "drop" ? null : this.oneForm(n, this.ctx(splitKey(head), { split: "noise", state: { ...state } }));
+      if (tone == null && noise == null) {
+        this.say(`${this.nameOf(head)} (${notes(this.s.heads.get(head).notes)}) is not converted`);
         return null;
       }
-      return [fm, noise].filter((x) => x != null).join("\n");
+      return [tone, noise].filter((x) => x != null).join("\n");
     }
     if (this.map[head] === "drop" || this.map[head] == null) {
       const why = head === "fm3-csm-rate" ? `: the ${this.to.system} has no CSM` : "";
@@ -706,7 +746,7 @@ class Porter {
     }
     if (ctx.srcPart.kind === "fm" && ctx.destPart.kind !== "fm" && ctx.destPart.kind !== "noise")
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, a square, without its voice`);
-    if (ctx.split === "noise") this.say(`${this.nameOf("fm8")}'s :mode noise notes play on ${ctx.dest}, its tone notes on ${this.map.fm8}`);
+    if (ctx.split === "noise") this.say(`${this.nameOf(ctx.head)}'s noise notes (:mode ${this.from.name === "x68k" ? "noise" : "noise / both"}) play on ${ctx.dest}, its tone notes on ${this.map[splitHead(ctx.head)]}`);
     if (ctx.opN && ctx.destPart?.kind === "fm" && !twoOp(ctx.destPart)) this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
     if (ctx.head === "fm3-csm" && ctx.dest !== "fm3-csm") this.say(`${this.nameOf("fm3-csm")} plays its notes on ${ctx.dest}: the ${this.to.system} has no CSM`);
     if (first && ctx.flatPitch && this.s.heads.get(ctx.head)?.notes) {
@@ -741,7 +781,7 @@ class Porter {
         }
         if (ctx.noise && isNote(v)) {
           sawNote = true;
-          outs[i] = this.noiseNote(v, ctx);
+          outs[i] = ctx.split && ctx.state.mode !== ctx.split ? restOf(v) : this.noiseNote(v, ctx);
           continue;
         }
         if (typeof v === "string" && /^:[a-z]/.test(v) && i + 1 < items.length) {
@@ -827,7 +867,7 @@ class Porter {
       if (n.periodic && !n.saidPeriodic) { n.saidPeriodic = true; this.say(`a periodic noise on ${this.nameOf(ctx.head)}: ${ctx.dest} makes white noise only`); }
       state = `:noise-rate ${Math.max(1, Math.min(31, Math.round(NOISE_CLOCK / n.hz)))}`;
     }
-    if (!n.said) { n.said = true; this.say(`${this.nameOf(ctx.head)}'s noise on ${ctx.dest}: each note's rate read as the nearest ${n.to === "pitch" ? "pitch" : n.to === "mode" ? "white / periodic mode" : ":noise-rate"} (Hz)`); }
+    if (!n.said) { n.said = true; this.say(`${this.nameOf(ctx.head)} on ${ctx.dest}: the noise's rate read note by note as the nearest ${n.to === "pitch" ? "pitch" : n.to === "mode" ? ":mode whiteN / periodicN" : ":noise-rate"} (Hz)`); }
     if (state === n.last) return note;
     n.last = state;
     return `${state} ${note}`;
@@ -871,8 +911,12 @@ class Porter {
     const DROP = { drop: true };
     const where = ctx.dest ? `${ctx.dest}` : `the ${this.to.system}`;
     const base = kw.replace(/[+*]$/, "");
+    // The song's words (its tempo, its fader, the LFO) go with a split's tone
+    // half, or with its noise half where that is all there is.
+    if (ctx.split === "noise" && this.map[splitHead(ctx.head)] !== "drop" && /^:(tempo|master|lfo-)/.test(base)) return DROP;
     if (ctx.split && base === ":mode") {
-      if (val.kind === "atom") ctx.state.mode = val.value === "noise" ? "noise" : "tone";
+      if (val.kind === "atom") ctx.state.mode = NOISY.has(val.value) ? "noise" : "tone";
+      else if (ctx.split === "tone") this.say(`:mode [${val.items?.map((x) => x.value).join(" ") ?? "…"}] on ${this.nameOf(ctx.head)}: a mode stepped by a macro is not split; taken out`);
       return DROP;
     }
     if (base === ":mode") return this.modeRule(val, ctx);
@@ -899,6 +943,22 @@ class Porter {
     // Across the FM families a voice's words are the other chip's: its
     // register ranges, its operators. The voice is the role's or the
     // waveform's now; written over, it would not be.
+    // The OPLL's vibrato and tremolo written on a track: the 4-op channel's
+    // sensitivities to the song's LFO (voice-port.js).
+    if (ctx.family && twoOp(ctx.srcPart) && /^FM_(VIB|AMEN)\d$/.test(w)) {
+      const vib = w.startsWith("FM_VIB");
+      const as = (x) => (Number(x) > 0 ? (vib ? OPLL_VIB_FMS : OPLL_AM_AMS) : 0);
+      const kw2 = vib ? ":fms" : ":ams";
+      let value = null;
+      if (val.kind === "atom" && num(val) != null) value = String(as(val.value));
+      else if (val.kind === "list" && val.bracket === "[]" && val.items.every((x) => num(x) != null)) value = `[${val.items.map((x) => as(x.value)).join(" ")}]`;
+      if (value != null) {
+        this.needsLfo = true;
+        this.say(`${base} on ${this.nameOf(ctx.head)}: the ${ctx.srcPart.label}'s ${vib ? "vibrato" : "tremolo"} read as ${kw2} on the song's LFO`);
+        // The tremolo needs the operator's AM bit too, which a 4-op voice has.
+        return { replace: vib || ctx.macro ? `${kw2} ${value}` : `${kw2} ${value} :am${w.at(-1)} ${val.value}` };
+      }
+    }
     if (ctx.family && /^FM_/.test(w)) {
       this.say(`the voice's words written on ${this.nameOf(ctx.head)} (${base} …): the ${ctx.destPart.label} plays its own voice; taken out`);
       return DROP;
