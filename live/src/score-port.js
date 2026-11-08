@@ -1574,14 +1574,20 @@ class Porter {
         }
         if (ctx.noise && !(ctx.split && v === ":mode") && typeof v === "string" && /^:(mode|noise-rate|oct\+?)$/.test(v) && i + 1 < items.length) {
           this.noiseWord(v, items[i + 1], ctx);
-          outs[i] = outs[i + 1] = null;
+          // A track split into tone and noise keeps its octave words for its
+          // tone notes (with the `>` `<` beside them, below).
+          if (!(/^:oct/.test(v) && ctx.split && ctx.noise.to !== "pitch")) outs[i] = outs[i + 1] = null;
           i++;
           continue;
         }
         if (ctx.noise && (v === ">" || v === "<" || /^o[+-]\d*$/.test(v))) {
           const n = ctx.noise;
           n.oct += v === ">" ? 1 : v === "<" ? -1 : (v[1] === "+" ? 1 : -1) * Number(v.slice(2) || 1);
-          if (n.to === "pitch") outs[i] = null; // the notes are written at their octave
+          // The notes are written at their octave (pitch), or a rate or a
+          // mode carries the noise and the octave means nothing — unless the
+          // track's tone notes stay beside them (split): without its :oct
+          // a loop's `>` would climb past MIDI 127.
+          if (n.to === "pitch" || !ctx.split) outs[i] = null;
           continue;
         }
         if (ctx.noise && isNote(v)) {
@@ -1952,18 +1958,42 @@ class Porter {
     return null;
   }
 
+  // The lowest and highest MIDI note a track plays (its every form's), as
+  // the source compiles: how far its notes can be written up or down.
+  noteSpan(head) {
+    this.spans ??= new Map();
+    if (!this.spans.has(head)) {
+      let lo = 127, hi = 0;
+      for (const t of this.s.compiled?.()?.tracks ?? []) {
+        if ((t.scoreChannel ?? t.channel) !== head) continue;
+        for (const e of t.events) {
+          if (e.cmd !== "NOTE_ON" || e.args.pitch == null) continue;
+          const m = pitchToMidi(e.args.pitch);
+          if (Number.isFinite(m)) { lo = Math.min(lo, m); hi = Math.max(hi, m); }
+        }
+      }
+      this.spans.set(head, lo > hi ? { lo: 0, hi: 127 - 12 * 10 } : { lo, hi });
+    }
+    return this.spans.get(head);
+  }
+
   // A voice's sounding octave (its main carrier's multiple) on a channel
   // that plays the written note: the track moves up that far — `:oct+` at
   // the switch, its `:oct` writes and glides after it raised (body).
   octaveFor(v, ctx) {
     const def = this.voices.get(v);
     const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
-    const k = roleOf(v) ? 0 : carrierOctave(words);
+    const want = roleOf(v) ? 0 : carrierOctave(words);
+    // As far as the track's notes stay within MIDI 0..127: a high part under
+    // a high multiple sounds past the range on FM, and is written only up to it.
+    const { lo, hi } = this.noteSpan(ctx.head);
+    const k = Math.max(Math.ceil(-lo / 12), Math.min(Math.floor((127 - hi) / 12), want));
     const was = this.octShift.get(ctx.head) ?? 0;
     this.octShift.set(ctx.head, k);
-    if (k !== 0 && !this.saidOct?.has(v)) {
+    if (want !== 0 && !this.saidOct?.has(v)) {
       (this.saidOct ??= new Set()).add(v);
-      this.say(`'${v}' sounds ${Math.abs(k)} octave${Math.abs(k) === 1 ? "" : "s"} ${k > 0 ? "up" : "down"} on FM (its carrier's :ml ${carrierMultiple(words)}); on ${ctx.dest} its notes are written so`);
+      const by = (n) => `${Math.abs(n)} octave${Math.abs(n) === 1 ? "" : "s"} ${n > 0 ? "up" : "down"}`;
+      this.say(`'${v}' sounds ${by(want)} on FM (its carrier's :ml ${carrierMultiple(words)}); on ${ctx.dest} its notes are written ${k === want ? "so" : k ? by(k) + ", as far as MIDI 0..127 reaches" : "as they are: MIDI 0..127 has no room"}`);
     }
     return k === was ? "" : ` :oct+ ${k - was}`;
   }

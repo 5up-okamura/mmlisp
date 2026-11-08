@@ -320,6 +320,11 @@ const port = (src, to, rows) => {
   assert.match(fc.text, /\(noise :len 8 :mode white :oct \d [a-g]\+? [a-g]\+? :mode periodic :oct \d [a-g]\+?\)/);
   const md = port(fc.text, "md");
   assert.match(md.text, /\(noise :len 8 :mode white1 [a-g]\+? [a-g]\+? :mode periodic0 [a-g]\+?\)/, "and back: the same modes (the SN76489's noise has no pitch)");
+  // A pitched noise's phrase that starts at its :oct and climbs with `>`:
+  // on a noise the mode carries, the octave means nothing and goes with its
+  // `>`, so a loop's passes do not climb past MIDI 127.
+  const climb = port("(def-score :target fc)\n(def ph :oct 2 c > c > c)\n(noise :len 8 (x 12 ph))", "md");
+  assert.deepEqual(compileMMLisp(climb.text, join(repo, "tools/tests/t.mmlisp"), { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), climb.text) }).diagnostics.filter((d) => d.severity === "error").map((d) => d.code), [], "a climbing noise phrase stays in range");
   assert.equal(md.text.match(/^; Converted from/gm).length, 1, "a second conversion's line replaces the first's");
   // The SSG's rate on the Game Boy, its pitch.
   const gb = port("(def-score :target pc88)\n(noise :noise-rate 4 :len 8 c c)", "gb");
@@ -377,6 +382,13 @@ const port = (src, to, rows) => {
 }
 
 // ── The wave memories (wave-port.js) ──
+{
+  // A voice sounding octaves up (its carrier's :ml 8) onto a square: the
+  // notes are written up only as far as MIDI 127 reaches.
+  const hi = port("(def-fm bell :alg 7 :ml1 8 :ml2 8 :ml3 8 :ml4 8 :tl1 0 :tl2 0 :tl3 0 :tl4 0)\n(fm1 bell :len 8 :oct 8 c a+)", "fc", { fm1: "sqr1" });
+  assert.deepEqual(compileMMLisp(hi.text, join(repo, "tools/tests/t.mmlisp"), { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), hi.text) }).diagnostics.filter((d) => d.severity === "error").map((d) => d.code), [], "written up within MIDI 0..127");
+  assert.ok(hi.said.some((x) => /as far as MIDI 0\.\.127 reaches|MIDI 0\.\.127 has no room/.test(x)), "the shortfall said");
+}
 {
   // presets/wavetable's plain shapes read as themselves.
   const file = join(repo, "tools/tests/t.mmlisp");
@@ -740,9 +752,9 @@ const port = (src, to, rows) => {
   assert.notEqual(portRows(pce, "msx").rows.find((x) => x.key === "wave5").to, "wave5");
   assert.ok(port(pce, "msx", { wave6: "wave5" }).said.some((x) => /share one wave memory/.test(x)));
   // A loop that moves the noise's octave, or a split's :mode, written out pass by pass.
-  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d > :mode white0 c d > c\)/);
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 c d >) c)", "md").text, /\(noise :mode white2 c d :mode white0 c d c\)/);
   // A macro's #sus / #rel in the loop are no labels: it is written out too.
-  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 (macro :vel [15 #sus 12 #rel 0]) c >) c)", "md").text, /\(noise \(macro :vel \[15 #sus 12 #rel 0\]\) :mode white2 c > \(macro/);
+  assert.match(port("(def-score :target fc)\n(noise :oct 2 (x 2 (macro :vel [15 #sus 12 #rel 0]) c >) c)", "md").text, /\(noise \(macro :vel \[15 #sus 12 #rel 0\]\) :mode white2 c \(macro/);
   // A (macro :wave …) off a wave channel with nothing else goes, and the waves only it named.
   const mac = port("(def-score :target msx)\n(def-wave saw :wave (saw -128..127))\n(wave1 (macro :wave [saw saw]) :len 4 c)", "fc").text;
   assert.doesNotMatch(mac, /\(macro\)|def-wave saw/);
