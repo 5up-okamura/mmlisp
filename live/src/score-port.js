@@ -160,12 +160,12 @@ function survey(text, from, imports) {
     const h = heads.get(head) ?? { head, part: from.partOf(head), forms: [], notes: 0, noiseNotes: 0, mode: "tone", samples: new Set(), voices: [], voiceNotes: new Map(), voice: null, waves: new Set(), noiseMode: false };
     heads.set(head, h);
     h.forms.push(f);
-    walk(f.items.slice(1), (n, prev) => {
+    walk(f.items.slice(1), (n, prev, times) => {
       if (n.kind !== "atom") return;
       if (isNote(n.value)) {
-        h.notes++;
-        if (NOISY.has(h.mode)) h.noiseNotes++;
-        if (h.voice) h.voiceNotes.set(h.voice, (h.voiceNotes.get(h.voice) ?? 0) + 1); // the notes each voice plays
+        h.notes += times;
+        if (NOISY.has(h.mode)) h.noiseNotes += times;
+        if (h.voice) h.voiceNotes.set(h.voice, (h.voiceNotes.get(h.voice) ?? 0) + times); // the notes each voice plays
       }
       else if (samples.has(n.value) || kit.has(n.value)) h.samples.add(n.value);
       else if (voices.has(n.value)) { h.voices.push(n.value); h.voice = n.value; }
@@ -192,13 +192,24 @@ function survey(text, from, imports) {
 }
 
 // Every atom of a body, in order, into the lists a body is made of.
-function walk(items, fn) {
+// `times`: how often the node plays — a loop's `(x N …)` body N times — so
+// a row's notes are counted as it sounds.
+function walk(items, fn, times = 1) {
   let prev = null;
   for (const n of items) {
-    if (isList(n) && DESCEND.has(n.items[0]?.value)) walk(n.items.slice(1), fn);
-    else fn(n, prev); // a value list (a curve, a glide) is no body
+    if (isList(n) && DESCEND.has(n.items[0]?.value)) {
+      const k = n.items[0].value === "x" && /^\d+$/.test(n.items[1]?.value ?? "") ? Number(n.items[1].value) : 1;
+      walk(n.items.slice(1), fn, times * k);
+    } else fn(n, prev, times); // a value list (a curve, a glide) is no body
     prev = n;
   }
+}
+
+// A drum row's :prio as a layer (lower sounds first): by the names it plays.
+const DRUM_RANKS = [[/kick|bd|bass-?drum/i, 1], [/snare|sd|clap/i, 2], [/tom/i, 3], [/rim|cow|perc/i, 4], [/crash|ride|cym|splash/i, 5], [/hat|hh/i, 6]];
+function drumRank(h) {
+  const ranks = [...(h?.samples ?? [])].map((n) => DRUM_RANKS.find(([re]) => re.test(n))?.[1] ?? 4);
+  return ranks.length ? Math.min(...ranks) : 4;
 }
 
 // ── The rows ─────────────────────────────────────────────────────────────
@@ -337,20 +348,28 @@ function planRows(s, from, to) {
       - reserved.length],
     [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise", { board: true }).length],
     // A kit's tracks are many to its one voice; the rest are a channel each.
-    [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)), channelsOf(to, "sample", { board: true }).length],
+    // A machine whose drivers stream samples on fewer channels than it has
+    // (the PC Engine's DDA: one) gives them that many.
+    [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)),
+      Math.min(channelsOf(to, "sample", { board: true }).length, ...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams))],
   ];
   if (shared) pools.push([(k) => !isKitRow(k) && k !== "fm3-csm-rate", boardKeys(["fm", "tone", "wave", "noise", "sample"]).size - reserved.length]);
+  const streams = Math.min(...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams));
   for (const [inPool, room] of pools) {
     const groups = new Map();
-    for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
+    for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop" && dest[k] !== "layer")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
     if (groups.size <= room) continue;
     const notes = (g) => g.reduce((n, k) => n + notesOf(k), 0);
     // A row of a kind the machine has (FM onto FM) keeps its channel before
     // one that would play a stand-in (the user, 2026-11-08); among those
     // alike, the most notes.
     const own = (g) => g.some((k) => channelsOf(to, kindOf(from, k), { board: true }).length > 0);
+    // Samples past the channels a driver streams on are layers on the one
+    // kept (:prio, the drums' own order: placeLayers); the rest past the
+    // room go.
+    const layering = (g) => Number.isFinite(streams) && g.every((k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)));
     for (const g of [...groups.values()].sort((a, b) => (own(a) - own(b)) || (notes(a) - notes(b))).slice(0, groups.size - Math.max(0, room)))
-      for (const k of g) dest[k] = "drop";
+      for (const k of g) dest[k] = layering(g) && groups.size > 0 && room > 0 ? "layer" : "drop";
   }
   // With the FDS's track dropped there is no LFO to keep wave2 for.
   if (reserved.length && dest["fds-wave"] === "drop") { takenBy.delete(to.voiceKey("wave2")); reserved.length = 0; }
@@ -399,6 +418,9 @@ function planRows(s, from, to) {
     const h = cands.find((c) => free(k, c));
     dest[k] = h ? claim(k, h) : "drop";
   }
+  // A layered sample row plays on the sample channel kept.
+  const kept = keys.find((k) => kindOf(from, k) === "sample" && dest[k] && dest[k] !== "drop" && dest[k] !== "layer" && to.partOf(dest[k])?.kind === "sample" && !to.partOf(dest[k]).kit);
+  for (const k of keys) if (dest[k] === "layer") dest[k] = kept ? dest[kept] : "drop";
   const choicesOf = (k) => {
     const kind = kindOf(from, k);
     if (to.partOf(k)?.kind === kind && !to.partOf(k).kit && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
@@ -447,7 +469,9 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
     if (h === "drop" || to.partOf(h).kit) continue;
     const key = to.voiceKey(h);
     const prev = seen.get(key);
-    if (prev && (prev.h === h || srcKey(prev.k) !== srcKey(k)))
+    // Sample rows on one sample channel are its :prio layers (placeLayers).
+    const layers = prev && prev.h === h && to.partOf(h).kind === "sample" && kindOf(from, k) === "sample" && kindOf(from, prev.k) === "sample";
+    if (prev && !layers && (prev.h === h || srcKey(prev.k) !== srcKey(k)))
       return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
   }
@@ -489,6 +513,7 @@ class Porter {
     this.octShift = new Map(); // head → the octaves its stand-in is written up, for its voice's carrier
     this.setupLfo();
     this.userVoice = this.pickUserVoice();
+    this.layerPrio = this.placeLayers();
     // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
     // the wave written last plays on both — said where their waves differ.
     const byRam = new Map();
@@ -841,6 +866,32 @@ class Porter {
     return best[0];
   }
 
+  // Sample rows sharing one channel (the PC Engine streams one): each a
+  // :prio layer (language.md §1), the drums' order — the kick and snare
+  // over toms, a rim or clap, cymbals and the hats last — so where two hit
+  // at once the beat's sounds win.
+  placeLayers() {
+    const byDest = new Map();
+    for (const [k, h] of Object.entries(this.map)) {
+      if (h === "drop" || this.to.partOf(h)?.kind !== "sample" || this.to.partOf(h).kit) continue;
+      byDest.set(h, [...(byDest.get(h) ?? []), k]);
+    }
+    const out = new Map();
+    // The rows that play shots alone (no :mode, no gate of their own).
+    this.shotRows = new Set();
+    for (const [h, ks] of byDest) {
+      if (ks.length < 2) continue;
+      for (const k of ks) {
+        out.set(k, drumRank(this.s.heads.get(k)));
+        const words = this.s.heads.get(k)?.forms.map((f) => this.text.slice(this.starts[f.line - 1] + f.column - 1, this.starts[f.endLine - 1] + f.endColumn - 1)).join(" ") ?? "";
+        if (!/:mode|:gate/.test(words)) this.shotRows.add(k);
+      }
+      const streams = this.to.partOf(h).streams;
+      this.say(`${ks.map((k) => this.nameOf(k)).join(", ")} share ${h} as :prio layers${streams ? ` (the ${this.to.system}'s drivers stream samples on ${streams === 1 ? "one channel" : `${streams} channels`})` : ""}: where two hit at once, the lower :prio sounds`);
+    }
+    return out;
+  }
+
   defFm(n) {
     const fm = this.toFm;
     const name = n.items[1]?.value;
@@ -1013,6 +1064,15 @@ class Porter {
     }
     const { outs, after } = this.body(n.items, at + 1, ctx);
     outs[0] = ctx.dest;
+    const prio = this.layerPrio.get(ctx.head);
+    if (prio != null) {
+      // A shot plays to its end whatever its gate: a hit holds the channel a
+      // tick, so a lower layer gives way only where both strike at once and
+      // past that the latest hit sounds, as one stream plays them.
+      const gate = !this.started?.has(ctx.head) && this.shotRows.has(ctx.head) ? " :gate 1t" : "";
+      if (at) outs[2] = `${prio}${gate}`;
+      else outs[0] = `${ctx.dest} :prio ${prio}${gate}`;
+    }
     const lead = [];
     // The first form of the head carries what the conversion adds: the
     // patch's tempo and voice on an operator track, a stand-in voice.

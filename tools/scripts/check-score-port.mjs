@@ -90,7 +90,13 @@ function check(file, src, to) {
     // wave5, noise5, pcm5) played only one of them where they met: on
     // channels of their own every note sounds — the source's among them.
     const sharedAtSource = rows.some((x) => x.head !== row.head && TARGETS[from].voiceKey(x.head) === TARGETS[from].voiceKey(row.head) && TARGETS[from].partOf(x.head) !== TARGETS[from].partOf(row.head));
-    if (sharedAtSource) assert.ok(was.every((x) => now.includes(x)), `${file} → ${to}: ${row.head} on ${dest} keeps every note it played`);
+    // Sample rows layered on one channel (:prio, the PC Engine's one DDA
+    // stream): a lower layer's notes give way to a higher's (language.md §1),
+    // so the channel is held to sound, its layers' order by the rules below.
+    const layers = kind === "sample" ? rows.filter((x) => x.to === dest) : [];
+    if (layers.length > 1) {
+      assert.ok(now.length > 0, `${file} → ${to}: ${dest}, ${layers.map((x) => x.head).join(" + ")}'s layers, plays`);
+    } else if (sharedAtSource) assert.ok(was.every((x) => now.includes(x)), `${file} → ${to}: ${row.head} on ${dest} keeps every note it played`);
     else assert.deepEqual(now, was, `${file} → ${to}: ${row.head} on ${dest} keeps its notes`);
     tracks++;
   }
@@ -370,6 +376,27 @@ const port = (src, to, rows) => {
   assert.ok(firstLoud(envelopeOf(slow(3), 84)) < 10, `KS 3 at c6: ${envelopeOf(slow(3), 84).slice(0, 60)}`);
   assert.ok(firstLoud(envelopeOf(slow(0), 84)) > 30, `KS 0 at c6: ${envelopeOf(slow(0), 84).slice(0, 60)}`);
   // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)
+  // The PC Engine's drivers stream samples on one channel: a score's drum
+  // rows are :prio layers on it, the kick and snare over the hats, each
+  // hit its own sample; the wave channels stay the melody's.
+  const drums = port(`(def-score :target pc88)
+(import "presets/rx5/set.mmlisp")
+(fm1 :len 8 c d e f g a b > c)
+(fm2 :len 4 c g)
+(fm3 :len 4 e g)
+(fm4 :len 4 g b)
+(fm5 :len 4 b d)
+(rhythm4 hat (x 8 :len 16 c c))
+(rhythm1 kick :len 4 c _ c _)
+(rhythm2 snare :len 4 _ c _ c)`, "pce");
+  const heads = [...drums.text.matchAll(/^\((pcm\d) :prio (\d) (?:[^\n]*?)(hat|kick|snare)/gm)].map((m) => [m[1], m[3], Number(m[2])]);
+  assert.equal(new Set(heads.map(([h]) => h)).size, 1, `one sample channel:\n${drums.text}`);
+  const rank = Object.fromEntries(heads.map(([, d, p]) => [d, p]));
+  assert.ok(rank.kick < rank.snare && rank.snare < rank.hat, `kick, snare, hat in that order: ${JSON.stringify(rank)}`);
+  assert.equal(drums.text.match(/^\(wave\d/gm).length, 5, "five waves for the five FM parts");
+  const dda = compile(drums.text, join(repo, "tools/tests/t.mmlisp")).ir.tracks.find((t) => /^pcm/.test(t.channel));
+  assert.deepEqual([...new Set(dda.events.filter((e) => e.cmd === "PCM_NOTE_ON").map((e) => e.args.sample))].sort(), ["hat", "kick", "snare"], "each hit plays its own sample");
+  assert.ok(drums.said.some((w) => /share pcm\d as :prio layers \(the PC Engine's drivers stream samples on one channel\)/.test(w)));
   // The FDS's modulation is the PC Engine's LFO: wave2 at :vol 0, wave1 its :fms.
   const fds = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "pce");
   assert.equal(fds.map["fds-wave"], "wave1");

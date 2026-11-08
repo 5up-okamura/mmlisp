@@ -262,7 +262,21 @@ where FM can play it: with no row on FM, or a 4-op score onto the OPLL,
 an unnamed def-fm goes too. envelopeOf reads the carrier's rates with its
 key scaling at the track's middle note (`kc >> (3 − ks)`, as fm-model.js):
 without it a mucom voice of AR 4 / KS 3 at o5–6 read as a second of
-silence and the pce waves were near inaudible (user: "only the PCM plays"). Inline operator words on such a
+silence and the pce waves were near inaudible (user: "only the PCM plays").
+- **Samples on the PC Engine: one stream** (the user, 2026-11-08: its CPU
+  feeds DDA a sample at a time; two at once is past it, one is the norm).
+  `pceDda.streams: 1` (chips/huc6280.js) — a part's driver-side limit the
+  conversion reads, not a compiler rule (a hand-written score may still use
+  pcm1-6). planRows caps the sample pool at it; the rows past it are
+  "layer" → the kept sample row's channel, and placeLayers writes each a
+  `:prio` by drum role (DRUM_RANKS: kick 1, snare/clap 2, tom 3, rim/other 4,
+  cymbal 5, hat 6) and `:gate 1t` where the row sets no :mode / gate, so a
+  higher layer only wins simultaneous hits (a quarter-note kick held its
+  quarter and swallowed every hat). portScore's one-row-a-channel rule lets
+  sample rows share a sample channel; the corpus check holds a layered
+  channel to sound, the rule test the order and that each hit keeps its
+  sample (the voice is per note on PCM, not the channel's). The survey's
+  note counts now unroll `(x N …)` — a hat `(x 64 c16 c16)` was 3 notes. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

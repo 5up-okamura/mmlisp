@@ -2616,7 +2616,15 @@ machine's channels or dropped:
 - On the Famicom the defaults are its own chips; a cartridge's channels
   (the VRC6, the VRC7 …) are there to pick.
 - A machine short of channels keeps the parts of its own kind first (FM
-  onto FM), then the parts with the most notes.
+  onto FM), then the parts with the most notes — counted as they play, a
+  loop's body as many times as it repeats.
+- The PC Engine's drivers stream samples on one channel, so a score's drum
+  and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
+  forms, language.md §1): the kick and snare first, then toms, a rim or
+  clap, cymbals, and the hats last; each hit holds the channel a tick
+  (`:gate 1t`, a shot plays out anyway), so where two strike at once the
+  higher sounds, and otherwise the latest. The other five channels stay the
+  melody's.
 
 A voice crossing between the FM chips with 4 operators (OPN, OPM) and the
 OPLL's 2 (the FM-PAC, the VRC7) plays as follows:

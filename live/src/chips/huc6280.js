@@ -115,6 +115,10 @@ export const pceDda = {
     return { data, rateHz: DDA_RATE, range: null, loop: null };
   },
   sharePrio: 0,
+  // How many channels its drivers stream samples on at once: DDA is fed a
+  // sample at a time by the CPU, which has time for one (the user,
+  // 2026-11-08). The conversion gives a score's samples that many.
+  streams: 1,
 };
 
 /** A float frame, −1..1, as DDA's 5-bit output, 0..31 (16 the middle). */
