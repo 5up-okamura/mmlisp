@@ -357,7 +357,16 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   crash → ride (the top cymbal), hat / hat-open → hat) from `heard`, and
   rolesHere takes a row whose samples are all roles by name or by ear; the
   porter writes each such sample as its role. pc88 keeps its ADPCM-B for
-  real samples (byEar only where no sample channel). Inline operator words on such a
+  real samples (byEar only where no sample channel).
+- **An FM voice's envelope as lines** (user, 2026-11-08: "adjust the step
+  and the waits go"): envelopeOf fits `(linear a..b :len Nf)` stages to the
+  EG's unrounded level (`lineVector`, within half a step; endpoints to a
+  tenth), the rest rounded values and holds as before; the release is
+  `#rel (linear :to -15 :len Nf)`, falling from where the note is let go
+  (it was a jump to −15 and a wait). Over 957 voices (the mucom songs, the
+  MDX set) every held length kept, within a step of the old staircase
+  (0.23 on average), text 2.5× shorter. A line of fewer than four frames
+  or under a step is not worth its words. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

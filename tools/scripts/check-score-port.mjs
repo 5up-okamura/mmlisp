@@ -395,10 +395,26 @@ const port = (src, to, rows) => {
   assert.match(fm.text, /\(wave1 wave-piano :len 4 c\)/);
   assert.match(fm.text, /\(def pad-env \(macro :vel\+ \[-15 .*#sus 0 #rel/);
   assert.match(fm.text, /\(wave2 sine pad-env :len 2 c\)/);
+  // A decay the EG runs at one rate is one line, not a value a step; its
+  // release falls from where the note is let go.
+  const decay = envelopeOf(new Map([["FM_ALG", 7], ["FM_AR4", 31], ["FM_DR4", 6], ["FM_SL4", 15], ["FM_RR4", 5], ["FM_TL1", 127], ["FM_TL2", 127], ["FM_TL3", 127]]), 60);
+  assert.match(decay, /^\[(?:-?\d+ )*\(linear -?[\d.]+\.\.-?[\d.]+ :len \d+f\)/, decay);
+  assert.ok(decay.length < 120, `short: ${decay}`);
+  assert.match(decay, /#rel \(linear :to -15 :len \d+f\)\]$/);
   // The key scaling: a slow attack at KS 3 is quick on a high note (as the
   // chip plays it), the same at KS 0 is not.
   const slow = (ks) => new Map([["FM_ALG", 7], ["FM_AR4", 4], ["FM_KS4", ks], ["FM_TL1", 127], ["FM_TL2", 127], ["FM_TL3", 127]]);
-  const firstLoud = (v) => { let f = 0; for (const m of v.matchAll(/(-?\d+)(?: \(wait (\d+)f\))?/g)) { if (Number(m[1]) > -4) return f; f += Number(m[2] ?? 1); } return Infinity; };
+  // The frame the level first comes within 4 steps of full: values, holds and
+  // lines (a line from its start toward its end over its frames).
+  const firstLoud = (v) => {
+    let f = 0;
+    for (const m of v.matchAll(/\(linear (-?[\d.]+)\.\.(-?[\d.]+) :len (\d+)f\)|(-?\d+)(?: \(wait (\d+)f\))?/g)) {
+      if (m[1] != null) { const a = Number(m[1]), b = Number(m[2]), n = Number(m[3]); for (let k = 0; k < n; k++, f++) if (Math.round(a + ((b - a) * k) / n) > -4) return f; continue; }
+      if (Number(m[4]) > -4) return f;
+      f += Number(m[5] ?? 0) + 1;
+    }
+    return Infinity;
+  };
   assert.ok(firstLoud(envelopeOf(slow(3), 84)) < 10, `KS 3 at c6: ${envelopeOf(slow(3), 84).slice(0, 60)}`);
   assert.ok(firstLoud(envelopeOf(slow(0), 84)) > 30, `KS 0 at c6: ${envelopeOf(slow(0), 84).slice(0, 60)}`);
   // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)

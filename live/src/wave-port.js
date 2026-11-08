@@ -141,6 +141,37 @@ function stepVector(values) {
   return out;
 }
 
+// Frames a frame at a time as a vector's stages, straight where they run
+// straight. `level`: the EG's level a frame, in steps, unrounded; a span
+// the line between its ends follows to within half a step is one
+// `(linear a..b :len Nf)` — an FM decay falls by the same dB a frame, so
+// most of an envelope is one, as near the EG as its rounded steps were —
+// and the rest its rounded values and their holds (stepVector). A line runs
+// from its first frame to the frame after its last, where the next starts.
+const tenth = (x) => Math.round(x * 10) / 10;
+function lineVector(level) {
+  const out = [];
+  const flat = [];
+  const fits = (s, e) => {
+    for (let k = s + 1; k < e; k++)
+      if (Math.abs(level[k] - (level[s] + ((level[e] - level[s]) * (k - s)) / (e - s))) > 0.5) return false;
+    return true;
+  };
+  let i = 0;
+  while (i < level.length) {
+    let e = i + 1;
+    while (e + 1 < level.length && fits(i, e + 1)) e++;
+    // A line is worth its words from four frames that move a step or more.
+    if (e < level.length && e - i >= 4 && Math.abs(level[e] - level[i]) >= 1 && fits(i, e)) {
+      out.push(...stepVector(flat.splice(0)));
+      out.push(`(linear ${tenth(level[i])}..${tenth(level[e])} :len ${e - i}f)`);
+      i = e;
+    } else flat.push(Math.max(-15, -Math.round(-level[i++])));
+  }
+  out.push(...stepVector(flat));
+  return out;
+}
+
 /**
  * A 4-op voice's (its words, a Map) level over a note as a `:vel+` macro's
  * vector, presets/envelopes' way: the main carrier's EG a frame at a time,
@@ -152,14 +183,18 @@ export function envelopeOf(words, midi = 72) {
   const main = carriers.sort((a, b) => (words.get(`FM_TL${a}`) ?? 0) - (words.get(`FM_TL${b}`) ?? 0))[0];
   const op = Object.fromEntries(["ar", "dr", "sr", "rr", "sl", "ks"].map((k) => [k, words.get(`FM_${k.toUpperCase()}${main}`) ?? 0]));
   if (op.ar === 0) op.ar = 31; // a voice that never sounds: read as struck
+  const level = (att) => Math.max(-15, -(att * DB_PER_UNIT) / VEL_DB);
   const vel = (att) => Math.max(-15, -Math.round((att * DB_PER_UNIT) / VEL_DB));
   const { fnum, block } = midiToFnumBlock(midi);
   const { held, released } = egFrames(op, (block << 2) | ((fnum >> 9) & 3));
   const h = held.map(vel), r = released.map(vel);
   while (h.length > 1 && h.at(-1) === h.at(-2)) h.pop(); // the held level once
   const sus = h.pop();
-  const rel = r.length ? r : [-15];
-  return `[${[...stepVector(h), "#sus", String(sus), "#rel", ...stepVector(rel)].join(" ")}]`;
+  const lv = held.slice(0, h.length).map(level);
+  // The release from where the note is let go (a curve after #rel with no
+  // :from), to silence over the frames the EG takes from the sustain.
+  const rel = r.length ? `(linear :to -15 :len ${r.length}f)` : "-15";
+  return `[${[...lineVector(lv), "#sus", String(sus), "#rel", rel].join(" ")}]`;
 }
 
 // ── The FDS's modulation ↔ the PC Engine's LFO ───────────────────────────
