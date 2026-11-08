@@ -326,7 +326,7 @@ export function analyzeMidi(parsed, { mono = false } = {}) {
     const drums = ch === DRUM_CH;
     const ends = [];
     if (mono) {
-      const order = [...new Set(list.map((n) => n.ti))];
+      const order = [...new Set(list.map((n) => n.ti))].sort((x, y) => x - y); // a lane a track, in the file's order
       list.sort((a, b) => a.tick - b.tick || b.key - a.key);
       const prev = new Map();
       for (const n of list) {
