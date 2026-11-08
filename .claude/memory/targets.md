@@ -91,14 +91,12 @@ Rulings, not to re-propose:
   change is a `def-mod`, and only the normalize and the limiter, which shape
   the sound, sit in a def-pcm's `:fx` (the user). A compressor instead of
   `(gain 6) (limit)` gained 1 dB more and changed the drums.
-
-Open:
-- **Two roads** (put to the user, undecided): VGM, NSF, DefleMask / Furnace,
-  MIDI and mucom88's md write each machine themselves, so Open onto X and
-  Open + Convert to Machine differ (a VGM of ab-core onto pc88: its noise
-  dropped by the writer, kept by the conversion; fc / gb channels chosen
-  differently). MDX, MGS and mucom88 past pc88 / md already go through
-  portScore.
+- **One road for a song onto another machine** (the user, 2026-11-08):
+  every song import writes its own machine's score, and any other machine
+  is that score converted (portScore) — Open onto X ≡ Open + Convert. The
+  VGM and tracker writers still map chips onto another machine's channels,
+  but only where a song's own machine is the fallback (no one machine has
+  every chip: an arcade mix, a multi-chip Furnace module, written as md).
 
 Test material (not in the repo): the user's DTWNB MDX set (19 songs + PDX),
 BF_4TH.MGS (a doubled bass), pcmt13.muc (part K beside rhythm1–6); Yuzo

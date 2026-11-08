@@ -13,9 +13,7 @@
 
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
-import { VEL_DB_PER_STEP, fmCarrierOpsForAlg, pitchToMidi } from "./ir-utils.js";
-import { compileMMLisp } from "./mmlisp2ir.js";
-import { encodeMmb } from "./export-mmb.js";
+import { VEL_DB_PER_STEP, fmCarrierOpsForAlg } from "./ir-utils.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
 import { ym2608 } from "./chips/ym2608.js";
 import { envCycle } from "./chips/ssg.js";
@@ -1131,21 +1129,13 @@ function octavesMet(text) {
 // The SN76489's 10-bit period bottoms out at A2 (~109 Hz); the SSG goes down
 // to C1. A lower SSG note is played an octave (or two) up rather than pinned
 // to the PSG's floor, which would be a wrong pitch.
-const PSG_LOWEST_MIDI = 45;
 // A macro def's octave origin (renderOps of a `*n`): what it moves from.
 const MACRO_OCT = 100;
 
 function noteToken(letter, acc, len, ctx) {
   // K shifts the ADPCM's notes as the FM's; the rhythm (G) has no pitch.
   const shift = ctx.isPcm && !ctx.isAdpcm ? 0 : (ctx.keyShift?.K ?? 0) + (ctx.keyShift?.k ?? 0);
-  let { name, dOct } = shiftedNote(letter, acc, shift);
-  if (ctx.isSsg && !ctx.isNoise && !ctx.pc88) {
-    const midi = 12 * (ctx.oct + 1) + SEMI[letter] + acc + shift;
-    if (midi < PSG_LOWEST_MIDI) {
-      dOct += Math.ceil((PSG_LOWEST_MIDI - midi) / 12);
-      warnOnce(ctx.warnings, "psgLow", "SSG notes below A2 are out of the PSG's range; played an octave up");
-    }
-  }
+  const { name, dOct } = shiftedNote(letter, acc, shift);
   const rep = (ch, k) => Array(k).fill(ch).join(" ");
   const up = dOct > 0 ? rep(">", dOct) : rep("<", -dOct);
   const down = dOct > 0 ? rep("<", dOct) : rep(">", -dOct);
@@ -1397,10 +1387,9 @@ function lfoBeforeNote(ctx, out, letter, acc) {
 // from pass to pass, so a loop whose passes key differently is written out
 // pass by pass. Returns, per form, the layers' ops (null: the sound is never
 // keyed anywhere in the part).
-// On pc88 a hit's level is absolute — the ROM sound's IL takes vel + vol +
-// master, as the chip's RTL + IL did — where md's kit is scaled to its
-// loudest hit.
-function rhythmLayers(forms, warnings, pc88 = false) {
+// A hit's level is absolute — the ROM sound's IL takes vel + vol + master,
+// as the chip's RTL + IL did.
+function rhythmLayers(forms, warnings) {
   const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31] };
   const KEEP = new Set(["loopBreak", "loopMarker", "loopGo", "globalLoop", "tempo", "lenSet", "bar"]);
   const walk = (ops) => ops.flatMap((op) => {
@@ -1438,11 +1427,10 @@ function rhythmLayers(forms, warnings, pc88 = false) {
   });
   const items = forms.map((f) => walk(f.ops));
 
-  let loudest = Infinity;
   const keyed = new Set();
   const scan = (ops) => ops.forEach((op) => {
     if (op.t === "loop") scan(op.body);
-    else if (op.hits) for (const [k, a] of Object.entries(op.hits)) { keyed.add(+k); loudest = Math.min(loudest, a); }
+    else if (op.hits) for (const k of Object.keys(op.hits)) keyed.add(+k);
   });
   items.forEach(scan);
   return RHYTHM_SOUNDS.map((s, k) => {
@@ -1452,9 +1440,7 @@ function rhythmLayers(forms, warnings, pc88 = false) {
       if (op.t === "loop") return [{ ...op, body: layer(op.body) }];
       if (!op.hits) return [op];
       if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks, wc: op.wc }];
-      const v = pc88
-        ? clamp(Math.round(15 - op.hits[k] / VEL_DB_PER_STEP), 0, 15)
-        : clamp(Math.round(15 - (op.hits[k] - loudest) / VEL_DB_PER_STEP), 1, 15);
+      const v = clamp(Math.round(15 - op.hits[k] / VEL_DB_PER_STEP), 0, 15);
       const pre = v !== vel ? [{ t: "raw", text: `:vel ${(vel = v)}` }] : [];
       return [...pre, { t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc }];
     });
@@ -1651,8 +1637,7 @@ function renderOps(ops, ctx, out, depth = 0) {
     const op = ops[k];
     switch (op.t) {
       case "note":
-        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
-        noiseModeBeforeNote(ctx, out);
+        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); ctx.lastNote = { letter: op.letter, acc: op.acc }; break; }
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.letter, op.acc);
         detuneBeforeNote(ctx, out, op.letter, op.acc);
@@ -1675,7 +1660,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         ctx.keyShift = { ...(ctx.keyShift || { K: 0, k: 0 }), [op.which]: op.n };
         break;
       case "tie":
-        if (mutedHere(ctx) || ctx.pcmMuted) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); break; }
+        if (mutedHere(ctx)) { ctx.pendingSlur = false; out.push(`_${lenFor(ops, k, ctx, out)}`); break; }
         // mucom `^` ties to the SAME pitch as the previous note. MMLisp's `~`
         // is a connector to a note (X ~ Y); bare `~ <length>` is not valid, so
         // repeat the last note's pitch: `~ <pitch><len>` (same pitch = a tie).
@@ -1723,17 +1708,15 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "pan":
         if (!fm3Patch(ctx)) break;
-        // PCM is a soft-mix voice on the fm6 DAC and owns no FM channel, so it
-        // has no pan lane; the SN76489 is mono.
-        // On pc88 the ADPCM-B pans, as the FM does.
-        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmPan", "part K: pan (p) has no PCM equivalent; dropped"); break; }
+        // The ADPCM-B pans, as the FM does; the rhythm part (G) has no pan lane.
+        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmPan", "part G: pan (p) has no rhythm equivalent; dropped"); break; }
         if (ctx.isSsg) { warnOnce(ctx.warnings, "ssgPan", "SSG parts: pan (p) has no PSG equivalent; dropped"); break; }
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);
         break;
       case "detune": {
-        // pc88's ADPCM-B takes :pitch; the Mega Drive's soft-mixed PCM does not.
-        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmDetune", "part K: detune (D) has no PCM equivalent on md; dropped"); break; }
+        // The ADPCM-B takes :pitch; the rhythm part (G) has none.
+        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmDetune", "part G: detune (D) has no rhythm equivalent; dropped"); break; }
         // Track the raw mucom D value (so relative D+ accumulates), then map to
         // cents with the chip's representative factor.
         ctx.detune = op.rel ? (ctx.detune ?? 0) + op.val : op.val;
@@ -1764,7 +1747,6 @@ function renderOps(ops, ctx, out, depth = 0) {
           ctx.lastNote = { letter: op.to.letter, acc: op.to.acc };
           break;
         }
-        noiseModeBeforeNote(ctx, out);
         envBeforeNote(ctx, out);
         lfoBeforeNote(ctx, out, op.to.letter, op.to.acc);
         detuneBeforeNote(ctx, out, op.to.letter, op.to.acc);
@@ -1833,18 +1815,16 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       }
       case "mix":
-        // SSG P: 0 off, 1 tone, 2 noise, 3 both. On pc88 it is the channel's
-        // mixer, :mode (P0 rests the notes, mutedHere). On md its notes sound
-        // on the PSG square while tone is on, and on the noise copy of the part
-        // while noise is on (mucomToMmlisp renders such a part twice).
+        // SSG P: 0 off, 1 tone, 2 noise, 3 both — the channel's mixer, :mode
+        // (P0 rests the notes, mutedHere).
         ctx.mix = op.v;
-        if (ctx.pc88 && ctx.isSsg && op.v > 0) ssgModeTo(ctx, out, ["tone", "tone", "noise", "both"][op.v & 3]);
-        else if (ctx.pc88 && ctx.isSsg && ctx.hwEnv != null) ssgModeTo(ctx, out, "env"); // P0 on the envelope: the buzzer
+        if (ctx.isSsg && op.v > 0) ssgModeTo(ctx, out, ["tone", "tone", "noise", "both"][op.v & 3]);
+        else if (ctx.isSsg && ctx.hwEnv != null) ssgModeTo(ctx, out, "env"); // P0 on the envelope: the buzzer
         break;
       case "noiseFreq":
         ctx.noiseW = op.n;
-        // pc88: the SSG's one noise period, song-wide (w0 plays as 1).
-        if (ctx.pc88 && ctx.isSsg) out.push(`:noise-rate ${clamp(op.n, 1, 31)}`);
+        // The SSG's one noise period, song-wide (w0 plays as 1).
+        if (ctx.isSsg) out.push(`:noise-rate ${clamp(op.n, 1, 31)}`);
         break;
       case "vel":
         // On the SSG, `v` takes the channel off the hardware envelope (also in
@@ -1852,13 +1832,13 @@ function renderOps(ops, ctx, out, depth = 0) {
         if (ctx.isSsg && (ctx.hwEnv != null || stale(ctx, "hwEnv"))) {
           ctx.hwEnv = null;
           ctx.envActive = null;
-          if (ctx.pc88) out.push(":env none");
+          out.push(":env none");
         }
         if (op.v !== ctx.vel || ctx.verbose || stale(ctx, "vel")) pushVel(ctx, out, op.v);
         break;
       case "hwEnv":
         ctx.hwEnv = op.n & 15;
-        if (!ssgFader(ctx)) { warnOnce(ctx.warnings, "hwEnv", "the SSG's hardware envelope (S, m) has no PSG sound on md; dropped"); break; }
+        if (!ctx.isSsg) break; // the SSG's alone
         out.push(`:env ${ctx.hwEnv}`);
         if (ctx.mix === 0) ssgModeTo(ctx, out, "env"); // P0 on it: the envelope alone, the buzzer
         // A rate is for the shape in force: one from a saw to a triangle is written again.
@@ -1866,14 +1846,13 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "hwEnvPeriod":
         ctx.hwEp = op.n;
-        if (!ssgFader(ctx)) { warnOnce(ctx.warnings, "hwEnv", "the SSG's hardware envelope (S, m) has no PSG sound on md; dropped"); break; }
+        if (!ctx.isSsg) break; // the SSG's alone
         pushEnvRate(ctx, out);
         break;
       case "pcmVolMode":
         // vm<n> (K): non-zero, a sample brings its bank level and `v` adds to
-        // it (music.asm OTOPCM/PCMVOL). pc88's level is the fader; on md the
-        // part's levels are normalized to its loudest, which this would move.
-        if (!adpcmFader(ctx)) { if (op.n) warnOnce(ctx.warnings, "pcmVolMode", "part K: volume mode (vm) is read for pc88 only; dropped"); break; }
+        // it (music.asm OTOPCM/PCMVOL); the level is the fader.
+        if (!adpcmFader(ctx)) break;
         ctx.pvMode = op.n;
         if (ctx.vel != null) pushVel(ctx, out, ctx.vel);
         break;
@@ -1940,7 +1919,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           // Rendered as its def is (inMacro): what the pasted text leaves.
           const m = { ...scratchCtx(ctx), inMacro: true };
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "pcmMuted", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "mucLen", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
+          for (const key of ["pcmSample", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "mucLen", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (pasted) out.push(`*${op.n}`);
@@ -1961,13 +1940,9 @@ function renderOps(ops, ctx, out, depth = 0) {
         // is collected in pcmRegistry and spliced above the score.
         if (ctx.isPcm) {
           const entry = ctx.pcmEntries && ctx.pcmEntries.get(op.n);
-          if (entry && ctx.pcmDrop?.has(entry.label)) {
-            ctx.pcmSample = null; // dropped to fit the bank (fitPcmBank): its notes rest
-            ctx.pcmMuted = true;
-          } else if (entry) {
+          if (entry) {
             ctx.pcmRegistry.set(op.n, entry);
             ctx.pcmSample = op.n;
-            ctx.pcmMuted = false;
             out.push(entry.label);
             if (ctx.pvMode && adpcmFader(ctx) && ctx.vel != null) pushVel(ctx, out, ctx.vel); // its bank level
           } else if (!ctx.warnedVoices.has(`pcm@${op.n}`)) {
@@ -2101,7 +2076,7 @@ function ssgRegVel(r, offsetDb = 0) {
 function ssgLevelVol(r) {
   return r <= 0 ? 0 : 31 - Math.round(1.5 * (15 - Math.min(15, r)));
 }
-const ssgFader = (ctx) => ctx.pc88 && ctx.isSsg;
+const ssgFader = (ctx) => ctx.isSsg;
 
 // pc88: part K's `v` sets the ADPCM-B's linear level register ($0B, 0-255),
 // played as the fader at :vel 15 — :vol's 2 dB steps, to within 1 dB. The
@@ -2112,7 +2087,7 @@ function adpcmLevelVol(v) {
   const r = v + MUCOM_ADPCM_LEVEL_ADD;
   return v <= 0 || r >= 250 ? 0 : clamp(31 + Math.round((20 * Math.log10(r / 255)) / 2), 1, 31);
 }
-const adpcmFader = (ctx) => ctx.pc88 && ctx.isAdpcm;
+const adpcmFader = (ctx) => ctx.isAdpcm;
 
 // An SSG part that ever turns noise on renders twice: its square track keeps
 // the notes played with tone on, its noise copy (ctx.isNoise) the ones with
@@ -2122,31 +2097,7 @@ function mutedHere(ctx) {
   const mix = ctx.mix ?? 1;
   // P0: the channel's mixer passes nothing — but on the hardware envelope
   // the envelope itself is heard (:mode env).
-  if (ctx.pc88) return mix === 0 && ctx.hwEnv == null;
-  return ctx.isNoise ? !(mix & 2) : !(mix & 1);
-}
-
-// The OPNA shifts its noise at 124.8 kHz / w, so below w3 most of its power
-// lies above hearing, where the PSG's (at most 7 kHz) has none: the noise copy
-// plays lower by the share of the SSG's that is heard (w0: -4.9 dB, matching
-// mucom88's own render against the PSG's).
-function noiseDb(ctx) {
-  if (!ctx.isNoise) return 0;
-  const f = 124800 / Math.max(1, ctx.noiseW ?? 0);
-  return Math.min(0, 10 * Math.log10(20000 / (f / 2)));
-}
-
-// The noise copy's :mode, from the SSG noise period w0-31: the OPNA shifts its
-// noise at 124.8 kHz / w, the SN76489 at 7 / 3.5 / 1.7 kHz (white0-2) — the
-// nearest one, which is white0 for nearly every hi-hat.
-function noiseModeBeforeNote(ctx, out) {
-  if (!ctx.isNoise) return;
-  const f = 124800 / Math.max(1, ctx.noiseW ?? 0);
-  const rates = [6991, 3496, 1748];
-  let best = 0;
-  for (let k = 1; k < rates.length; k++) if (Math.abs(Math.log(f / rates[k])) < Math.abs(Math.log(f / rates[best]))) best = k;
-  const mode = `white${best}`;
-  if (mode !== ctx.noiseMode || ctx.verbose || stale(ctx, "noiseMode")) { out.push(`:mode ${mode}`); ctx.noiseMode = mode; }
+  return mix === 0 && ctx.hwEnv == null;
 }
 
 // --- level moves inside a tie ---------------------------------------------
@@ -2210,7 +2161,7 @@ function finishChain(ctx, out) {
   // :vol steps add to the attenuator's, whose bottom ones are wide: the step
   // count is the attenuator's between the two at the envelope's sustain.
   const sl = ctx.isSsg ? (ctx.ssgEnv?.sl ?? 255) : 255;
-  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256), noiseDb(ctx)) : velToken(v, ctx));
+  const velAt = (v) => (ctx.isSsg ? ssgRegVel(Math.floor((sl * (v + 1)) / 256)) : velToken(v, ctx));
   const vol = (v) => Math.max(0, 31 - (velAt(top) - velAt(v)));
   ch.arr[ch.idx] = `:vel ${velToken(top, ctx)} :vol ${vol(ch.base)} ${ch.arr[ch.idx]}`;
   for (const t of ch.toks) t.arr[t.idx] = `:vol ${vol(t.v)}`;
@@ -2230,21 +2181,19 @@ function finishChain(ctx, out) {
 // clock by clock, fitted with straight pieces. One envelope therefore draws
 // per `v`, named like the LFO's pitch classes.
 const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
-// On pc88 the note plays at :vel 15 under its fader (ssgLevelVol), so a
-// level is the :vel that, with the fader's steps, lands on its register value
-// — a fraction is fine, the macro's ratio carries it — down to 30 dB below
-// the note's top.
-function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
+// The note plays at :vel 15 under its fader (ssgLevelVol), so a level is the
+// :vel that, with the fader's steps, lands on its register value — a
+// fraction is fine, the macro's ratio carries it — down to 30 dB below the
+// note's top.
+function ssgEnvSpec(op, wholeClocks, v, bpm) {
   const factor = WHOLE_TICKS / wholeClocks;
   let ticks = 0; // the stages' whole length, for macroStep
   const faderDb = 2 * (31 - ssgLevelVol(v));
-  const vel = pc88 ? 15 : Math.max(1, ssgRegVel(v, offsetDb));
-  const played = pc88
-    ? (level) => Math.max(0, Math.min(15, 15 - (3 * (15 - Math.floor((level * (v + 1)) / 256)) - faderDb) / 2))
-    : (level) => ssgRegVel(Math.floor((level * (v + 1)) / 256), offsetDb);
+  const vel = 15;
+  const played = (level) => Math.max(0, Math.min(15, 15 - (3 * (15 - Math.floor((level * (v + 1)) / 256)) - faderDb) / 2));
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
   const items = [];
-  // pc88: the tick the held note's register reaches 0. SOFENV's level falls
+  // The tick the held note's register reaches 0. SOFENV's level falls
   // to silence there, which a :vel* cannot (:vel 0 is 30 dB down): the
   // envelope's :vol holds the fader until then and drops to 0, so the note is
   // silent from there, released or not.
@@ -2260,7 +2209,7 @@ function ssgEnvSpec(op, wholeClocks, v, bpm, offsetDb = 0, pc88 = false) {
     const dir = b > a ? 1 : -1;
     const y = Array.from({ length: total + 1 }, (_, j) => {
       const lv = dir > 0 ? Math.min(b, a + Math.floor(j / factor) * rate) : Math.max(b, a - Math.floor(j / factor) * rate);
-      if (pc88 && held && dir < 0 && zeroTick == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroTick = ticks - total + j;
+      if (held && dir < 0 && zeroTick == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroTick = ticks - total + j;
       return played(lv);
     });
     let i = 0;
@@ -2314,13 +2263,13 @@ function envBeforeNote(ctx, out) {
   // On the hardware envelope the level is the envelope's: the driver works
   // the software one out and writes none of it (music2.cs SSSUB3), so its
   // macro is off — its :vol would silence the note where it reaches 0.
-  if (ctx.isSsg && ctx.pc88 && ctx.hwEnv != null) {
+  if (ctx.isSsg && ctx.hwEnv != null) {
     if (ctx.ssgEnv && ctx.envActive !== HW_ENV) { out.push("(macro :vel* none :vol none)"); ctx.envActive = HW_ENV; }
     return;
   }
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
-  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo, noiseDb(ctx), ctx.pc88);
+  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo);
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose || stale(ctx, "envActive")) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
@@ -2577,24 +2526,19 @@ function mucomToMmlisp(parsed) {
       warnOnce(warnings, "partK", "part K (ADPCM) dropped: no #pcm bank supplied");
     }
   }
-  // Part G: the RX5 kit on one PCM track, beside part K's when that plays.
-  const kPlays = scoreItems.some((it) => it.kind === "form" && it.letter in PCM_PARTS && !it.dropped);
+  // Part G: the chip's rhythm, a track per sound.
   const rhythmForms = scoreItems.filter((it) => it.kind === "form" && it.letter === RHYTHM_PART);
-  const pc88 = !!parsed.pc88;
-  const layers = rhythmForms.length ? rhythmLayers(rhythmForms, warnings, pc88) : [];
+  const layers = rhythmForms.length ? rhythmLayers(rhythmForms, warnings) : [];
   const rhythmPlays = layers.some(Boolean);
   // Each G line becomes its layers' forms, in RHYTHM_SOUNDS order; a layer's
-  // first form names its sample — and on md sets its ring as the :gate, where
-  // pc88's ROM sound rings as the chip has it, on its own rhythm track.
+  // first form names its sound, which rings as the chip has it.
   for (const [i, f] of rhythmForms.entries()) {
     const copies = [];
     layers.forEach((per, k) => {
       if (!per) return;
       const s = RHYTHM_SOUNDS[k];
-      const head = i !== 0 ? []
-        : pc88 ? [{ t: "raw", text: s.name }]
-        : [{ t: "raw", text: `${s.name} ${ringGate(s, tempo)}` }];
-      copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: pc88 ? `rhythm${k + 1}` : kPlays ? "pcm2" : "pcm1", prio: pc88 ? null : s.prio, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
+      const head = i !== 0 ? [] : [{ t: "raw", text: s.name }];
+      copies.push({ kind: "form", letter: f.letter, key: `${f.letter}~${s.name}`, ch: `rhythm${k + 1}`, prio: null, ops: [...head, ...per[i]], comment: copies.length ? null : f.comment });
     });
     scoreItems.splice(scoreItems.indexOf(f), 1, ...copies);
   }
@@ -2696,7 +2640,7 @@ function mucomToMmlisp(parsed) {
     const isSsg = !isPcm && ssgMacros.has(mn);
     // A macro is pasted where it is called, at the caller's octave: its
     // octave counts from an origin no note reaches (MACRO_OCT), moves only.
-    renderOps(mac.ops, { barPos: null, inMacro: true, oct: MACRO_OCT, vel: null, isPcm, isAdpcm: isPcm, isSsg, pc88: parsed.pc88, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
+    renderOps(mac.ops, { barPos: null, inMacro: true, oct: MACRO_OCT, vel: null, isPcm, isAdpcm: isPcm, isSsg, octShift: isSsg ? 0 : -1, pcmEntries, pcmRegistry, pcmVelMax, hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings }, toks);
     const content = octavesMet(toks.join(" ")).trim();
     if (!content) continue;
     usableMacros.add(mn);
@@ -2709,15 +2653,11 @@ function mucomToMmlisp(parsed) {
   // #title / #composer / #author map one to one.
   const metaDefs = [];
   const score = [meta.title && `:title ${qstr(meta.title)}`, meta.composer && `:composer ${qstr(meta.composer)}`,
-    meta.author && `:author ${qstr(meta.author)}`, pc88 && ":target pc88"].filter(Boolean);
-  if (score.length) metaDefs.push(`(def-score ${score.join(" ")})`);
-  if (rhythmPlays && !pc88) {
-    if (kPlays) metaDefs.push("; Part G's drums play beside part K's samples: two PCM voices.", "(def-score :pcm-voices 2)");
-    metaDefs.push(`(import ${qstr(RHYTHM_KIT)})  ; part G (the OPNA rhythm) on the RX5 kit`);
-  }
-  // pc88: G plays the chip's ROM sounds; the kit stands in for them where the
+    meta.author && `:author ${qstr(meta.author)}`, ":target pc88"].filter(Boolean);
+  metaDefs.push(`(def-score ${score.join(" ")})`);
+  // G plays the chip's ROM sounds; the kit stands in for them where the
   // user has loaded no ROM (language.md §19).
-  if (rhythmPlays && pc88)
+  if (rhythmPlays)
     metaDefs.push(`(import ${qstr(RHYTHM_KIT)})  ; part G's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
   // LFO defs (if any) are spliced in here once rendering has discovered them.
   const lfoDefAnchor = lines.length;
@@ -2734,35 +2674,10 @@ function mucomToMmlisp(parsed) {
     const letter = key[0];
     if (!ctxByLetter.has(key)) {
       const pcmPart = letter in PCM_PARTS || letter === RHYTHM_PART;
-      ctxByLetter.set(key, { pc88: parsed.pc88, unfold: !!parsed.unfold, isAdpcm: letter in PCM_PARTS, pcmUse, pcmDrop: parsed.pcmDrop, pcmRate: pcm?.rate, pcmSlowestBpm, isNoise: key.endsWith("~noise"), fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
+      ctxByLetter.set(key, { unfold: !!parsed.unfold, isAdpcm: letter in PCM_PARTS, pcmUse, pcmRate: pcm?.rate, pcmSlowestBpm, fm3Op: Number(/~op(\d)$/.exec(key)?.[1]) || null, vel: null, detune: 0, tempo, macroOps, voiceAlgs, voiceAlgByName, oct: pcmPart ? MUCOM_PCM_DEFAULT_OCT : MUCOM_DEFAULT_OCT + octShiftFor(letter), len: null, isSsg: letter in SSG_PARTS, isPcm: pcmPart, octShift: octShiftFor(letter), hasGlobalLoop: false, definedVoices, voiceLabels, voiceByName, usableMacros, warnedVoices, warnings, lfoRegistry, envRegistry, echoRegistry, pcmEntries, pcmRegistry, pcmVelMax });
     }
     return ctxByLetter.get(key);
   };
-
-  // An SSG part that turns its noise on (P2/P3, or a hi-hat preset) gets a
-  // noise copy: every form again, on the noise channel, right after the
-  // original. Each copy plays only the notes made with noise on (mutedHere).
-  const usesNoise = (ops, seen = new Set()) => ops.some((op) =>
-    (op.t === "mix" && op.v & 2) ||
-    (op.t === "loop" && usesNoise(op.body, seen)) ||
-    (op.t === "macroCall" && !seen.has(op.n) && macroOps.has(op.n) && (seen.add(op.n), usesNoise(macroOps.get(op.n), seen))));
-  // The PSG has one noise channel and :prio layers cannot hold the parts'
-  // counted loops, so the first part to use noise gets it; the others' noise
-  // notes are dropped.
-  // On pc88 each SSG channel has its own mixer (:mode) and there are no copies.
-  const noiseLetters = pc88 ? [] : Object.keys(SSG_PARTS).filter((l) =>
-    scoreItems.some((it) => it.kind === "form" && it.letter === l && usesNoise(it.ops)));
-  if (noiseLetters.length > 1) {
-    warnings.push(`parts ${noiseLetters.join(", ")} all use SSG noise; the PSG has one noise channel, so only part ${noiseLetters[0]}'s noise is kept`);
-  }
-  const noiseLetter = noiseLetters[0];
-  if (noiseLetter) {
-    for (let k = scoreItems.length - 1; k >= 0; k--) {
-      const it = scoreItems[k];
-      if (it.kind !== "form" || it.letter !== noiseLetter) continue;
-      scoreItems.splice(k + 1, 0, { kind: "form", letter: it.letter, key: `${it.letter}~noise`, ch: "noise", ops: it.ops, comment: null });
-    }
-  }
 
   // Part C's `S` with an offset: the part plays in the chip's CH3 special mode,
   // so it renders once per operator onto fm3-1-fm3-4 (slotOffset). All-zero
@@ -2888,21 +2803,10 @@ function mucomToMmlisp(parsed) {
     lines.splice(lfoDefAnchor, 0, ...defLines);
   }
 
-  // On the Mega Drive fm6 IS the DAC a PCM score plays through, so a song that
-  // uses both part J and ADPCM drums cannot keep both (E_FM6_DAC). The drums
-  // stay and J is kept as written but commented out, for the user to move to
-  // a free channel or to trade against the drums.
-  const pcmPlays = forms.some((f) => (f.letter in PCM_PARTS || f.letter === RHYTHM_PART) && f.text !== "");
-  const fm6Forms = forms.filter((f) => f.ch === "fm6" && f.text !== "");
-  if (!pc88 && pcmPlays && fm6Forms.length) {
-    for (const f of fm6Forms) f.commentOut = true;
-    warnings.push("part J (fm6) is commented out: fm6 is the DAC while the PCM drums play — move it to a free fm channel, or drop the drums, to hear it");
-  }
-
   // Tempo rides the very first playable form (before its #loop/:oct prefix it
   // would also be fine — :tempo is score-global wherever it appears).
   const firstPlayable = scoreItems.find(
-    (it) => it.kind === "form" && !it.dropped && !it.commentOut && it.text !== "",
+    (it) => it.kind === "form" && !it.dropped && it.text !== "",
   );
   if (firstPlayable) {
     firstPlayable.text = `:tempo ${tempo ?? 120} ${firstPlayable.text}`.trim();
@@ -2917,11 +2821,11 @@ function mucomToMmlisp(parsed) {
     // A bar a line: the form's text broken after each `|`.
     const text = it.text.replace(/ \| (?=\S)/g, " |\n  ");
     const form = `(${it.ch}${it.prio != null ? ` :prio ${it.prio}` : ""} ${text})${it.comment ? `  ${it.comment}` : ""}`;
-    lines.push(it.commentOut ? form.replace(/^/gm, "; ") : form); // every line of it
+    lines.push(form);
   }
 
   lines.push("");
-  return { source: lines.join("\n").replace(/^\n+/, ""), warnings, pcmVoices: rhythmPlays && kPlays ? 2 : 1 };
+  return { source: lines.join("\n").replace(/^\n+/, ""), warnings };
 }
 
 // --- external voice bank (.dat) --------------------------------------------
@@ -2987,13 +2891,10 @@ function mergeDatVoices(parsed, datVoices) {
   for (const name of refNames) add(byName.get(name));
 }
 
-// A `.muc` is MUCOM88's, so its chip is the YM2608: written for pc88 it
-// keeps the chip's own rhythm, SSG mixer and noise period; written for md
-// they are read as the Mega Drive's — the SSG's hardware envelope as a level
-// macro, the PCM fitted to the driver's bank — which the importer reads off
-// mucom's own commands. Any other machine takes the pc88 score at the words'
-// level (score-port.js), as Edit > Convert to Machine… would.
-export const MUCOM_WRITES = ["pc88", "md"];
+// A `.muc` is MUCOM88's, so its chip is the YM2608: it is written as a pc88
+// score, which keeps the chip's own rhythm, SSG mixer, hardware envelope and
+// noise period. Any other machine takes that score at the words' level
+// (score-port.js), as Edit > Convert to Machine… would.
 /** Every machine a song can be imported onto, the song's own first. */
 export const MUCOM_TARGETS = ["pc88", ...PORT_TARGETS.filter((t) => t !== "pc88")];
 
@@ -3007,21 +2908,13 @@ export const MUCOM_TARGETS = ["pc88", ...PORT_TARGETS.filter((t) => t !== "pc88"
 // note, as tools/scripts/import-snapshot.mjs --flat takes it).
 export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = MUCOM_TARGETS[0], unfold = false } = {}) {
   if (!MUCOM_TARGETS.includes(target)) throw new Error(`mucom88 writes ${MUCOM_TARGETS.join(", ")}, not ${target}`);
-  const writes = MUCOM_WRITES.includes(target) ? target : "pc88";
   const pcm = pcmBytes ? decodeMucomPcmForImport(parseMucom(decodeMucText(bytes)).meta.pcmFile, pcmBytes) : null;
-  // A fresh parse per render: rendering adds the noise copies to scoreItems.
-  const render = (pcmDrop) => {
-    const parsed = parseMucom(decodeMucText(bytes));
-    if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
-    if (pcm) Object.assign(parsed, { pcm, pcmDrop });
-    parsed.pc88 = writes === "pc88";
-    parsed.unfold = unfold;
-    return mucomToMmlisp(parsed);
-  };
-  // The 32 KB bank fit is the Mega Drive's soft mix; the YM2608's ADPCM-B has
-  // its own RAM.
-  let out = pcm && writes === "md" ? fitPcmBank(render, pcm) : render(null);
-  if (writes !== target) {
+  const parsed = parseMucom(decodeMucText(bytes));
+  if (datBytes) mergeDatVoices(parsed, parseVoiceDat(datBytes));
+  if (pcm) parsed.pcm = pcm;
+  parsed.unfold = unfold;
+  let out = mucomToMmlisp(parsed);
+  if (target !== "pc88") {
     const port = portScore(out.source, target, { header: false });
     if (port.error) throw new Error(port.error);
     out = { ...out, source: `; Imported as pc88, then onto ${target}\n${port.text}`, warnings: [...out.warnings, ...port.said] };
@@ -3036,80 +2929,6 @@ export function importMucom(bytes, datBytes = null, pcmBytes = null, { target = 
   return pcm ? { ...out, pcm } : out;
 }
 
-// The samples the score plays bake one blob per sample and pitch, at the rate
-// of the engine image the voice count picks; past one 32 KB bank encodeMmb
-// goes multi-bank on its own (docs/pcm-multibank.md). What can still fail is
-// one blob longer than a bank holds (32,512 bytes) — a long sample at a low
-// pitch — so the import bakes here and takes the first voice count whose rate
-// fits every blob. When none does, the sample costing the most bytes is
-// dropped (its notes become rests) and the search starts over. Said in
-// warnings and a comment.
-function fitPcmBank(render, pcm) {
-  // Part G's kit stands in as silence of its samples' lengths: it costs the
-  // bank the same.
-  const kit = new Map([[RHYTHM_KIT, RHYTHM_SOUNDS.map((s) => `(def-pcm ${s.name} :file "${s.name}.wav")`).join("\n")]]);
-  const kitData = new Map(RHYTHM_SOUNDS.map((s) => [s.name, new Float32Array(Math.round((s.ms / 1000) * RHYTHM_KIT_RATE))]));
-  const bake = (source) => {
-    const { ir, diagnostics } = compileMMLisp(source, "import.mmlisp", { imports: kit, frameHz: 60 });
-    if (diagnostics.some((d) => d.severity === "error")) return { ok: true }; // not ours to judge here
-    const samples = {};
-    for (const def of ir.metadata?.samples ?? []) {
-      if (kitData.has(def.name) && !def.offset && def.frames == null) {
-        samples[def.name] = { data: kitData.get(def.name), baseRate: RHYTHM_KIT_RATE };
-        continue;
-      }
-      const at = def.offset ?? 0;
-      samples[def.name] = { data: pcm.mono.slice(at, at + (def.frames ?? pcm.mono.length - at)), baseRate: pcm.rate };
-    }
-    try {
-      encodeMmb(ir, { samples, dedup: false }); // does the bank fit
-      return { ok: true };
-    } catch (e) {
-      if (!(e instanceof RangeError)) throw e;
-      return { ok: false, ir };
-    }
-  };
-  // Bytes a def bakes to: its frames per distinct pitch played, resampled.
-  const costliest = (ir) => {
-    const pitches = new Map();
-    for (const t of ir.tracks ?? []) for (const e of t.events ?? []) {
-      if (e.cmd !== "PCM_NOTE_ON") continue;
-      if (!pitches.has(e.args.sample)) pitches.set(e.args.sample, new Set());
-      pitches.get(e.args.sample).add(e.args.pitch);
-    }
-    let worst = null;
-    for (const def of ir.metadata?.samples ?? []) {
-      const ps = pitches.get(def.name);
-      if (!ps) continue;
-      let bytes = 0;
-      for (const p of ps) bytes += (def.frames ?? 0) / 2 ** ((pitchToMidi(p) - 60) / 12);
-      if (!worst || bytes > worst.bytes) worst = { name: def.name, bytes };
-    }
-    return worst?.name;
-  };
-  const drop = new Set(); // sample labels
-  for (;;) {
-    const out = render(drop);
-    let last = null;
-    for (const n of [1, 2, 3].filter((n) => n >= out.pcmVoices)) {
-      const source = n === out.pcmVoices ? out.source
-        : `; A PCM sample fits one bank (32,512 bytes) at ${n} PCM voices' rate, not at ${out.pcmVoices}'s.\n(def-score :pcm-voices ${n})\n\n${out.source.replace(/^; Part G's drums.*\n\(def-score :pcm-voices 2\)\n/m, "")}`;
-      const r = bake(source);
-      if (r.ok) {
-        if (n > out.pcmVoices) out.warnings.push(`PCM: a sample is longer than one bank (32,512 bytes) at ${out.pcmVoices} voice's rate; set (def-score :pcm-voices ${n}) to bake it at the lower rate`);
-        if (drop.size) out.warnings.push(`PCM: ${[...drop].join(", ")} is longer than one bank (32,512 bytes) at every rate; dropped — its notes are rests`);
-        return { ...out, source };
-      }
-      last = r.ir;
-    }
-    const worst = last && costliest(last);
-    if (!worst || drop.has(worst)) {
-      out.warnings.push("PCM: a sample is longer than one bank (32,512 bytes) even at 3 voices' rate; shorten it (:frames)");
-      return out;
-    }
-    drop.add(worst);
-  }
-}
 
 /**
  * Decode the `#pcm` bank into the shape mucomToMmlisp emits defs from. The bank

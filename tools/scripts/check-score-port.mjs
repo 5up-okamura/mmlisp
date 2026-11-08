@@ -812,23 +812,30 @@ const port = (src, to, rows) => {
 
 // ── Every import onto every machine (2026-11-08) ──
 {
-  // mucom88: pc88 and md its own writers, any other machine the pc88 score converted.
+  // mucom88: the pc88 score, converted onto any other machine.
   const muc = new TextEncoder().encode("#title test song\n\nA t120 o4 l8 cdefgab>c\nB o3 l4 c g c g\nD o5 l8 v13 eg>c<g eg>c<g\nE l16 P2 w5 v12 c c c c c c c c\nG l8 v15 @1c @8c @2c @8c\n");
   for (const target of MUCOM_TARGETS) {
     const r = importMucom(muc, null, null, { target });
     assert.deepEqual(compile(r.source, join(repo, "tools/tests/t.mmlisp")).bad, [], `mucom88 onto ${target} compiles clean`);
   }
   assert.deepEqual(MUCOM_TARGETS.slice().sort(), PORT_TARGETS.slice().sort(), "mucom88 offers every machine");
-  // A VGM of each machine offers every machine, each written clean.
+  // A VGM of each machine offers every machine: written as its own
+  // machine's score, then converted onto each (the one road Live's dialog
+  // takes, as Convert to Machine… does), each clean.
   for (const sf of ["drv/tests/ab-core.mmlisp", "tools/tests/x68k/fm.mmlisp", "tools/tests/msx/scc.mmlisp", "tools/tests/gb/apu.mmlisp"]) {
     const file = join(repo, sf);
     const vgm = renderVgm(new IRPlayer(() => {}).loadJSON(compile(readFileSync(file, "utf8"), file).ir), { title: "t" }).bytes;
     const parsed = await parseVgm(vgm);
     const a = analyzeVgm(parsed);
     assert.deepEqual(a.targets.slice().sort(), PORT_TARGETS.slice().sort(), `${sf}'s VGM offers every machine`);
+    const own = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, a.target), structure: true, fileName: "t.vgm" }, a);
+    const ownFile = join(repo, "tools/tests/t.mmlisp");
+    assert.deepEqual(compile(own.source, ownFile).bad, [], `${sf}'s VGM as ${a.target} compiles clean`);
     for (const t of a.targets) {
-      const out = vgmToMmlisp(parsed, { ...defaultVgmOptions(a, t), target: t, structure: true, fileName: "t.vgm" }, a);
-      assert.deepEqual(compile(out.source, join(repo, "tools/tests/t.mmlisp")).bad, [], `${sf}'s VGM onto ${t} compiles clean`);
+      if (t === a.target) continue;
+      const out = portScore(own.source, t, { imports: readImportSources(ownFile, own.source) });
+      assert.ok(!out.error, `${sf}'s VGM onto ${t}: ${out.error}`);
+      assert.deepEqual(compile(out.text, ownFile).bad, [], `${sf}'s VGM onto ${t} compiles clean`);
     }
   }
 }
@@ -873,11 +880,13 @@ const port = (src, to, rows) => {
   const src = "(def-score :target pc88)\n(def-fm va init-fm :alg 4 :tl1 20)\n(def-fm vb init-fm :alg 7 :tl1 10)\n(fm3-1 va :oct 5 :len 4 c c)\n(fm3-2 :oct 4 :len 4 e e)\n(fm3-1 vb :len 4 g g)\n(fm3-2 :len 4 b b)";
   const r = port(src, "x68k");
   assert.match(r.text, /\(fm3 va-op1 :oct 5 :len 4 c c\)\n\(fm\d va-op2 :oct 4 :len 4 e e\)\n\(fm3 vb-op1 :len 4 g g\)\n\(fm\d vb-op2 :len 4 b b\)/);
-  // A part commented out by the mucom88 md writer is commented on every line.
+  // mucom88 onto md is the pc88 score converted: part J (fm6) beside the
+  // rhythm, which takes the DAC there, moves to a free FM channel.
   const muc = new TextEncoder().encode("#title j\n\nA t120 o4 l8 cdef\nG l8 v15 @1c @8c @2c @8c\nJ o4 l8 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4 [gab>c<]4 [cdef]4\n");
   const j = importMucom(muc, null, null, { target: "md" });
-  assert.ok(j.warnings.some((w) => /part J \(fm6\) is commented out/.test(w)));
-  assert.deepEqual(compile(j.source, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md with part J commented out compiles clean");
+  assert.match(j.source, /^; Imported as pc88, then onto md/);
+  assert.match(j.source, /\(fm2 :oct 3 \(x 4 :len 8 c d e f\)/, "part J kept on a free FM channel");
+  assert.deepEqual(compile(j.source, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

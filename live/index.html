@@ -1137,7 +1137,7 @@
     import { renderWav } from './src/export-wav.js';
     import { mixerStrips, renderStems, stemName, soloStrip, muteStrip } from './src/stems.js';
     import { newScoreSource, machineSummary } from './src/new-score.js';
-    import { importMucom, MUCOM_TARGETS, MUCOM_WRITES, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
+    import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
     import { parseDmf } from './src/import-dmf.js';
     import { parseFur } from './src/import-fur.js';
     import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from './src/import-vgm.js';
@@ -3311,7 +3311,7 @@
     // Another machine reads the PC-8801's score as Convert to Machine… would
     // (portImported); midi, through its MIDI (readViaMidi).
     async function convertMucom(song, datBytes, pcmBytes) {
-      if (MUCOM_WRITES.includes(song.target)) return importMucom(song.bytes, datBytes, pcmBytes, { target: song.target });
+      if (song.target === 'pc88') return importMucom(song.bytes, datBytes, pcmBytes);
       const res = importMucom(song.bytes, datBytes, pcmBytes, { target: 'pc88' });
       if (song.target === 'midi') return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
       const out = await portImported(res, song.target, { fileName: song.fileName });
@@ -3547,16 +3547,17 @@
       const a = analyzeTracker(t);
       const def = defaultTrackerOptions(a);
       const played = a.channels.filter((c) => c.notes > 0);
-      // midi reads the module as its own machine's (its rows those).
-      const rowsFor = (target) => {
-        if (target === 'midi') target = a.target;
-        const d = defaultTrackerOptions(a, target), choices = ['drop', ...trackerDests(target)];
-        return played.map((c) => ({ key: String(c.index), label: c.label, value: d.dest[c.index], choices }));
+      // Its own machine's rows; another machine's are the conversion's of
+      // the module read as its own (songOnto); midi reads it as its own.
+      const ownRows = () => {
+        const choices = ['drop', ...trackerDests(a.target)];
+        return played.map((c) => ({ key: String(c.index), label: c.label, value: def.dest[c.index], choices }));
       };
+      const rowsFor = await songRowsFor(trackerToMmlisp(t, { ...def, fileName }, a), fileName, a.target, ownRows);
       const fields = [];
       fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
         choices: withMidi(a.targets, a.target),
-        hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine reads the channels for its own (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
+        hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine takes it as Edit ▸ Convert to Machine… would (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
       fields.push(
         { key: 'bpm', label: 'Tempo (BPM)', type: 'number', value: +a.bpm.toFixed(2),
           hint: `${a.rowsPerBeat} rows a beat at ${a.framesPerRow} frames a row, ${t.hz} Hz` },
@@ -3573,30 +3574,32 @@
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
+      const target = got.fields.target ?? a.target;
+      const ownRowsChosen = target === a.target || target === 'midi';
       const dest = {};
-      for (const c of a.channels) dest[c.index] = got.rows[String(c.index)] ?? 'drop';
-      const toMidi = got.fields.target === 'midi';
+      for (const c of a.channels) dest[c.index] = ownRowsChosen ? got.rows[String(c.index)] ?? 'drop' : def.dest[c.index];
       const res = trackerToMmlisp(t, {
         dest, phrases: !!got.fields.phrases,
         bpm: bpm > 0 && Math.abs(bpm - a.bpm) > 1e-6 ? bpm : null,
-        target: toMidi ? a.target : got.fields.target ?? def.target,
+        target: a.target,
         fileName,
       }, a);
-      return toMidi ? readViaMidi(res, { fileName, tag: t.format, own: a.target }) : res;
+      if (target === 'midi') return readViaMidi(res, { fileName, tag: t.format, own: a.target });
+      return songOnto(res, { own: a.target, target, fileName, rows: got.rows });
     }
 
     async function importVgmBytes(bytes, fileName) {
       const parsed = await parseVgm(bytes);
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
-      // Picking another target rebuilds the rows at its defaults (midi:
-      // its own machine's, which it is read as).
-      const rowsFor = (target) => vgmRows(a, target === 'midi' ? a.target : target);
+      // Its own machine's rows (midi reads it as its own); another machine's
+      // are the conversion's of the song read as its own (songOnto).
+      const rowsFor = await songRowsFor(vgmToMmlisp(parsed, { ...def, fileName }, a), fileName, a.target, () => vgmRows(a, a.target));
       const fields = [];
       // A file of one machine's chip can be that machine's score, the Mega Drive's, or General MIDI's.
       fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
         choices: withMidi(a.targets, a.target),
-        hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine reads them for its own (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
+        hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine takes it as Edit ▸ Convert to Machine… would (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
       );
@@ -3606,7 +3609,7 @@
         fields.push({ key: 'pcmVoices', label: 'PCM voices', type: 'select', value: String(def.pcmVoices),
           choices: [['1', '1 — 14.4 kHz'], ['2', '2 — 10.1 kHz'], ['3', '3 — 6.7 kHz']],
           hint: `up to ${a.pcmPoly} ring at once — with fewer voices, the oldest sound is cut`,
-          onlyFor: (t) => targetProfile(t).hasPart('dac') });
+          onlyFor: () => targetProfile(a.target).hasPart('dac') });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
         title: `Import ${fileName}`,
@@ -3618,10 +3621,10 @@
         rowsFor,
       });
       if (!got) return null;
-      const toMidi = got.fields.target === 'midi';
+      const target = got.fields.target ?? a.target;
       const options = {
-        target: toMidi ? a.target : got.fields.target ?? def.target,
-        dest: got.rows,
+        target: a.target,
+        dest: target === a.target || target === 'midi' ? got.rows : def.dest,
         followPitch: !!got.fields.followPitch,
         loop: !!got.fields.loop,
         pcmVoices: got.fields.pcmVoices ? Number(got.fields.pcmVoices) : def.pcmVoices,
@@ -3629,8 +3632,10 @@
         fileName,
       };
       // (Read onto midi, the MIDI import estimates the beat itself: no Tap Tempo.)
-      if (toMidi) return readViaMidi(vgmToMmlisp(parsed, options, a), { fileName, tag: 'VGM', own: a.target, structure: options.structure });
-      return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
+      if (target === 'midi') return readViaMidi(vgmToMmlisp(parsed, options, a), { fileName, tag: 'VGM', own: a.target, structure: options.structure });
+      const onto = target === a.target ? null : { target, rows: got.rows };
+      const res = await songOnto(vgmToMmlisp(parsed, options, a), { own: a.target, target, fileName, rows: got.rows });
+      return { ...res, timingSong: { parsed, a, options, onto } };
     }
 
     // MDX (X68000, MXDRV) and MGS (MSX, MGSDRV): clock-exact, so there is no
@@ -3654,6 +3659,24 @@
       const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), peaks: samplePeaks(res.pcm) });
       if (out.error) throw new Error(out.error);
       return out;
+    }
+    // A song written as its own machine's score (`own`), onto the machine the
+    // dialog chose: through portImported, as Convert to Machine… takes the
+    // open score, so Open onto a machine and Open + Convert are one result.
+    // `rows`: the conversion's (conversionRows). Its header line says so.
+    async function songOnto(res, { own, target, fileName, rows }) {
+      if (target === own) return res;
+      const out = await portImported(res, target, { fileName, rows });
+      const source = out.text.replace(/^(; Imported from [^\n]*?)\)$/m, `$1, read as ${own}, then onto ${target})`);
+      return { ...res, source, warnings: [...(res.warnings ?? []), ...out.said] };
+    }
+    // The dialog's rows for a song read as its own machine's: its own rows
+    // (`ownRows`) on its machine or midi, the conversion's of `base` (the
+    // score at its defaults) on any other.
+    async function songRowsFor(base, fileName, own, ownRows) {
+      const imports = await readImportSources(base.source, mmlispName(fileName));
+      const heard = heardRoles(base.pcm);
+      return (target) => (target === own || target === 'midi' ? ownRows() : conversionRows(base.source, target, { imports, heard }));
     }
 
     async function driverSongDialog({ fileName, tag, own, summary, res, partOf, hint }) {
@@ -3749,7 +3772,7 @@
       const fields = [];
       fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
         choices: withMidi(a.targets, a.target),
-        hint: 'fc keeps the Famicom’s chips; another machine reads them for its own; General MIDI reads it as the Famicom’s, then gives each channel a GM instrument and the noise and DPCM kit roles' });
+        hint: 'fc keeps the Famicom’s chips; another machine takes it as Edit ▸ Convert to Machine… would; General MIDI reads it as the Famicom’s, then gives each channel a GM instrument and the noise and DPCM kit roles' });
       fields.push(
         { key: 'followPitch', label: 'Follow a pitch moved during a note (a jump it stays at → a slur; a vibrato or bend → :pitch)', type: 'checkbox', value: def.followPitch },
         { key: 'loop', label: a.fileLoop ? 'Loop (where the song comes round)' : 'Loop (the song stops: off)', type: 'checkbox', value: a.fileLoop },
@@ -3762,14 +3785,15 @@
           `${a.fileLoop ? `, looping from ${(parsed.loopSample / 44100).toFixed(1)} s` : ''}. ` +
           `The song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
         fields,
-        rows: vgmRows(a, def.target),
-        rowsFor: (target) => vgmRows(a, target === 'midi' ? a.target : target),
+        rows: vgmRows(a, a.target),
+        rowsFor: await songRowsFor(vgmToMmlisp(parsed, { ...def, fileName }, a), fileName, a.target, () => vgmRows(a, a.target)),
       });
       if (!got) return null;
       const toMidi = got.fields.target === 'midi';
+      const target = got.fields.target ?? a.target;
       const options = {
-        target: toMidi ? a.target : got.fields.target ?? a.target,
-        dest: got.rows,
+        target: a.target,
+        dest: target === a.target || toMidi ? got.rows : def.dest,
         followPitch: !!got.fields.followPitch,
         // (A song that stops does not loop: the box keeps the loop the run found.)
         loop: !!got.fields.loop && a.fileLoop,
@@ -3778,7 +3802,9 @@
         fileName,
       };
       if (toMidi) return readViaMidi(vgmToMmlisp(parsed, options, a), { fileName, tag: 'NSF', own: a.target, structure: options.structure });
-      return { ...vgmToMmlisp(parsed, options, a), timingSong: { parsed, a, options } };
+      const onto = target === a.target ? null : { target, rows: got.rows };
+      const res = await songOnto(vgmToMmlisp(parsed, options, a), { own: a.target, target, fileName, rows: got.rows });
+      return { ...res, timingSong: { parsed, a, options, onto } };
     }
 
     async function importSf2FromFile(file) {
@@ -5010,7 +5036,11 @@
         while (it.want && _it === it) {
           const { timing } = it.want;
           it.want = null;
-          const { source, pcm } = vgmToMmlisp(song.parsed, timing ? { ...song.options, timing } : song.options, song.a);
+          const written = vgmToMmlisp(song.parsed, timing ? { ...song.options, timing } : song.options, song.a);
+          // A song read onto another machine is converted again (songOnto).
+          const { source, pcm } = song.onto
+            ? await songOnto(written, { own: song.a.target, target: song.onto.target, fileName: song.name, rows: song.onto.rows })
+            : written;
           it.zero = timing ? beatClock(timing, it.first).zero : 0;
           it.written = source;
           editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: source }, userEvent: 'input.timing' });

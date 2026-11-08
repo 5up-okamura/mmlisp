@@ -1676,9 +1676,15 @@ presets are not imported; filters, modulators and LFOs are not read.
 
 ### What a mucom88 import carries
 
-FM parts A–C / H–J go to `fm1`–`fm6`, SSG D–F to `sqr1`–`sqr3` (the notes an
-SSG part plays with noise on go to `noise`), ADPCM K to `pcm1`, rhythm G to
-the RX5 kit on one PCM track (`pcm1`, or `pcm2` beside K). Notes, lengths
+A `.muc` is written for the YM2608, so the import is a `pc88` score (the NEC
+PC-8801), which keeps what the chip has (language.md §19): FM parts A–C / H–J
+go to `fm1`–`fm6`, SSG D–F to `sqr1`–`sqr3`, ADPCM K to `pcm1`, rhythm G to
+`rhythm1`–`rhythm6`. The import dialog's **Target** is pc88 first; any other
+machine takes the pc88 score as Edit ▸ Convert to Machine… does (§ Converting
+to another machine) — on the Mega Drive the SSG's notes under A2 are written
+up an octave, its hardware envelope drawn as a level, the rhythm on the RX5
+kit's samples; General MIDI reads it as pc88, then through its MIDI (§ Song
+imports: the rhythm's sounds are their kit roles). Notes, lengths
 and ties land on mucom's clock grid; loops, breaks and the last `L` become the
 loop point (a part without `L` plays once). **Every mucom command imports**:
 key shift `K`/`k`, detune `D` (relative `D n+` too), `v`, `)`/`(`, `V`, `q`,
@@ -1714,11 +1720,11 @@ than approximating:
   on the frame, so a fast vibrato drifts against mucom's by up to a step.
 - **Levels.** mucom sets every carrier TL from its volume table and ignores
   the voice's own, so voices come in with carrier TL 2 (the `v15` value). An
-  SSG level (3 dB steps) plays as the PSG `:vel` nearest in dB on the Mega
-  Drive's measured attenuator, whose bottom steps are wider; SSG envelopes
-  land on those steps, drawn per `v`. SSG noise at a short `w` shifts faster
-  than hearing — most of it is inaudible, while the PSG's is all heard — so
-  the noise copy plays that much lower (`w0`: −4.9 dB).
+  SSG level is the channel's fader: `v` is the `:vol` that lands on the same
+  register step, every one of the sixteen (`:vel`'s ladder would end 30 dB
+  down), so a `(` / `)` inside a tie is a fader move. An `E` envelope is a
+  `:vel*` macro under it, drawn per `v` and reaching 30 dB below the note's
+  top; where mucom's level reaches silence, its `:vol` drops to 0.
 - **Slot detune** `S a,b,c,d` (part C) puts CH3 in the chip's
   independent-operator mode and offsets each operator's pitch word — the
   values are operators 4, 3, 1, 2, as the chip's registers run. The part
@@ -1734,7 +1740,6 @@ than approximating:
   the shape in force. `v` turns it off (`:env none`), `)`/`(` are not read
   under it, a `P0` on it is the envelope alone (`:mode env`), and the `E`
   envelope's macro is off while it plays, as the driver writes none of it.
-  On md it is dropped, with a warning.
 - **Key-on revise** `s n` adds n clocks to a note's length and flips the
   sign, so a run alternates +n, −n — a micro-shuffle whose pairs still add
   up. Rests keep their length; a tie and a portamento count as notes. The
@@ -1742,53 +1747,25 @@ than approximating:
   with, as an `(x …)` body does.
 - **Tempo** is `BPM = 832000 / ((256 − t) × C)`, to two decimals; `T` goes
   through the Timer-B value it compiles to.
-- **ADPCM**: o1 c plays at 16,143.6 Hz, the bank's labelled rate; the driver
-  stops a drum at its key-off, so each sample's `:frames` is cut to the
-  longest stretch the song plays of it.
-- **Rhythm** keys up to six sounds at once (`@` is a mask: 1 BD, 2 SD, 4 TOP,
-  8 HH, 16 TOM, 32 RIM), each its own voice. On the one PCM track each sound
-  is a `:prio` layer — snare 1, tom 2, ride 3, kick 4, rim 5, hi-hat 6 — so a
-  hit plays the highest-priority sound and is dropped while a higher one still
-  rings: its `:gate` is the ring, the time the RX5 sample stays within 6 dB of
-  its peak. `v`'s total and per-sound levels become `:vel`, the loudest sound
-  at 15.
-
-The chip's own limits stay visible as warnings: SSG notes below A2 play an
-octave up (the PSG's floor), one noise channel serves the first part that uses
-it, and SSG reverb rings without its level drop. What the Mega Drive has no
-place for is dropped and said so: rhythm's per-sound pan, the ADPCM part K's
-pan `p` and detune `D` (a PCM voice has neither), and K's volume mode
-`vm<n>`.
-
-**For pc88.** A `.muc` is written for the YM2608, so the import dialog's
-**Target** starts at pc88 (the NEC PC-8801), which keeps what the chip has
-instead of reading it for the Mega Drive (language.md §19); md converts it
-for the Mega Drive as above; any other machine takes the pc88 score as Edit ▸
-Convert to Machine… does (§ Converting to another machine); General MIDI
-reads it as pc88, then through its MIDI (§ Song imports: the rhythm's sounds
-are their kit roles):
-
-- **Rhythm** G plays the chip's own sounds, a track each — BD on
+- **ADPCM** K comes in on `pcm1` with its bank's defs: o1 c plays at
+  16,143.6 Hz, the bank's labelled rate; the driver stops a drum at its
+  key-off, so each sample's `:frames` is cut to the longest stretch the song
+  plays of it. `v` is the fader (the level register mucom88 writes, `v` + 4,
+  to within 1 dB) and `p` is `:pan`; `K` / `k` shift its notes as they do on
+  the chip. `D` is the `:pitch` it moves the note's Delta-N by, and under
+  `vm<n>` each sample brings its bank level, which `v` adds to.
+- **Rhythm** G keys up to six sounds at once (`@` is a mask: 1 BD, 2 SD,
+  4 TOP, 8 HH, 16 TOM, 32 RIM), each the chip's own sound on a track — BD on
   `rhythm1`, SD on `rhythm2`, TOP, HH, TOM and RIM on `rhythm3`–`rhythm6`,
   under the kit roles (`kick` `snare` `ride` `hat` `tom4` `rim`) with no
   `:gate` (each sound is a voice of its own, and rings as the ROM has it);
   `v`'s total and per-sound levels become an absolute `:vel`, which the
   chip's level takes back. The RX5 kit is imported beside it: its sounds
   stand in for the ROM's until you load yours (File ▸ Import ▸ YM2608 Rhythm ROM…).
+  The rhythm's per-sound pan is not read.
 - **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
-  notes), `w` the song's `:noise-rate`; no part is split into a noise copy
-  and low notes stay where they are. A level is the channel's fader: `v` is
-  the `:vol` that lands on the same register step, every one of the sixteen
-  (`:vel`'s ladder would end 30 dB down), so a `(` / `)` inside a tie is a
-  fader move. An `E` envelope is a `:vel*` macro under it, drawn per `v` and
-  reaching 30 dB below the note's top; where mucom's level reaches silence,
-  its `:vol` drops to 0.
-- **FM** is as above, and `fm6` stays (there is no DAC to own).
-- **ADPCM** K comes in on `pcm1` with its bank's defs, `v` as the fader
-  (the level register mucom88 writes, `v` + 4, to within 1 dB) and `p` as
-  `:pan`; `K` / `k` shift its notes as they do on the chip (on md too).
-  `D` is the `:pitch` it moves the note's Delta-N by, and under `vm<n>` each
-  sample brings its bank level, which `v` adds to.
+  notes), `w` the song's `:noise-rate`. SSG reverb rings without its level
+  drop.
 
 ### Resynthesizing a recording on FM3
 
@@ -1877,27 +1854,27 @@ plays it as found, other notes retune it.
 
 ### Song imports: MIDI, DefleMask / Furnace, VGM, NSF, MDX, MGS
 
-**A song import opens a dialog first** (an MGS has only its Target to
-choose; an MDX or MGS its Target and, onto another machine, its rows): what the file holds, the timing and
+**A song import opens a dialog first** (an MDX or MGS has only its Target
+and, onto another machine, its rows to choose): what the file holds, the timing and
 tempo (a MIDI file's), the loop, and one row per source part with its destination.
 **Enter** imports with the defaults. The loop is the file's own when it marks
 one; otherwise the box loops the whole song — ticked for a MIDI file (they
 rarely mark one), unticked for a VGM (one without a loop point is usually a
 jingle).
 
-**Target** is the machine the score is written for, and picking another one
-sets the rows to that machine's channels. A MIDI file is a General MIDI
-instrument's, so it starts on `midi` (a channel each, the drums on
-`drum1`…) and offers every other machine. A VGM, NSF or tracker module starts
-on the machine of its own chips, which keeps what they have, and offers the
-Mega Drive and every other machine — the rows say what each keeps: a Game Boy
-song can be a PC Engine's or an X68000's, a Mega Drive song's FM parts the FM-PAC's (each voice becomes the nearest of
-its ROM voices, by attack, decay and brightness, since its one user voice would
-be every channel's at once) or, on a machine with no FM, plain notes on its
-squares and waves.
-A song that lands on `presets/waveforms` stand-ins and nothing else on `x68k`,
-with no squares to balance against, gets them at a full carrier (`loud-square`
-…, defined at the top of the score).
+**Target** is the machine the score is written for. A MIDI file is a General
+MIDI instrument's, so it starts on `midi` (a channel each, the drums on
+`drum1`…) and offers every other machine, its rows that machine's channels. A
+VGM, NSF, tracker module, MDX, MGS or mucom88 song starts on the machine of
+its own chips (the Mega Drive where no one machine has them all), which keeps
+what they have, and offers every other machine: the song is written as its
+own machine's score, then moved onto the one chosen at the words' level, as
+Edit ▸ Convert to Machine… moves a score (§ Converting to another machine) —
+so opening a song onto a machine and opening it, then converting it, give the
+one result. Picking another machine sets the rows to the conversion's: a row
+per channel of the song's own score, onto one of the machine's or dropped. The
+score's first line says it (`read as md, then onto pc88`), and Edit ▸ Tap
+Tempo converts it again as it rewrites it.
 
 **General MIDI** is the last Target of every chip song — VGM, NSF, DefleMask /
 Furnace, MDX, MGS, mucom88. The song is read as its own machine's score (the rows are
