@@ -93,6 +93,7 @@ export const gbWave = {
   name: "gb-wave",
   label: "Game Boy wave",
   kind: "wave",
+  bass: true, // the Game Boy's bass channel: a conversion's bass part goes here
   level: WAVE_LEVEL,
   words: words("WAVE", "PAN"),
   modes: {},

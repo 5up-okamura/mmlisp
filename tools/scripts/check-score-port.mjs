@@ -532,6 +532,23 @@ const port = (src, to, rows) => {
   assert.match(pcMix.text, /:fx \[\(normalize\)\]/, "the samples' def as written, but for the normalize");
   assert.doesNotMatch(pcMix.text, /def-mod :ch|limit/, "the melody as it was, the samples not limited");
   assert.doesNotMatch(portScore(mixSrc.replace(/\n\(pcm1[^\n]*/, ""), "md").text, /def-mod/, "no samples, no balance to keep");
+  // The score's bass — the melodic part sitting a fifth or more under the
+  // rest — is kept before busier parts, and on a machine with a bass channel
+  // (the 2A03's triangle, the Game Boy's wave) plays there.
+  const bassSrc = `(def-score :target x68k)
+(fm1 :oct 2 :len 8 c c g g c c g g c c g g)
+(fm2 :oct 5 :len 16 c d e f g a b > c < c d e f g a b > c < c d e f g a b > c)
+(fm3 :oct 4 :len 8 e g e g e g e g e g e g e g e g)
+(fm4 :oct 5 :len 16 e f g a e f g a e f g a e f g a e f g a e f g a)`;
+  const bassFc = portScore(bassSrc, "fc");
+  assert.equal(bassFc.map.fm1, "tri", `the bass on the triangle: ${JSON.stringify(bassFc.map)}`);
+  assert.deepEqual([bassFc.map.fm2, bassFc.map.fm4].sort(), ["sqr1", "sqr2"], "the two busiest on the squares");
+  assert.equal(bassFc.map.fm3, "drop", "the quietest of the rest goes");
+  assert.ok(bassFc.said.some((w) => /fm1 is the bass .*plays on tri/.test(w)), bassFc.said.join("\n"));
+  assert.equal(portScore(bassSrc, "gb").map.fm1, "wave", "the Game Boy's wave");
+  // Without a part that low, no bass is picked, and the rows go by notes.
+  const noBass = portScore(bassSrc.replace("(fm1 :oct 2", "(fm1 :oct 4"), "fc");
+  assert.equal(noBass.map.fm1, "drop", `no bass: the fewest notes go: ${JSON.stringify(noBass.map)}`);
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

@@ -404,7 +404,18 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   convertCountedJumps is the compiler's own pass, gone from loopOf;
   pruneVoices now only drops a def that hides a ROM voice (shadowing) and
   the fm-roles import — every other unnamed def is pruneUnnamedDefs';
-  allRoles gone; Open's set path awaited inside its try. Inline operator words on such a
+  allRoles gone; Open's set path awaited inside its try.
+- **The bass kept, and on the machine's bass channel** (user, 2026-11-08:
+  "MDX onto fc, the triangle was silent; the bass should sound; gb too —
+  could melody and bass be told apart automatically?"). Nothing was
+  silent (VU and renders showed tri / wave sounding): fc's tri had fm5, a
+  32nd-note arpeggio in o5, thin on a triangle, and the bass (fm1, median
+  d+3, 8+ semitones under the rest) was dropped by note count. planRows:
+  `bassRow()` = the melodic row whose median note sits BASS_APART (7) under
+  the next (import-to-midi.js's LOW_APART rule), off `s.compiled()`; first
+  in the melodic pool's order, and placed on the machine's `bass` part
+  (chips/parts.js: fc-tri, gb-wave `bass: true`) before the rest. DTWNB:
+  fm1 → tri / wave on every song tried. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

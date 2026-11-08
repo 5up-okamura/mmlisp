@@ -80,6 +80,9 @@
 //             channels share one (the SCC's 4 and 5)
 //   waveLen   a `wave` part's memory, in steps (32 by default; the FDS's 64):
 //             a longer def-wave plays every other step (W_TARGET)
+//   bass      true: the channel a bass line goes to first on this machine
+//             (the 2A03's triangle, the Game Boy's wave) — a conversion
+//             puts the score's bass part there (score-port.js)
 //   kit       kit role → its sound: samples built in under those names
 //   checkNote (note, ctx) → the part's rules for one note, after compile
 //   checkScore(ctx) → the part's rules for the whole score

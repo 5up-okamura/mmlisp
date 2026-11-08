@@ -2620,7 +2620,10 @@ machine's channels or dropped:
   only kept (the log lists them). A mucom88 import does the same.
 - A machine short of channels keeps the parts of its own kind first (FM
   onto FM), then the parts with the most notes — counted as they play, a
-  loop's body as many times as it repeats.
+  loop's body as many times as it repeats. The song's bass — the part whose
+  notes sit a fifth or more under every other's — is kept before them all,
+  and on a machine with a channel for a bass line (the Famicom's triangle,
+  the Game Boy's wave) plays there; the log names it.
 - Drums and samples past a machine's sample channels are not dropped: the
   beat's (the kick, the snare) keep a channel each, and the rest share one
   as `:prio` layers in the drums' order — a snare is kept before the hats

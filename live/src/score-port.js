@@ -260,6 +260,10 @@ export function pruneUnnamedDefs(text) {
 const LIMIT_DRIVE_DB = 6;
 const LIMIT_LIFT_DB = 3;
 
+// A song's bass line: the melodic part sitting this far (semitones) under
+// the next lowest, by the median note (import-to-midi.js LOW_APART).
+const BASS_APART = 7;
+
 // The kick and the snare on a noise channel, where a machine has no sample
 // channel (the Game Boy): each a note — a low clock for the kick, a bright
 // one for the snare — under a level that falls away in a few frames, its gate
@@ -438,6 +442,28 @@ function planRows(s, from, to, loopOf = () => null) {
   // a square its noise is and fm6 under the Mega Drive's PCM — and past its
   // noises, the parts with fewer notes are dropped before anything is placed.
   const melodic = (k) => MELODIC_KINDS.includes(kindOf(from, k)) && k !== "fm3-csm-rate";
+  // The score's bass: the melodic part whose notes sit lowest, a fifth or
+  // more under the next (import-to-midi.js's reading of a song's bass line),
+  // read off the compiled score when the rows are short or the machine has a
+  // bass channel. It is kept before the others and, on a machine with a
+  // channel for a bass line (a `bass` part: the 2A03's triangle, the Game
+  // Boy's wave), plays there.
+  s.bass = null;
+  const bassRow = () => {
+    if (s.bass !== null) return s.bass || null;
+    s.bass = false;
+    const mids = [];
+    for (const t of s.compiled()?.tracks ?? []) {
+      const k = t.scoreChannel ?? t.channel;
+      if (!keys.includes(k) || !melodic(k) || kindOf(from, k) === "noise") continue;
+      const notes = t.events.filter((e) => e.cmd === "NOTE_ON").map((e) => pitchToMidi(e.args.pitch)).sort((a, b) => a - b);
+      if (notes.length) mids.push([notes[Math.floor(notes.length / 2)], k]);
+    }
+    mids.sort((a, b) => a[0] - b[0]);
+    if (mids.length > 1 && mids[1][0] - mids[0][0] >= BASS_APART) s.bass = mids[0][1];
+    return s.bass || null;
+  };
+  const bassChannel = to.channelNames.find((h) => to.partOf(h)?.bass && !(to.listsExpansions && to.chipOf(h).optional));
   const isKitRow = (k) => kindOf(from, k) === "sample" && rolesHere(s.heads.get(k));
   // The channels the conversion keeps for a machine's own use: the PC
   // Engine's wave2, its LFO, when an FDS track's modulation becomes it.
@@ -486,7 +512,9 @@ function planRows(s, from, to, loopOf = () => null) {
     // (placeLayers) — and the drums that keep a channel of their own are the
     // beat's (a snare plays fewer notes than the hats, and matters more).
     const samples = (g) => g.every(isSampleRow);
-    const order = (a, b) => (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    // The bass is kept before every other melodic part.
+    const isBass = (g) => g.includes(bassRow());
+    const order = (a, b) => (isBass(a) - isBass(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
   }
@@ -520,6 +548,8 @@ function planRows(s, from, to, loopOf = () => null) {
   if (reserved.length && dest["fds-wave"] === "drop") { takenBy.delete(to.voiceKey("wave2")); reserved.length = 0; }
   // The FDS's modulating track on wave1, the PC Engine's one swayed channel.
   if (reserved.length && keys.includes("fds-wave") && dest["fds-wave"] !== "drop" && free("fds-wave", "wave1")) dest["fds-wave"] = claim("fds-wave", "wave1");
+  // The bass onto the machine's bass channel, where it has one.
+  if (bassChannel && bassRow() && !(bassRow() in dest) && free(bassRow(), bassChannel)) dest[bassRow()] = claim(bassRow(), bassChannel);
   // First the channels the destination has as they are: the noise before a
   // square (a drum is a drum), then in the table's order.
   const byNoise = [...keys].sort((a, b) => (kindOf(from, b) === "noise") - (kindOf(from, a) === "noise"));
@@ -673,6 +703,10 @@ class Porter {
     this.userVoice = this.pickUserVoice();
     this.layerPrio = this.placeLayers();
     this.mix = this.mixBalance();
+    if (this.s.bass && this.map[this.s.bass] && this.map[this.s.bass] !== "drop") {
+      const h = this.map[this.s.bass];
+      this.say(`${this.nameOf(this.s.bass)} is the bass (its notes sit a fifth or more under the rest): ${this.to.partOf(h)?.bass ? `it plays on ${h}, the ${this.to.system}'s bass channel` : `kept, on ${h}`}`);
+    }
     // Two rows on channels of one wave memory (the SCC's wave4 and wave5):
     // the wave written last plays on both — said where their waves differ.
     const byRam = new Map();

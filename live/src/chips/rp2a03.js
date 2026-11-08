@@ -90,6 +90,7 @@ export const fcPulse = {
 export const fcTriangle = {
   name: "fc-tri",
   label: "2A03 triangle",
+  bass: true, // the Famicom's bass channel: a conversion's bass part goes here
   unit: "apu",
   kind: "tone",
   level: LEVEL,
