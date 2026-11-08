@@ -218,7 +218,7 @@ const port = (src, to, rows) => {
 {
   // The ADPCM-B loops a sample's whole range: the loop is made the range.
   const r = port("(def-pcm pad :file \"pad.wav\" :loop-start 9ms :loop-end 36ms)\n(pcm1 :mode loop pad :len 2 c)", "pc88");
-  assert.match(r.text, /\(def-pcm pad :file "pad\.wav" :pcm-start 9ms :pcm-end 36ms\)/);
+  assert.match(r.text, /\(def-pcm pad :file "pad\.wav" :pcm-start 9ms :pcm-end 36ms :fx \[\(normalize\)\]\)/);
 }
 {
   // A sound effect is the Mega Drive driver's.
@@ -395,6 +395,17 @@ const port = (src, to, rows) => {
   assert.ok(firstLoud(envelopeOf(slow(3), 84)) < 10, `KS 3 at c6: ${envelopeOf(slow(3), 84).slice(0, 60)}`);
   assert.ok(firstLoud(envelopeOf(slow(0), 84)) > 30, `KS 0 at c6: ${envelopeOf(slow(0), 84).slice(0, 60)}`);
   // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)
+  // A sample onto another machine plays at its peak: its own :fx chain
+  // ends in (normalize), a variant takes its base's, an existing one stays.
+  const loud = port(`(def-pcm kick :file "a.wav")
+(def-pcm snare :file "b.wav" :fx [(gain 3) (hpf 100)])
+(def-pcm kick-hot kick :fx [(gain 6)])
+(def-pcm hat :file "c.wav" :fx [(normalize :peak -3)])
+(pcm1 kick :len 4 c snare c kick-hot c hat c)`, "pce");
+  assert.match(loud.text, /\(def-pcm kick :file "a\.wav" :fx \[\(normalize\)\]\)/);
+  assert.match(loud.text, /\(def-pcm snare :file "b\.wav" :fx \[\(gain 3\) \(hpf 100\) \(normalize\)\]\)/);
+  assert.match(loud.text, /\(def-pcm kick-hot kick :fx \[\(gain 6\)\]\)/, "a variant: its base's level");
+  assert.match(loud.text, /\(def-pcm hat :file "c\.wav" :fx \[\(normalize :peak -3\)\]\)/, "a normalize of its own stays");
   // The PC Engine's drivers stream samples on one channel: a score's drum
   // rows are :prio layers on it, the kick and snare over the hats, each
   // hit its own sample; the wave channels stay the melody's.

@@ -673,7 +673,7 @@ class Porter {
       else if (head === "def-score") replace(n, this.defScore(n));
       else if (head === "def-fm") replace(n, this.defFm(n));
       else if (head === "def-wave") replace(n, this.defWave(n));
-      else if (head === "def-pcm") replace(n, this.defPcm(n));
+      else if (head === "def-pcm") replace(n, this.louder(n, this.defPcm(n)));
       else if (head === "def-mod") replace(n, this.defMod(n));
       else if (head === "def-se") {
         this.say(`def-se ${n.items[1]?.value ?? ""}: a sound effect is the Mega Drive driver's; taken out`);
@@ -1038,6 +1038,29 @@ class Porter {
     }
     this.say(`'${n.items[1]?.value}': the ADPCM-B loops a sample's whole range, so its range is its loop (the head before the loop is cut)`);
     return this.renderList(n, outs);
+  }
+
+  // A sample onto another machine plays at its peak (`:fx` … (normalize)):
+  // the machine's sample output is its own — the Mega Drive's DAC one FM
+  // channel's level, the PC Engine's DDA 5 bits — and a sample left at the
+  // level it had beside the other's chips sinks under them (an MDX's drums
+  // on the Mega Drive: the kick alone was heard). One of its own :file only;
+  // a variant of it takes its base's.
+  louder(n, text) {
+    const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
+    if (!onSamples || !n.items.some((x) => x.value === ":file") || /\(normalize\b/.test(text)) return text;
+    if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
+    const fx = text.match(/:fx\s*\[/);
+    if (fx) {
+      // The chain's closing bracket: the first ] past :fx [ at its depth.
+      let depth = 0;
+      for (let i = fx.index + fx[0].length - 1; i < text.length; i++) {
+        if (text[i] === "[") depth++;
+        else if (text[i] === "]" && --depth === 0) return `${text.slice(0, i)} (normalize)${text.slice(i)}`;
+      }
+      return text;
+    }
+    return text.replace(/\)\s*$/, " :fx [(normalize)])");
   }
 
   // `:ch` names channels: the ones the rows moved, the dropped ones out.

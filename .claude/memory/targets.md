@@ -312,7 +312,15 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   DefleMask / Furnace, MIDI and mucom88's md write each machine themselves,
   so Open onto X and Open + Convert differ (a VGM of ab-core onto pc88: its
   noise dropped by the writer, kept by the conversion; fc / gb channels
-  chosen differently) — put to the user, undecided. Inline operator words on such a
+  chosen differently) — put to the user, undecided.
+- **Samples onto another machine play at their peak** (user: "MDX onto md,
+  only the kick is heard", 2026-11-08): `louder` gives each def-pcm of its
+  own :file `:fx [... (normalize)]`. The md DAC peaks ~−12 dBFS (one FM
+  channel's level), so normalize lifts the PDX's drums 2-9 dB but no
+  further; DTWNB00's PCM sits 2.8 dB under its FM on x68k, 19.2 on md
+  before, 13.7 after. The rest is the FM's: md's FM is ~7 dB hotter than
+  x68k's for one voice. Keeping the source's balance (each track's level
+  offset by the machines' part gains) is put to the user. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
