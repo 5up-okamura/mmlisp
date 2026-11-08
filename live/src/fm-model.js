@@ -31,7 +31,7 @@ const EG_INC = [
   [4, 4, 4, 4, 4, 4, 4, 4], [4, 4, 4, 8, 4, 4, 4, 8], [4, 8, 4, 8, 4, 8, 4, 8], [4, 8, 8, 8, 4, 8, 8, 8],
   [8, 8, 8, 8, 8, 8, 8, 8],
 ];
-function egStep(rate, counter) { // the increment this EG tick, or 0
+export function egStep(rate, counter) { // the increment this EG tick, or 0
   if (rate < 2) return 0;
   if (rate < 48) {
     const shift = 11 - (rate >> 2);

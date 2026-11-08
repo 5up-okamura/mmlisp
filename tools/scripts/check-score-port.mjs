@@ -24,6 +24,7 @@ import { TARGETS } from "../../live/src/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
 import { WAVEFORM_WORDS, waveformOf } from "../../live/src/voice-port.js";
+import { shapeOf } from "../../live/src/wave-port.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
 import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
 
@@ -79,7 +80,12 @@ function check(file, src, to) {
     const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && TARGETS[to].partOf(dest).kind === "fm" && twoOp(from, row.head) !== twoOp(to, dest));
     const was = notesOf(before.ir, row.head, kind, until, keyed);
     const now = notesOf(after.ir, dest, kind, until, keyed);
-    assert.deepEqual(now, was, `${file} → ${to}: ${row.head} on ${dest} keeps its notes`);
+    // A channel the source machine shared between parts (the PC Engine's
+    // wave5, noise5, pcm5) played only one of them where they met: on
+    // channels of their own every note sounds — the source's among them.
+    const sharedAtSource = rows.some((x) => x.head !== row.head && TARGETS[from].voiceKey(x.head) === TARGETS[from].voiceKey(row.head) && TARGETS[from].partOf(x.head) !== TARGETS[from].partOf(row.head));
+    if (sharedAtSource) assert.ok(was.every((x) => now.includes(x)), `${file} → ${to}: ${row.head} on ${dest} keeps every note it played`);
+    else assert.deepEqual(now, was, `${file} → ${to}: ${row.head} on ${dest} keeps its notes`);
     tracks++;
   }
   scores++;
@@ -87,7 +93,7 @@ function check(file, src, to) {
 }
 
 const dir = (d) => readdirSync(join(repo, d)).filter((f) => f.endsWith(".mmlisp")).map((f) => join(repo, d, f));
-const files = [...dir("drv/tests"), ...["pc88", "x68k", "msx", "fc", "gb"].flatMap((t) => dir(`tools/tests/${t}`))];
+const files = [...dir("drv/tests"), ...["pc88", "x68k", "msx", "pce", "fc", "gb"].flatMap((t) => dir(`tools/tests/${t}`))];
 for (const file of files) {
   const src = readFileSync(file, "utf8");
   for (const to of PORT_TARGETS) if (to !== scoreTargetOf(src)) check(file, src, to);
@@ -281,14 +287,16 @@ const port = (src, to, rows) => {
 {
   // A machine short of channels keeps the parts with the most notes.
   const r = port("(fm1 :len 8 c d e f g a b c)\n(fm2 :len 2 c c)\n(sqr1 :len 4 c e g e)\n(sqr2 :len 1 c)", "gb");
-  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["sqr2", "drop", "sqr1", "drop"]);
+  // (gb's three: two pulses and its wave channel.)
+  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["wave", "sqr2", "sqr1", "drop"]);
 }
 
 // ── What a review found (2026-11-08) ──
 {
   // A dropped track's opening tempo goes onto the first track kept.
-  const r = port("(fm1 :tempo 90 :len 2 c e g e |)\n(fm2 :len 8 c e g e c e g e |)\n(sqr1 :len 8 c e g e c e g e |)", "gb");
-  assert.match(r.text, /\(sqr2 :tempo 90 /);
+  const r = port("(fm1 :tempo 90 :len 2 c e g e |)\n(fm2 :len 8 c e g e c e g e |)\n(fm4 :len 8 c e g e c e g e |)\n(sqr1 :len 8 c e g e c e g e |)", "gb");
+  assert.equal(r.map.fm1, "drop");
+  assert.match(r.text, /\((wave|sqr\d) :tempo 90 /);
   // FM3's tracks are one channel on pc88: nothing past room is dropped.
   const fm3 = "(fm3 init-fm)\n(fm3-1 :len 4 c)\n(fm3-2 :len 4 c)\n(fm3-3 :len 4 c)\n(fm3-4 :len 4 c)\n(fm1 c)\n(fm2 c)\n(fm4 c)\n(fm5 c)\n(fm6 c)\n(sqr1 c)\n(sqr2 c)\n(sqr3 c)";
   assert.ok(portRows(fm3, "pc88").rows.every((x) => x.to !== "drop"), "md's FM3 onto pc88: every row kept");
@@ -307,6 +315,39 @@ const port = (src, to, rows) => {
   // A pruned voice's base goes too when nothing else names it.
   const prune = port('(import "presets/fm-roles/set.mmlisp")\n(def-fm mid piano :tl1 3)\n(def-fm lead mid :tl2 4)\n(fm1 lead :len 4 c e)', "fc");
   assert.doesNotMatch(prune.text, /def-fm (mid|lead)/);
+}
+
+// ── The wave memories (wave-port.js) ──
+{
+  // presets/wavetable's plain shapes read as themselves.
+  const file = join(repo, "tools/tests/t.mmlisp");
+  const shapes = ["sine", "triangle", "saw", "square", "pulse25", "pulse12"];
+  const src = `(def-score :target pce)\n(import "presets/wavetable/set.mmlisp")\n${shapes.map((n) => `(wave1 ${n} c)`).join("\n")}`;
+  for (const w of compileMMLisp(src, file, { imports: readImportSources(file, src) }).ir.metadata.waves)
+    if (shapes.includes(w.name)) assert.equal(shapeOf(w.data), w.name, `presets/wavetable's ${w.name} reads as itself`);
+  // A wave onto FM: its shape's voice; onto a pulse its width.
+  const scc = readFileSync(join(repo, "tools/tests/msx/scc.mmlisp"), "utf8");
+  assert.match(port(scc, "md").text, /\(fm1 :tempo 132 wave-saw /);
+  assert.match(port(scc, "fc", { wave1: "tri", wave2: "sqr2" }).text, /\(sqr2 :duty 4 /, "the SCC's pulse a 25 % pulse");
+  // A voice onto a wave channel: a role's wave and its macro; any other its
+  // waveform's wave under its carrier's envelope; a square presets/wavetable's.
+  const fm = port('(import "presets/gm/set.mmlisp")\n(def-fm pad init-fm :alg 7 :tl1 127 :tl2 127 :tl3 127 :ar4 12 :rr4 3)\n(fm1 gm-piano :len 4 c)\n(fm2 pad :len 2 c)\n(sqr1 :duty 2 :len 4 c)', "pce");
+  assert.match(fm.text, /\(import "presets\/wavetable\/set\.mmlisp"\)/);
+  assert.match(fm.text, /\(wave1 wave-piano :len 4 c\)/);
+  assert.match(fm.text, /\(def pad-env \(macro :vel\+ \[-15 .*#sus 0 #rel/);
+  assert.match(fm.text, /\(wave2 sine pad-env :len 2 c\)/);
+  // (a square, and the SSG-less md square's :duty there is pce's no-duty pulse)
+  // The FDS's modulation is the PC Engine's LFO: wave2 at :vol 0, wave1 its :fms.
+  const fds = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "pce");
+  assert.equal(fds.map["fds-wave"], "wave1");
+  assert.match(fds.text, /\(wave2 fds-lfo :vol 0 :oct \d [a-g]\+?0\)/);
+  assert.match(fds.text, /\(wave1 tri :lfo-freq \d+ .*:fms \d/);
+  // …and the PC Engine's LFO the FDS's: wave2's triangle a table summing to it.
+  const pce = port("(def-score :target pce)\n(def-wave tri :wave (triangle -128..127))\n(def-wave lead :wave (saw -128..127))\n(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)\n(wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)", "fc", { wave1: "fds-wave" });
+  assert.match(pce.text, /\(fds-wave :lfo-wave \[(2 ){8}(-2 ){16}(2 ){7}2\] lead :lfo-freq \d+ :lfo-pmd \d+ /);
+  // The FDS's 64 steps onto a 32-step chip: written at the 32 it plays.
+  const w64 = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "msx", { "fds-wave": "wave1" });
+  assert.match(w64.text, /\(def-wave sine64 :wave \[(-?\d+ ){31}-?\d+\]\)/);
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

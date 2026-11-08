@@ -384,7 +384,7 @@
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-touch_app"/></svg><span>Tap Tempo</span><span class="menu-item-shortcut" id="timingMenuCheck"></span>
         </button>
         <button class="menu-item" onclick="convertMachineAction();closeMenus()"
-          title="The score on another machine (md, pc88, x68k, msx, fc, gb) at the words' level, a row per channel; or General MIDI. One undo step">
+          title="The score on another machine (md, pc88, x68k, msx, pce, fc, gb) at the words' level, a row per channel; or General MIDI. One undo step">
           <svg class="menu-icon" aria-hidden="true"><use href="#mi-memory"/></svg><span>Convert to Machine…</span>
         </button>
         <div class="menu-sep"></div>
@@ -3701,7 +3701,7 @@
       const source = out.text.replace(new RegExp(`^(; Imported from .*?) \\(${tag}\\)`), `$1 (${tag}, read as ${own}, then onto ${target})`);
       return { target, res: { ...res, source, warnings: [...res.warnings, ...out.said] } };
     }
-    const PORT_HINT = 'another machine takes its voices, loops and gates as written: a part keeps its channel where the machine has it, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice named for an instrument plays that machine’s, any other the nearest waveform; what the machine has not is read in its words or said. A wave-memory part (SCC …) is dropped for now. General MIDI reads it as its own machine’s, then gives each channel a GM instrument and the drums kit roles';
+    const PORT_HINT = 'another machine takes its voices, loops and gates as written: a part keeps its channel where the machine has it, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or said. General MIDI reads it as its own machine’s, then gives each channel a GM instrument and the drums kit roles';
 
     async function importMdxBytes(bytes, fileName, pdx) {
       const mdx = parseMdx(bytes);
@@ -4474,7 +4474,7 @@
           (near.length ? '' : ' Its chips are its own: it converts onto General MIDI.'),
         fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, choices,
           hint: near.length
-            ? 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice named for an instrument plays that machine’s, any other the nearest waveform; what the machine has not is read in its words or dropped, and the log says each. A wave-memory part (SCC, N163, FDS, the Game Boy’s wave) is dropped for now. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
+            ? 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles'
             : 'General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
         rows: rowsFor(choices[0][0]),
         rowsFor,

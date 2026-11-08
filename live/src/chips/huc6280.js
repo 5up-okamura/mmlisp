@@ -48,6 +48,8 @@ export function noiseNoteOfHz(hz) {
   return NOISE_NOTE_BASE + best;
 }
 const noiseHz = (rate) => CLOCK / (((31 - rate) << 6) || 32);
+/** The clock (Hz) of the noise a note plays at: noiseNoteOfHz's other way. */
+export const noiseHzOfNote = (note) => noiseHz(Math.max(0, Math.min(31, Math.round(note) - NOISE_NOTE_BASE)));
 
 // DDA's rate: the CPU's timer, 7.16 MHz / 1024 — a write a tick.
 export const DDA_RATE = (2 * CLOCK) / 1024;

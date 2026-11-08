@@ -2583,15 +2583,13 @@ shortcuts keep their normal meaning.
 ### Converting to another machine
 
 **Edit ▸ Convert to Machine…** puts the open score on another machine:
-`md`, `pc88`, `x68k`, `msx`, `fc` and `gb` take one another's scores at the
-words' level. The voices, loops, gates, curves and comments stay as written;
+`md`, `pc88`, `x68k`, `msx`, `pce`, `fc` and `gb` take one another's scores
+at the words' level. The voices, loops, gates, curves and comments stay as written;
 only what the other machine lacks changes. Every machine's score can also go
 to General MIDI, read as it plays (as a song import's last Target is, above).
 A General MIDI score goes onto any machine through its own MIDI, in the
 dialog File ▸ Import ▸ MIDI shows — the rows, the timing, the loop (ticked
 when the score loops).
-A wave memory's channels (the SCC, the N163, the FDS, the Game Boy's `wave`,
-the PC Engine's) are not converted yet: they are dropped and said.
 
 The dialog has a row per channel the score writes, each going to one of the
 machine's channels or dropped:
@@ -2633,6 +2631,27 @@ OPLL's 2 (the FM-PAC, the VRC7) plays as follows:
 
 A square on an FM channel plays the waveforms' square (the OPLL's
 `clarinet`).
+
+A wave memory's channels (the SCC, the PC Engine's, the FDS, the N163, the
+Game Boy's `wave`) take FM, squares and one another's waves the same way:
+
+- A wave goes onto another wave channel as it is; the FDS's 64 steps are
+  written as the 32 a 32-step chip plays.
+- A wave named for an instrument (presets/wavetable's `piano`, `flute` …)
+  plays that instrument's voice on FM. Any other wave plays its nearest
+  plain shape, read off its harmonics: `sine`, `triangle`, `saw`,
+  `square`, `pulse25` or `pulse12`. That is the waveforms' voice on FM, and
+  a square of that width on a pulse (`:duty 4`, `:duty 2`).
+- An FM voice onto a wave channel: a role's voice plays presets/wavetable's
+  wave and macro for it (`wave-piano`: the steps of wave and level that make
+  the instrument); any other its waveform's wave under an envelope read off
+  its main carrier (`pad-env`, a `:vel+` macro). A square plays the
+  wavetable's `square`, its `:duty` the pulse of that width.
+- The FDS's modulation and the PC Engine's LFO (wave2 swaying wave1) are one
+  another's: the FDS's table summed is wave2's wave, held at `:vol 0`; its
+  rate is wave2's pitch with `:lfo-freq`; its depth is wave1's nearest
+  `:fms` at its middle note. Other LFOs do not cross (said).
+- A `(macro :wave …)` onto FM or a square loses its waves and keeps the rest.
 
 The words the machine lacks are read in its own words or dropped:
 

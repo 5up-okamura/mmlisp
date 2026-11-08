@@ -196,64 +196,31 @@ to Machine, and the MDX's and the MGS's Target with rows). Decisions:
   every pass plays as the first; the source's later passes ran higher. Say it
   in stage 3 (as the split's mode in a loop is said).
 
-## Machine conversion, stage 3: the wave memories (planned 2026-11-08; not yet built)
+## Machine conversion, stage 3: the wave memories (built 2026-11-08)
 
-msx's SCC (wave1–5; 4 and 5 one memory), pce (wave1–6, all it has; wave1's
-LFO `:fms`, wave2 its source; `:pan`; noise5/6 on wave5/6's channels; DDA
-pcm1–6), fc's FDS (fds-wave, 64 steps, its own modulator `:lfo-freq` /
-`:lfo-pmd` / `:lfo-wave` table) and N163 (n163-wave1–8), gb's `wave`
-(`:pan`) — every pair both ways; pce joins PORT_TARGETS. A wave is a
-`def-wave` of 32 (FDS: 64) steps, a track's `:wave` expression, or a
-`(macro :wave [names])`; presets/wavetable holds the fifteen roles as waves
-under the roles' names, the plain shapes `sine triangle saw square pulse25
-pulse12`, and a macro a role (`wave-piano`: `:wave` steps + `:vel+`), which
-is what makes a wave sound like its instrument (its README).
-
-The policy, as stage 2's: **a role plays the machine's voice for it; any
-other wave or voice its nearest shape.** One module, `wave-port.js`:
-- `shapeOf(steps)`: a wave's shape among the six plain ones, by its
-  harmonic magnitudes (a 32-point DFT, level- and phase-free) against the
-  wavetable's; a 64-step wave read at every other step.
-- wave → wave: a def-wave as it is (an expression too, a `$slot` one too);
-  FDS 64 → 32 written out at every other step (the compiler's reading, with
-  no W_TARGET); the bits are the chip's (the compiler rounds). SCC wave4/5:
-  the planner fills wave1–3 first, and two waves on 4/5 are said. `:pan`
-  where the part has it; FDS modulation ↔ pce wave1's `:fms`: dropped and
-  said at first (open: a depth class later).
-- wave → FM: a role's name → the role's voice (fm-roles import / ROM); any
-  other → `shapeOf` → waveforms' voice on 4-op, the ROM stand-in on the
-  OPLL (pulse25 / pulse12 as the square). A `(macro :wave …)` loses its
-  `:wave` target and keeps the rest (`:vel+`), said; `:wave (expr)` is
-  folded when constant (waveCurveSteps) and classified, a `$slot` one said.
-- wave → square: the shapes to the square; pulse25 → `:duty 4`, pulse12 →
-  `:duty 2` on fc / gb pulses; sine / triangle → fc's `tri` when free; saw →
-  `vrc6-saw` when the rows pick it.
-- FM → wave: a role's voice → the wavetable's wave of that name and its
-  `wave-<role>` macro written first on the track (the import and the
-  stand-ins' `loud-*` rule do not apply: a wave has the chip's level). A
-  non-role 4-op voice → waveformOf's shape as a wave, with an envelope
-  macro made from its main carrier's EG (AR / DR / SL / RR at the chip's
-  rates, as presets/envelopes writes them: `(def <voice>-env (macro :vel+
-  […]))`) — open: that, or the plain wave only. An OPLL voice the same on
-  its carrier.
-- square → wave: `square`; `:duty` 4 / 2 → pulse25 / pulse12; the SSG's
-  envelope dropped as now.
-- noise: pce's noise5 / noise6 are a fourth writing — pitched, their own
-  table (huc6280 noiseNoteOfHz, + noiseHzOfNote): `PITCHED_NOISE` grows a
-  pce entry; the planner shares wave5/6 with them by voiceKey.
-- samples: pce's DDA as any sample channel (rows).
-- The planner: `wave` joins the melodic pool and the candidates — wave →
-  wave, fm, tone; fm → fm, wave, tone; tone → tone, wave, fm.
-
-Checks: the msx scc*, pce *, fc fds* / n163*, gb wave test scores onto every
-machine and back (compile clean, notes kept); the wavetable's shapes classify
-as themselves and the test scores' waves as their curves (saw, sin → sine,
-the pulse); a role wave ↔ role voice round trip keeps the name; `wave-piano`
-onto FM keeps its `:vel+`.
-
-UI: PORT_TARGETS + pce; the dialogs' "dropped for now" words go; guide.md
-§ Converting to another machine gains the waves. Order: wave-port.js +
-check → the planner and the word rules → pce's noise → docs. ~1.5–2 days.
+pce joins; the SCC, pce, the FDS, the N163 and gb's wave convert both ways
+(wave-port.js; guide.md § Converting to another machine). The user's
+answers: a non-role FM voice onto a wave is its waveform's wave AND an
+envelope macro off its main carrier's EG (`<voice>-env`, fm-model's egStep
+a frame at a time, 2 dB a :vel step); the FDS's modulation ↔ pce's LFO is
+mapped; a `(macro :wave …)` off a wave channel keeps all but its waves.
+Decisions on the way:
+- shapeOf: harmonics 1-15's magnitudes against the six plain shapes; a wave
+  repeating within its cycle is read on one repeat (gb's `tri2`).
+- pce's kinds share its six voices (wave5 / noise5 / pcm5): one room for
+  them all, the noise placed first; FDS-modulated, wave2 is kept for the LFO
+  and the FDS row goes to wave1.
+- pce's noise is a third pitched noise (PITCHED_NOISE, huc6280
+  noiseHzOfNote); it has no :mode.
+- FM's LFO words onto pce / fc, and pce's / the FDS's onto anything but each
+  other, are dropped (another LFO).
+- A def-wave's own curve named as itself (`(def-wave saw :wave (saw …))`)
+  is no use of it: pruning counts uses outside the def.
+- The check: a channel the source shared between kinds (pce) keeps every
+  note it played (a superset there).
+- Open: inline `:wave (expr)` off a wave channel is dropped, not classified;
+  the SCC's wave4 / wave5 share one memory (the compiler says so); a noise
+  loop moving the octave onto the SN's modes plays every pass as the first.
 
 ## The PC Engine (pce; built 2026-10-27)
 
