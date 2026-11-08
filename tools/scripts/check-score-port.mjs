@@ -23,6 +23,9 @@ import { midiPlan } from "../../live/src/export-midi.js";
 import { TARGETS } from "../../live/src/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
 import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
+import { WAVEFORM_WORDS, waveformOf } from "../../live/src/voice-port.js";
+import { parse } from "../../live/src/mmlisp-parser.js";
+import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const compile = (src, file) => {
@@ -33,10 +36,11 @@ const compile = (src, file) => {
 
 // A channel's notes as the MIDI export plays them out (the loops unrolled,
 // the voice hoist's moves taken back): on and key, a noise's or a sample's on.
-function notesOf(ir, channel, kind) {
-  const keyed = kind !== "noise" && kind !== "sample";
+// A loop is unrolled up to the song's longest track, which a dropped track
+// may have been: the notes are compared up to `until`, the shorter song's end.
+function notesOf(ir, channel, kind, until = Infinity, keyed = kind !== "noise" && kind !== "sample") {
   return midiPlan(ir).tracks.filter((t) => t.name === channel)
-    .flatMap((t) => t.notes.map((n) => (keyed ? `${n.on}:${n.key}` : `${n.on}`))).sort();
+    .flatMap((t) => t.notes.filter((n) => n.on < until).map((n) => (keyed ? `${n.on}:${n.key}` : `${n.on}`))).sort();
 }
 
 let scores = 0;
@@ -47,9 +51,9 @@ function check(file, src, to) {
   const r = portScore(src, to, { imports });
   assert.ok(!r.error, `${file} → ${to}: ${r.error}`);
   const before = compile(src, file);
+  if (before.bad.length) return r; // a score of the language's errors (a diagnostics test): not converted clean
   const after = compile(r.text, file);
   assert.deepEqual(after.bad, [], `${file} → ${to} compiles clean`);
-  if (before.bad.length) return r; // a score of the language's errors: its notes are not the point
   const { rows } = portRows(src, to, { imports });
   for (const row of rows) {
     const dest = r.map[row.key];
@@ -57,8 +61,13 @@ function check(file, src, to) {
     const kind = TARGETS[from].partOf(row.head).kind;
     // A sample on the ROM rhythm plays its role's ROM sound; a role played
     // on a sample channel, its kit's sample: the names are the roles both ways.
-    const was = notesOf(before.ir, row.head, kind);
-    const now = notesOf(after.ir, dest, kind);
+    const until = Math.min(midiPlan(before.ir).endTick, midiPlan(after.ir).endTick);
+    // A voice across the FM families is a role's or a waveform's, whose
+    // `:key` sounds it in its own register: the onsets are what is kept.
+    const twoOp = (t, h) => !!TARGETS[t].partOf(h)?.romNames;
+    const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && TARGETS[to].partOf(dest).kind === "fm" && twoOp(from, row.head) !== twoOp(to, dest));
+    const was = notesOf(before.ir, row.head, kind, until, keyed);
+    const now = notesOf(after.ir, dest, kind, until, keyed);
     assert.deepEqual(now, was, `${file} → ${to}: ${row.head} on ${dest} keeps its notes`);
     tracks++;
   }
@@ -67,7 +76,7 @@ function check(file, src, to) {
 }
 
 const dir = (d) => readdirSync(join(repo, d)).filter((f) => f.endsWith(".mmlisp")).map((f) => join(repo, d, f));
-const files = [...dir("drv/tests"), ...dir("tools/tests/pc88"), ...dir("tools/tests/x68k")];
+const files = [...dir("drv/tests"), ...["pc88", "x68k", "msx", "fc", "gb"].flatMap((t) => dir(`tools/tests/${t}`))];
 for (const file of files) {
   const src = readFileSync(file, "utf8");
   for (const to of PORT_TARGETS) if (to !== scoreTargetOf(src)) check(file, src, to);
@@ -126,7 +135,8 @@ for (const file of files) {
 
 // ── The rules ──
 const port = (src, to, rows) => {
-  const r = portScore(src, to, { rows });
+  const file = join(repo, "tools/tests/t.mmlisp");
+  const r = portScore(src, to, { rows, imports: readImportSources(file, src) });
   assert.ok(!r.error, r.error);
   assert.deepEqual(compile(r.text, join(repo, "tools/tests/t.mmlisp")).bad, [], `compiles clean:\n${r.text}`);
   return r;
@@ -172,7 +182,7 @@ const port = (src, to, rows) => {
   const r = port(readFileSync(join(repo, "tools/tests/pc88/rhythm.mmlisp"), "utf8"), "md");
   assert.match(r.text, /\(import "presets\/rx5\/set\.mmlisp"\)/);
   assert.match(r.text, /:pcm-voices 3/);
-  assert.ok(r.said.some((s) => /^rhythm4 \(10 notes\) is not converted/.test(s)), "past md's three, said");
+  assert.ok(r.said.some((s) => /^rhythm3 \(2 notes\) is not converted/.test(s)), "past md's three, the one with the fewest notes dropped and said");
   const back = port(r.text, "pc88");
   assert.deepEqual([back.map.pcm1, back.map.pcm2, back.map.pcm3], ["rhythm1", "rhythm2", "rhythm3"]);
 }
@@ -186,6 +196,63 @@ const port = (src, to, rows) => {
   const r = port("(def-se jump (fm1 :len 16 c e g))\n(fm1 :len 4 c)", "x68k");
   assert.doesNotMatch(r.text, /def-se/);
   assert.ok(r.said.some((s) => /def-se jump/.test(s)));
+}
+
+// ── Across the FM families and the PSGs (voice-port.js) ──
+{
+  // presets/waveforms' four as voice-port holds them.
+  const set = new Map(parse(readFileSync(join(repo, "presets/waveforms/set.mmlisp"), "utf8"))
+    .filter((n) => n.items?.[0]?.value === "def-fm").map((n) => {
+      const w = new Map();
+      for (let i = 2; i + 1 < n.items.length; i += 2) w.set(canonicalTarget(n.items[i].value), Number(n.items[i + 1].value));
+      return [n.items[1].value, w];
+    }));
+  for (const [name, words] of WAVEFORM_WORDS)
+    for (const [w, v] of words) assert.equal(set.get(name)?.get(w), v, `voice-port's ${name} ${w} is presets/waveforms'`);
+  for (const name of WAVEFORM_WORDS.keys()) assert.equal(waveformOf(WAVEFORM_WORDS.get(name)), name, `${name} reads as itself`);
+
+  // 4-op onto the FM-PAC: a role its ROM voice, a gm-* its role's, any other
+  // voice its waveform's ROM voice; a 4-op def under a ROM name goes.
+  const md = `(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :ml1 2 :tl2 0 :tl3 30 :tl4 0)
+(def-fm organ init-fm :alg 7 :tl1 10)
+(import "presets/gm/set.mmlisp")
+(fm1 lead :len 4 c e :tl1 30 g)
+(fm2 organ :len 4 c)
+(fm3 gm-piano :len 4 c)`;
+  const r = port(md, "msx");
+  assert.match(r.text, /\(fm1 synth :len 4 c e g\)/, "a bright non-role voice: the saw's ROM voice, its op words gone");
+  assert.match(r.text, /\(fm2 organ /);
+  assert.doesNotMatch(r.text, /def-fm organ|def-fm lead/, "the 4-op defs go: one hid the ROM's organ, one nothing plays");
+  assert.match(r.text, /\(fm3 piano :len 4 c\)/, "gm-piano is the piano");
+  // …and back: the ROM voices are presets/fm-roles' under the same names.
+  const back = port(r.text, "md");
+  assert.match(back.text, /\(import "presets\/fm-roles\/set\.mmlisp"\)/);
+  assert.match(back.text, /\(fm2 organ /);
+  // The VRC7's own ROM names are their roles on 4-op.
+  const vrc7 = port("(def-score :target fc)\n(vrc7-fm1 wurly :len 4 c e)", "md", { "vrc7-fm1": "fm1" });
+  assert.match(vrc7.text, /\(fm1 piano :len 4 c e\)/);
+  // An FM-PAC user voice onto 4-op: the same voice, read as 4-op.
+  const user = port("(def-score :target msx)\n(def-fm reed :fb 3 :tl1 30 :ar1 15 :ml1 2 :ar2 12 :eg2 1 :ws1 1)\n(fm1 reed :len 4 c)", "x68k");
+  assert.match(user.text, /\(def-fm reed :alg 4 :fb 3\n\s+:ar1 30 /);
+  assert.match(user.text, /:tl3 127 .*\n.*:tl4 127/s);
+  assert.ok(user.said.some((x) => /'reed' plays without :ws/.test(x)), "the rectified sine said");
+}
+{
+  // The noise by Hz: md's white1 (6991 Hz) on the 2A03 is the pitch nearest
+  // it, and back the mode nearest the pitch's rate.
+  const fc = port("(noise :len 8 :mode white1 c c :mode periodic0 c)", "fc");
+  assert.match(fc.text, /\(noise :len 8 :mode white :oct \d [a-g]\+? [a-g]\+? :mode periodic :oct \d [a-g]\+?\)/);
+  const md = port(fc.text, "md");
+  assert.match(md.text, /\(noise :len 8 :mode white1 [a-g]\+? [a-g]\+? :mode periodic0 [a-g]\+?\)/, "and back: the same modes (the SN76489's noise has no pitch)");
+  assert.equal(md.text.match(/^; Converted from/gm).length, 1, "a second conversion's line replaces the first's");
+  // The SSG's rate on the Game Boy, its pitch.
+  const gb = port("(def-score :target pc88)\n(noise :noise-rate 4 :len 8 c c)", "gb");
+  assert.match(gb.text, /\(noise :len 8 :mode white :oct \d [a-g]\+? [a-g]\+?\)/);
+}
+{
+  // A machine short of channels keeps the parts with the most notes.
+  const r = port("(fm1 :len 8 c d e f g a b c)\n(fm2 :len 2 c c)\n(sqr1 :len 4 c e g e)\n(sqr2 :len 1 c)", "gb");
+  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["sqr2", "drop", "sqr1", "drop"]);
 }
 
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

@@ -157,7 +157,7 @@ key) the same. Where it went past the table above, or off it:
 - A song word in a macro is dropped where the part has no `songMacros`
   (the SSG's `:noise-rate` steps; the OPM's does not).
 
-## Machine conversion, stage 2: PSG and 2-op FM (planned 2026-11-08; not yet built)
+## Machine conversion, stage 2: PSG and 2-op FM (planned 2026-11-08; in progress)
 
 Widen score-port.js from md / pc88 / x68k to msx, fc and gb — their squares
 (SSG, 2A03, Game Boy, 5B, MMC5, VRC6), their noises, the 2-op FM (FM-PAC,
@@ -204,9 +204,10 @@ Channels (rows, defaults; the same planner, its kinds widened):
 | samples | fc pcm1 (DPCM) ↔ others' pcm by rows (its loop rule as the ADPCM-B's: the range is the loop); gb none; pce's DDA with stage 3 |
 | `:pan` | gb's pulses / noise and the OPN / OPM / ADPCM-B have it; fc, msx none: dropped and said (centre unsaid, as now) |
 | `:lfo-rate` / `:fms` / `:ams` → OPLL user voice | `:vib` / `:am` per operator (fixed rates), said; on a ROM voice dropped |
-Defaults when a machine is short (gb: two pulses, a noise): the rows most
-notes first keep their channels, the rest drop — a change from the table's
-order now; or keep the table's order (open, ask).
+Defaults when a machine is short (gb: two pulses, a noise): the rows with
+the most notes take the channels first, the rest drop (the user, 2026-11-08).
+The user also agreed: a non-role voice's waveform by nearestRomVoice's
+weighing; MGS gets the Target too.
 
 Checks (`check:score-port`, widened): tools/tests' msx, fc, gb scores onto
 md / pc88 / x68k and back, drv/tests' md scores onto msx / fc / gb — compile

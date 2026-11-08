@@ -63,6 +63,9 @@ export function noiseNoteOfHz(hz) {
   return NOISE_NOTE_BASE + best;
 }
 
+/** The clock (Hz) of the noise a note plays at: noiseNoteOfHz's other way. */
+export const noiseHzOfNote = (note) => noiseHz(NOISE_TABLE[Math.max(0, Math.min(NOISE_TABLE.length - 1, Math.round(note) - NOISE_NOTE_BASE))]);
+
 // A −128..127 step as the wave memory's 4-bit value.
 const waveNibble = (v) => Math.max(0, Math.min(15, (Math.round(v) + 128) >> 4));
 // The steps as the 16 bytes of the memory, high nibble first.

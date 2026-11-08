@@ -35,9 +35,13 @@ import { TARGETS, partsWithWord } from "./targets.js";
 import { canonicalTarget } from "./mmlisp2ir.js";
 import { loudDefs } from "./import-song.js";
 import { OPN_LFO_HZ, lfoHz } from "./chips/ym2151.js";
+import { opllRomVoices } from "./chips/ym2413.js";
+import * as fcApu from "./chips/rp2a03.js";
+import * as gbApu from "./chips/lr35902.js";
+import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET } from "./voice-port.js";
 
 /** The machines a score can be converted between. */
-export const PORT_TARGETS = ["md", "pc88", "x68k"];
+export const PORT_TARGETS = ["md", "pc88", "x68k", "msx", "fc", "gb"];
 
 const WAVEFORMS = "presets/waveforms/set.mmlisp";
 const RHYTHM_KIT = "presets/rx5/set.mmlisp"; // the ROM rhythm's roles, as the mucom88 import plays them
@@ -53,11 +57,27 @@ const NOISE_CLOCK = 125000;
 const nearestWhite = (hz) => WHITE_HZ.reduce((b, w, i) => (Math.abs(Math.log(w / hz)) < Math.abs(Math.log(WHITE_HZ[b] / hz)) ? i : b), 0);
 const nearestLfoRate = (hz) => 1 + OPN_LFO_HZ.reduce((b, w, i) => (Math.abs(Math.log(w / hz)) < Math.abs(Math.log(OPN_LFO_HZ[b] / hz)) ? i : b), 0);
 
+// How a noise's rate is written: the SN76489's `:mode whiteN` / `periodicN`,
+// a song-wide `:noise-rate n` (the SSG's, the OPM's, the 5B's: 125 kHz / n),
+// or each note's pitch (the 2A03's and the Game Boy's: c2 the slowest).
+const PITCHED_NOISE = { "fc-noise": fcApu, "gb-noise": gbApu };
+const noiseModel = (part) => (PITCHED_NOISE[part?.name] ? "pitch" : part?.modes && Object.keys(part.modes).some((m) => /^white\d$/.test(m)) ? "mode" : "rate");
+const NOISE_RATE_START = 9; // the SSG's and the OPM's rate before one is written
+const PITCH_NAMES = ["c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b"];
+const SEMI = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+const midiOfNote = (v, oct) => {
+  const [, name] = NOTE.exec(v);
+  return 12 * (oct + 1) + SEMI[name[0]] + (name[1] === "+" ? 1 : name[1] === "-" ? -1 : 0);
+};
+
 const NOTE = /^([a-g][+-]?)((?:\d+(?:\/\d+)?)?(?:t|f|ms)?\.*)$/;
 const isNote = (v) => typeof v === "string" && NOTE.test(v);
 const restOf = (v) => `_${NOTE.exec(v)[2]}`;
 const num = (node) => (node?.kind === "atom" && /^-?\d+(\.\d+)?$/.test(node.value) ? Number(node.value) : null);
 const isList = (n, head) => n?.kind === "list" && n.bracket === "()" && (head == null || n.items[0]?.value === head);
+// The two FM families: the OPLL's 2 operators (a ROM of voices, `romNames`)
+// and the OPN's and OPM's 4. A voice goes as written within one.
+const twoOp = (part) => !!part?.romNames;
 const NOISE_SPLIT = "fm8/noise"; // the row of x68k fm8's :mode noise notes
 const notes = (n) => `${n} note${n === 1 ? "" : "s"}`;
 
@@ -78,7 +98,10 @@ function survey(text, from, imports) {
   const roots = parse(text);
   const others = [...(imports?.values() ?? [])].flatMap((t) => { try { return parse(t); } catch { return []; } });
   const defNames = (nodes, head) => new Set(nodes.filter((n) => isList(n, head) && n.items[1]?.kind === "atom").map((n) => n.items[1].value));
-  const voices = new Set(["init-fm", ...defNames(roots, "def-fm"), ...defNames(others, "def-fm")]);
+  // The built-in ones too: the OPLL's ROM names, which every FM part has (a
+  // 4-op reading where there is no ROM), and a part's own (the VRC7's).
+  const romNames = from.parts.filter((p) => p.kind === "fm").flatMap((p) => [...opllRomVoices(p).keys()]);
+  const voices = new Set(["init-fm", ...romNames, ...defNames(roots, "def-fm"), ...defNames(others, "def-fm")]);
   const ownSamples = defNames(roots, "def-pcm");
   const samples = new Set([...ownSamples, ...defNames(others, "def-pcm")]);
   // A kit's roles, whichever machine's: a sample track playing them is a
@@ -120,11 +143,14 @@ function walk(items, fn) {
 // ── The rows ─────────────────────────────────────────────────────────────
 
 // A machine's channels of one kind a track can be written on: not another
-// way of playing one (fm3-1 …), and a kit's only where asked.
-function channelsOf(target, kind, { kit = false } = {}) {
+// way of playing one (fm3-1 …), and a kit's only where asked. `board`: only
+// the machine's own, not a cartridge's it lists (fc's expansions: the rows
+// offer them, the defaults do not, as a song import's).
+function channelsOf(target, kind, { kit = false, board = false } = {}) {
   return target.channelNames.filter((h, i) => {
     const p = target.partOf(h);
     if (p.kind !== kind || !!p.kit !== kit) return false;
+    if (board && target.listsExpansions && target.chipOf(h).optional) return false;
     return p.kit || !target.channelNames.slice(0, i).some((o) => target.voiceKey(o) === target.voiceKey(h) && target.partOf(o) === p);
   });
 }
@@ -192,39 +218,62 @@ function planRows(s, from, to) {
     return h;
   };
   const dest = {};
+  const notesOf = (k) => s.heads.get(k === NOISE_SPLIT ? "fm8" : k)?.notes ?? 0;
+  // A machine short of channels keeps the parts that play the most notes
+  // (the user, 2026-11-08): past its melodic channels — FM and squares, less
+  // a square its noise is and fm6 under the Mega Drive's PCM — and past its
+  // noises, the parts with fewer notes are dropped before anything is placed.
+  const melodic = (k) => ["fm", "tone"].includes(kindOf(from, k)) && k !== "fm3-csm-rate";
+  const pools = [
+    [melodic, channelsOf(to, "fm", { board: true }).length + channelsOf(to, "tone", { board: true }).length
+      - (keys.some((k) => kindOf(from, k) === "noise") && channelsOf(to, "noise", { board: true }).some((n) => to.channelNames.some((h) => h !== n && to.voiceKey(h) === to.voiceKey(n))) ? 1 : 0)
+      - (to.name === "md" && sampleRows ? 1 : 0)],
+    [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise", { board: true }).length],
+    // A kit's tracks are many to its one voice; the rest are a channel each.
+    [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)), channelsOf(to, "sample", { board: true }).length],
+  ];
+  for (const [inPool, room] of pools) {
+    const rows = keys.filter(inPool);
+    if (rows.length <= room) continue;
+    for (const k of [...rows].sort((a, b) => notesOf(a) - notesOf(b)).slice(0, rows.length - Math.max(0, room))) dest[k] = "drop";
+  }
   // First the channels the destination has as they are: the noise before a
   // square (a drum is a drum), then in the table's order.
   const byNoise = [...keys].sort((a, b) => (kindOf(from, b) === "noise") - (kindOf(from, a) === "noise"));
   for (const k of byNoise) {
     const p = to.partOf(k);
-    if (!p || p.kind !== kindOf(from, k) || p.kit) continue;
+    if (k in dest || !p || p.kind !== kindOf(from, k) || p.kind === "wave") continue;
+    if (p.kit && !rolesHere(s.heads.get(k))) continue; // a kit's track plays its roles
     if (p.kind === "sample" && rolesHere(s.heads.get(k))) continue; // its roles go to the ROM rhythm
     if (free(k, k)) dest[k] = claim(k, k);
   }
-  // Then the rest, in order: channels past the source's count first (x68k's
-  // fm7 and fm8), FM3's own tracks onto fm3 first.
+  // Then the rest, in the table's order (the pools above have dropped what
+  // does not fit): channels past the source's count first (x68k's fm7 and
+  // fm8), FM3's own tracks onto fm3 first. A wave memory's channel is a
+  // later stage's: dropped.
   const fmFirst = (k) => {
-    const fm = channelsOf(to, "fm");
+    const fm = channelsOf(to, "fm", { board: true });
     const beyond = fm.filter((h) => !from.channelNames.includes(h));
     const order = [...beyond, ...fm.filter((h) => !beyond.includes(h))];
-    return /^fm3/.test(k) ? ["fm3", ...order.filter((h) => h !== "fm3")] : order;
+    return /^fm3/.test(k) && order.includes("fm3") ? ["fm3", ...order.filter((h) => h !== "fm3")] : order;
   };
+  const tones = channelsOf(to, "tone", { board: true });
   for (const k of keys) {
     if (k in dest) continue;
     const kind = kindOf(from, k);
     let cands = [];
-    if (k === "fm3-csm-rate") cands = [];
-    else if (kind === "fm") cands = [...fmFirst(k), ...channelsOf(to, "tone")];
-    else if (kind === "tone") cands = [...channelsOf(to, "tone"), ...fmFirst(k)];
-    else if (kind === "noise") cands = channelsOf(to, "noise");
-    else if (kind === "sample") cands = rolesHere(s.heads.get(k)) ? [...channelsOf(to, "sample", { kit: true }), ...channelsOf(to, "sample")] : channelsOf(to, "sample");
+    if (k === "fm3-csm-rate" || kind === "wave") cands = [];
+    else if (kind === "fm") cands = [...fmFirst(k), ...tones];
+    else if (kind === "tone") cands = [...tones, ...fmFirst(k)];
+    else if (kind === "noise") cands = channelsOf(to, "noise", { board: true });
+    else if (kind === "sample") cands = rolesHere(s.heads.get(k)) ? [...channelsOf(to, "sample", { kit: true }), ...channelsOf(to, "sample", { board: true })] : channelsOf(to, "sample", { board: true });
     const h = cands.find((c) => free(k, c));
     dest[k] = h ? claim(k, h) : "drop";
   }
   const choicesOf = (k) => {
     const kind = kindOf(from, k);
-    if (to.partOf(k)?.kind === kind && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
-    if (k === "fm3-csm-rate") return ["drop"];
+    if (to.partOf(k)?.kind === kind && !to.partOf(k).kit && to.channelNames.includes(k) && !channelsOf(to, kind).includes(k)) return [k, "drop"]; // fm3-1 … as they are
+    if (k === "fm3-csm-rate" || kind === "wave") return ["drop"];
     if (kind === "fm" || kind === "tone") return [...channelsOf(to, "fm"), ...channelsOf(to, "tone"), "drop"];
     if (kind === "noise") return [...channelsOf(to, "noise"), "drop"];
     return [...channelsOf(to, "sample"), ...channelsOf(to, "sample", { kit: true }), "drop"];
@@ -293,13 +342,24 @@ class Porter {
     this.opVoices = new Map(); // `${voice}-op${n}` → [voice, n]
     this.standIns = new Set();
     this.patchCarry = this.readPatch();
+    // The FM parts each side writes its voices for, and the voices resolved.
+    this.fromFm = from.parts.find((p) => p.kind === "fm" && !p.optional) ?? from.parts.find((p) => p.kind === "fm");
+    this.toFm = to.parts.find((p) => p.kind === "fm");
+    this.voices = voiceTable(text, imports, this.fromFm);
+    // The parts the converted score has: the machine's own, and a cartridge's
+    // a row goes to (fc's 5B has a noise rate, its 2A03 none).
+    const used = new Set(Object.values(map));
+    this.toParts = new Set(to.channelNames.filter((h) => !(to.listsExpansions && to.chipOf(h).optional) || used.has(h)).map((h) => to.partOf(h)));
+    this.replaced = new Set(); // def-fm names a conversion leaves unplayed
+    this.shadowing = new Set(); // def-fm names that would hide the OPLL's ROM voice of that name
     this.fm8Split = from.name === "x68k" && !!this.s.heads.get("fm8")?.noiseMode;
   }
 
   say(line) { this.said.add(line); }
+  toHas(w) { return [...this.toParts].some((p) => p.words(w) || p.songWords?.(w)); }
   // A source channel as the log names it: the song's own name for it where
   // the caller has one (an MDX's FM G for fm7), else the channel.
-  nameOf(head) { return head === NOISE_SPLIT ? this.nameOf("fm8") : this.names[head] ?? head; }
+  nameOf(head) { return head == null ? "a def" : head === NOISE_SPLIT ? this.nameOf("fm8") : this.names[head] ?? head; }
 
   span(node) {
     const from = this.starts[node.line - 1] + node.column - 1;
@@ -384,8 +444,43 @@ class Porter {
       at = c.to;
     }
     out += this.text.slice(at);
+    out = this.pruneVoices(out);
     out = this.addHeader(out, [...added.values()].flat(), header);
     return { text: out, map: this.map, said: [...this.said] };
+  }
+
+  // A def-fm the conversion leaves unplayed (its tracks play a role's or a
+  // waveform's voice now, or a square) goes, and its line: one nothing else
+  // names, a voice extending it included.
+  pruneVoices(out) {
+    // presets/fm-roles holds the roles' 4-op voices under the OPLL's ROM
+    // names: on the OPLL the ROM's own are the roles.
+    if (twoOp(this.toFm) && !twoOp(this.fromFm)) {
+      const before = out;
+      out = out.replace(new RegExp(`^[ \\t]*\\(import\\s+"${FM_ROLES_SET.replace(/[./]/g, "\\$&")}"\\)[^\\n]*\\n?`, "m"), "");
+      if (out !== before) this.say(`presets/fm-roles: the ${this.toFm.label}'s ROM voices are the roles; its import is taken out`);
+    }
+    for (let pass = 0; pass < 4 && (this.replaced.size || this.shadowing.size); pass++) {
+      let roots;
+      try { roots = parse(out); } catch { return out; }
+      const named = new Map();
+      const count = (n, skip) => {
+        if (n === skip) return;
+        if (n?.kind === "atom") named.set(n.value, (named.get(n.value) ?? 0) + 1);
+        if (n?.kind === "list") n.items.forEach((m) => count(m, skip));
+      };
+      const defs = roots.filter((n) => isList(n, "def-fm") && (this.replaced.has(n.items[1]?.value) || this.shadowing.has(n.items[1]?.value)));
+      roots.forEach((n) => count(n));
+      const starts = [0];
+      for (let i = 0; i < out.length; i++) if (out[i] === "\n") starts.push(i + 1);
+      const gone = defs.filter((n) => named.get(n.items[1].value) === 1 || this.shadowing.has(n.items[1].value)).map((n) => {
+        const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
+        return { from, to: out[to] === "\n" ? to + 1 : to };
+      });
+      if (!gone.length) break;
+      for (const g of gone.sort((a, b) => b.from - a.from)) out = out.slice(0, g.from) + out.slice(g.to);
+    }
+    return out;
   }
 
   // The lines that go after def-score: the imports the stand-ins and the
@@ -397,6 +492,7 @@ class Porter {
     if (this.standIns.size && !imported(WAVEFORMS)) lines.push(`(import "${WAVEFORMS}")`);
     lines.push(...loudDefs(this.standIns));
     if (this.needsKit && !imported(RHYTHM_KIT)) lines.push(`(import "${RHYTHM_KIT}")`);
+    if (this.needsRoles && !imported(FM_ROLES_SET)) lines.push(`(import "${FM_ROLES_SET}")`);
     lines.push(...opDefs);
     if (!this.s.roots.some((n) => isList(n, "def-score"))) lines.unshift(`(def-score :target ${this.to.name}${this.pcmVoices() ? ` :pcm-voices ${this.pcmVoices()}` : ""})`);
     let head = "";
@@ -411,6 +507,7 @@ class Porter {
       body = body.slice(ds[0].length);
     }
     const top = header ? `; Converted from :target ${this.from.name}\n` : "";
+    if (header) head = head.replace(/^; Converted from :target \w+[^\n]*\n/m, ""); // an earlier conversion's
     return top + head + (lines.length ? `${lines.join("\n")}\n` : "") + body;
   }
   balanced(line) {
@@ -451,8 +548,20 @@ class Porter {
   }
 
   defFm(n) {
-    const fm = this.to.parts.find((p) => p.kind === "fm");
+    const fm = this.toFm;
     const name = n.items[1]?.value;
+    // A 4-op voice onto a machine of the OPLL (or none) is played as its
+    // role or waveform there: the def stays, and goes if nothing plays it.
+    if (!fm || (twoOp(fm) && !twoOp(this.fromFm))) return this.slice(n);
+    if (twoOp(this.fromFm) && twoOp(fm)) return this.slice(n);
+    // An OPLL user voice onto 4-op: the same voice, read as 4-op.
+    if (twoOp(this.fromFm)) {
+      const d = this.voices.get(name);
+      if (!d) return this.slice(n);
+      const r = opllDefAs4op(name, d.words);
+      if (r.without.length) this.say(`'${name}' plays without ${r.without.join(", ")}: a 4-op chip has none`);
+      return r.text;
+    }
     const outs = [];
     const gone = [];
     for (let i = 2; i < n.items.length; i++) {
@@ -510,7 +619,15 @@ class Porter {
       for (let i = 2; i < n.items.length; i++) if (isForm(n.items[i])) outs[i] = this.form(n.items[i]);
       return this.renderList(n, outs);
     }
-    const { outs: body } = this.body(n.items, 2, this.ctx(null));
+    // A snippet's voices are read as the FM's: across the FM families each
+    // is its role's or its waveform's, wherever the snippet is played.
+    // With no row on an FM channel they go.
+    const ctx = this.ctx(null);
+    const onFm = Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm");
+    if (this.fromFm && !onFm) Object.assign(ctx, { srcPart: this.fromFm, destPart: { kind: "none", label: "", words: () => false }, snippet: true });
+    else if (this.fromFm && this.toFm && twoOp(this.fromFm) !== twoOp(this.toFm))
+      Object.assign(ctx, { srcPart: this.fromFm, destPart: this.toFm, family: true, snippet: true });
+    const { outs: body } = this.body(n.items, 2, ctx);
     return this.renderList(n, body);
   }
 
@@ -518,15 +635,30 @@ class Porter {
 
   ctx(head, extra = {}) {
     const dest = head ? this.map[head] : null;
-    return {
+    const c = {
       head,
       dest,
-      srcPart: head ? this.from.partOf(head === NOISE_SPLIT ? "fm8" : head) : null,
+      srcPart: head ? this.from.partOf(head === NOISE_SPLIT ? "noise" : head) : null, // fm8's noise notes are the OPM's noise
       destPart: dest && dest !== "drop" ? this.to.partOf(dest) : null,
       destChannel: dest && dest !== "drop" ? this.to.channels[dest] : null,
       opN: head && /^fm3-\d$/.test(head) && !this.to.channelNames.includes(head) ? Number(head.slice(4)) : null,
       ...extra,
     };
+    const src = c.srcPart, dst = c.destPart;
+    // A sample channel that cannot bend (the Mega Drive's DAC), and a kit
+    // that plays each sound at one pitch (the PC-8801's ROM rhythm).
+    c.noBend = dst?.kind === "sample" && !dst.pitch && !!src?.pitch;
+    c.flatPitch = !!dst?.kit && !dst.pitch && !(src?.kit && !src.pitch);
+    // A noise between a pitched one and the others is read note by note.
+    if (src?.kind === "noise" && dst?.kind === "noise") {
+      const from = noiseModel(src), to = noiseModel(dst);
+      if (from !== to && (from === "pitch" || to === "pitch"))
+        c.noise = { from, to, src, dst, oct: 4, hz: from === "mode" ? WHITE_HZ[0] : NOISE_CLOCK / NOISE_RATE_START, periodic: false, last: null };
+    }
+    // A voice crossing between the FM families, or between two ROMs.
+    c.family = src?.kind === "fm" && dst?.kind === "fm" && twoOp(src) !== twoOp(dst);
+    c.romSwap = twoOp(src) && twoOp(dst) && src.rom !== dst.rom;
+    return c;
   }
 
   form(n) {
@@ -561,18 +693,26 @@ class Porter {
     (this.started ??= new Set()).add(ctx.head);
     if (first && ctx.opN && this.patchCarry) {
       if (this.patchCarry.tempo && !this.tempoCarried) { lead.push(`:tempo ${this.patchCarry.tempo}`); this.tempoCarried = true; }
-      if (this.patchCarry.voice && !ctx.hasVoiceFirst) lead.push(this.opVoice(this.patchCarry.voice, ctx.opN));
+      // On a 4-op channel a one-operator voice of the patch; on the OPLL the
+      // patch voice's role or waveform; on a square none.
+      const v = this.patchCarry.voice;
+      if (v && !ctx.hasVoiceFirst && ctx.destPart?.kind === "fm")
+        lead.push(twoOp(ctx.destPart) ? this.voiceRule(v, ctx) ?? v : this.opVoice(v, ctx.opN));
     }
     if (first && ctx.srcPart.kind !== "fm" && ctx.destPart.kind === "fm") {
-      const v = this.standIn();
+      const v = this.standIn(ctx.destPart);
       lead.push(v);
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} as ${v} (a stand-in for its square)`);
     }
     if (ctx.srcPart.kind === "fm" && ctx.destPart.kind !== "fm" && ctx.destPart.kind !== "noise")
       this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest}, a square, without its voice`);
     if (ctx.split === "noise") this.say(`${this.nameOf("fm8")}'s :mode noise notes play on ${ctx.dest}, its tone notes on ${this.map.fm8}`);
-    if (ctx.opN) this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
+    if (ctx.opN && ctx.destPart?.kind === "fm" && !twoOp(ctx.destPart)) this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} under a one-operator voice of the patch (operator ${ctx.opN} the carrier)`);
     if (ctx.head === "fm3-csm" && ctx.dest !== "fm3-csm") this.say(`${this.nameOf("fm3-csm")} plays its notes on ${ctx.dest}: the ${this.to.system} has no CSM`);
+    if (first && ctx.flatPitch && this.s.heads.get(ctx.head)?.notes) {
+      lead.push(":oct 4");
+      this.say(`${this.nameOf(ctx.head)} plays on ${ctx.dest} at c4: the ${ctx.destPart.label} has one pitch a sound`);
+    }
     if (lead.length) after.set(at, [...lead, ...(after.get(at) ?? [])]);
     return this.renderList(n, outs, after);
   }
@@ -587,6 +727,23 @@ class Porter {
       const it = items[i];
       if (it.kind === "atom") {
         const v = it.value;
+        if (ctx.noise && !(ctx.split && v === ":mode") && typeof v === "string" && /^:(mode|noise-rate|oct)$/.test(v) && i + 1 < items.length) {
+          this.noiseWord(v, items[i + 1], ctx);
+          outs[i] = outs[i + 1] = null;
+          i++;
+          continue;
+        }
+        if (ctx.noise && (v === ">" || v === "<" || /^o[+-]\d*$/.test(v))) {
+          const n = ctx.noise;
+          n.oct += v === ">" ? 1 : v === "<" ? -1 : (v[1] === "+" ? 1 : -1) * Number(v.slice(2) || 1);
+          if (n.to === "pitch") outs[i] = null; // the notes are written at their octave
+          continue;
+        }
+        if (ctx.noise && isNote(v)) {
+          sawNote = true;
+          outs[i] = this.noiseNote(v, ctx);
+          continue;
+        }
         if (typeof v === "string" && /^:[a-z]/.test(v) && i + 1 < items.length) {
           const r = this.wordRule(v, items[i + 1], ctx);
           if (r.drop) outs[i] = outs[i + 1] = null;
@@ -594,10 +751,16 @@ class Porter {
           i++;
           continue;
         }
-        if (ctx.head && this.s.voices.has(v)) {
+        if ((ctx.head || ctx.snippet) && this.s.voices.has(v)) {
           if (!sawNote && ctx.opN) ctx.hasVoiceFirst = true;
           const r = this.voiceRule(v, ctx);
           if (r !== undefined) outs[i] = r;
+          continue;
+        }
+        if (ctx.flatPitch && (v === ">" || v === "<" || /^o[+-]\d*$/.test(v))) { outs[i] = null; continue; }
+        if (ctx.flatPitch && isNote(v)) {
+          sawNote = true;
+          outs[i] = `c${NOTE.exec(v)[2]}`;
           continue;
         }
         if (isNote(v)) {
@@ -606,8 +769,15 @@ class Porter {
           continue;
         }
         if (ctx.destPart?.kind === "sample" && !this.toKit.size && this.from.parts.some((p) => p.kit?.[v]) && !this.s.samples.has(v)) this.needsKit = true;
+      } else if ((ctx.noBend || ctx.flatPitch) && isList(it, "glide")) {
+        this.say(`(glide …) on ${this.nameOf(ctx.head)}: ${ctx.dest} plays a sound at its own pitch; taken out`);
+        outs[i] = null;
       } else if (isList(it) && DESCEND.has(it.items[0]?.value)) {
+        // A loop's next pass starts from where its last ended: the noise's
+        // state is written again inside it and after it.
+        if (ctx.noise) ctx.noise.last = null;
         const inner = this.body(it.items, 1, it.items[0].value === "macro" ? { ...ctx, macro: true } : ctx);
+        if (ctx.noise) ctx.noise.last = null;
         outs[i] = this.renderList(it, inner.outs, inner.after);
       }
     }
@@ -618,10 +788,79 @@ class Porter {
     return { outs, after };
   }
 
+  // The noise's state as its source writes it: the octave, the rate (Hz),
+  // white or periodic.
+  noiseWord(kw, val, ctx) {
+    const n = ctx.noise;
+    const v = val.kind === "atom" ? String(val.value) : null;
+    if (kw === ":oct") { if (num(val) != null) n.oct = num(val); else this.say(`:oct on ${this.nameOf(ctx.head)}: not a number; the noise's octave is read as ${n.oct}`); return; }
+    if (kw === ":noise-rate") {
+      if (num(val) != null) n.hz = NOISE_CLOCK / Math.max(1, num(val));
+      else this.say(`:noise-rate (a sweep) on ${this.nameOf(ctx.head)}: the ${ctx.destPart.label} has no rate sweep; taken out`);
+      return;
+    }
+    // :mode
+    const m = /^(white|periodic)(\d)?$/.exec(v ?? "");
+    if (!m) { this.say(`:mode on ${this.nameOf(ctx.head)}: not one noise; taken out`); return; }
+    n.periodic = m[1] === "periodic";
+    if (m[2] != null) {
+      if (m[2] === "3") this.say(`:mode ${v} on ${this.nameOf(ctx.head)} follows sqr3's pitch, which ${ctx.dest} has not: read as ${m[1]}2`);
+      n.hz = WHITE_HZ[Math.min(2, Number(m[2]))];
+    }
+  }
+
+  // A noise note on the destination: its pitch the rate's where the rate is
+  // a pitch, else the note as written after the mode or rate it plays at.
+  noiseNote(v, ctx) {
+    const n = ctx.noise;
+    const suffix = NOTE.exec(v)[2];
+    if (n.from === "pitch") n.hz = PITCHED_NOISE[n.src.name].noiseHzOfNote(midiOfNote(v, n.oct));
+    let state, note = v;
+    if (n.to === "pitch") {
+      const midi = PITCHED_NOISE[n.dst.name].noiseNoteOfHz(n.hz);
+      const oct = Math.floor(midi / 12) - 1;
+      note = `${PITCH_NAMES[midi % 12]}${suffix}`;
+      state = `${n.periodic ? ":mode periodic" : ":mode white"} :oct ${oct}`;
+    } else if (n.to === "mode") {
+      state = `:mode ${n.periodic ? "periodic" : "white"}${nearestWhite(n.hz)}`;
+    } else {
+      if (n.periodic && !n.saidPeriodic) { n.saidPeriodic = true; this.say(`a periodic noise on ${this.nameOf(ctx.head)}: ${ctx.dest} makes white noise only`); }
+      state = `:noise-rate ${Math.max(1, Math.min(31, Math.round(NOISE_CLOCK / n.hz)))}`;
+    }
+    if (!n.said) { n.said = true; this.say(`${this.nameOf(ctx.head)}'s noise on ${ctx.dest}: each note's rate read as the nearest ${n.to === "pitch" ? "pitch" : n.to === "mode" ? "white / periodic mode" : ":noise-rate"} (Hz)`); }
+    if (state === n.last) return note;
+    n.last = state;
+    return `${state} ${note}`;
+  }
+
   voiceRule(v, ctx) {
     if (!ctx.destPart) return undefined;
-    if (ctx.destPart.kind !== "fm") return null;
-    if (ctx.opN) return this.opVoice(v, ctx.opN);
+    if (ctx.destPart.kind !== "fm") { this.replaced.add(v); return null; }
+    if (ctx.opN && !twoOp(ctx.destPart)) return this.opVoice(v, ctx.opN);
+    const def = this.voices.get(v);
+    // 4-op onto the OPLL: a role's ROM voice, else its waveform's.
+    if (ctx.family && !twoOp(ctx.srcPart)) {
+      const r = onOpll(v, def?.words ?? new Map(), ctx.destPart);
+      if (r.why) this.say(r.why);
+      if (r.name !== v) this.replaced.add(v);
+      // A 4-op def named as the ROM's voice would hide it: the def goes.
+      else if (def && !def.imported) { this.shadowing.add(v); this.say(`'${v}' plays the ${ctx.destPart.label}'s ${v} (its role); its 4-op def is taken out`); }
+      return r.name === v ? undefined : r.name;
+    }
+    // The OPLL onto 4-op: a ROM voice its role's, presets/fm-roles'; a user
+    // voice goes as itself, its def read as 4-op (defFm).
+    if (ctx.family && !def) {
+      const role = romOn4op(v);
+      this.needsRoles = true;
+      if (role !== v) this.say(`'${v}' (the ${ctx.srcPart.label}'s ROM) plays presets/fm-roles' ${role}`);
+      return role === v ? undefined : role;
+    }
+    // One ROM onto another: the voice of its role.
+    if (ctx.romSwap && !def && !ctx.destPart.romNames.includes(v)) {
+      const rom = romForRole(ctx.destPart, roleOf(v) ?? "synth");
+      this.say(`'${v}' plays the ${ctx.destPart.label}'s ${rom} (its role)`);
+      return rom;
+    }
     return undefined;
   }
 
@@ -637,12 +876,19 @@ class Porter {
       return DROP;
     }
     if (base === ":mode") return this.modeRule(val, ctx);
+    // A channel of one level (the 2A03's triangle) sounds or is halted: a
+    // level written there is not heard, except 0.
+    if ((base === ":vel" || base === ":vol") && ctx.destPart?.noLevel && !ctx.srcPart?.noLevel && val.value !== "0") {
+      this.say(`${base} on ${this.nameOf(ctx.head)}: ${ctx.dest} (the ${ctx.destPart.label}) has one level; taken out`);
+      return DROP;
+    }
     if (base === ":csm-rate") {
       if (ctx.dest === "fm3-csm" || !ctx.head) return KEEP;
       this.say(`:csm-rate on ${this.nameOf(ctx.head)}: the ${this.to.system} has no CSM; taken out`);
       return DROP;
     }
-    if ((base === ":pitch" || base === ":semi") && ctx.destPart?.kind === "sample" && !ctx.destPart.pitch && ctx.srcPart?.pitch) {
+    if (ctx.flatPitch && base === ":oct") return DROP;
+    if ((base === ":pitch" || base === ":semi") && (ctx.noBend || ctx.flatPitch)) {
       this.say(`${kw} on ${this.nameOf(ctx.head)}: the ${ctx.destPart.label} cannot bend a sample; taken out`);
       return DROP;
     }
@@ -650,15 +896,22 @@ class Porter {
     if (!w) return KEEP;
     const owners = partsWithWord(w);
     if (!owners.length) return KEEP; // the language's own (:master, :vol …)
+    // Across the FM families a voice's words are the other chip's: its
+    // register ranges, its operators. The voice is the role's or the
+    // waveform's now; written over, it would not be.
+    if (ctx.family && /^FM_/.test(w)) {
+      this.say(`the voice's words written on ${this.nameOf(ctx.head)} (${base} …): the ${ctx.destPart.label} plays its own voice; taken out`);
+      return DROP;
+    }
     if (SONG_WORDS.has(w)) return this.songRule(w, kw, val, ctx);
     // An FM3 operator track on a channel of its own: another operator's word
     // was the shared patch's, which this channel does not play.
     const op = /\d$/.test(w) && /^FM_/.test(w) ? Number(w.at(-1)) : null;
-    if (ctx.opN && op && op !== ctx.opN) {
+    if (ctx.opN && op && op !== ctx.opN && ctx.destPart?.kind === "fm" && !twoOp(ctx.destPart)) {
       this.say(`${kw} on ${this.nameOf(ctx.head)} was the FM3 patch's operator ${op}; taken out`);
       return DROP;
     }
-    if (ctx.destPart ? ctx.destPart.words(w) : this.to.hasWord(w)) return KEEP;
+    if (ctx.destPart ? ctx.destPart.words(w) : this.toHas(w)) return KEEP;
     if (w === "PAN" && (val.value === "center" || val.value === "0")) return DROP; // as a channel with none plays
     const label = ctx.srcPart?.words(w) ? ctx.srcPart.label : owners.find((p) => this.from.parts.includes(p))?.label ?? owners[0].label;
     this.say(`${base} (the ${label}'s)${ctx.head ? ` on ${this.nameOf(ctx.head)}` : ""}: ${where} has none; taken out`);
@@ -670,14 +923,14 @@ class Porter {
     const DROP = { drop: true };
     // A song's word steps in a note's macro only on a part that says so
     // (the SSG's noise rate).
-    if (ctx.macro && this.to.hasWord(w) && !ctx.destPart?.songMacros?.(w)) {
+    if (ctx.macro && this.toHas(w) && !ctx.destPart?.songMacros?.(w)) {
       this.say(`${kw} in a macro on ${this.nameOf(ctx.head)}: on the ${this.to.system} it is the song's, not a note's; taken out`);
       return DROP;
     }
-    if (this.to.hasWord(w)) return KEEP;
+    if (this.toHas(w)) return KEEP;
     if (w === "NOISE_RATE" && ctx.split === "tone") return DROP; // the noise half reads it
     const n = num(val);
-    if (w === "LFO_FREQ" && this.to.hasWord("LFO_RATE") && n != null) {
+    if (w === "LFO_FREQ" && this.toHas("LFO_RATE") && n != null) {
       const rate = nearestLfoRate(lfoHz(n));
       this.say(`:lfo-freq ${n} (${lfoHz(n).toFixed(2)} Hz) reads as :lfo-rate ${rate} (${OPN_LFO_HZ[rate - 1]} Hz)`);
       return { replace: `:lfo-rate ${rate}` };
@@ -687,7 +940,7 @@ class Porter {
       return DROP;
     }
     if (w === "NOISE_RATE") {
-      if (ctx.destPart?.kind === "noise" && n != null) {
+      if (ctx.destPart?.kind === "noise" && noiseModel(ctx.destPart) === "mode" && n != null) {
         const white = nearestWhite(NOISE_CLOCK / n);
         this.say(`:noise-rate ${n} (${Math.round(NOISE_CLOCK / n)} Hz) reads as :mode white${white} (${WHITE_HZ[white]} Hz)`);
         return { replace: `:mode white${white}` };
@@ -712,7 +965,7 @@ class Porter {
     if (val.kind === "atom") {
       const r = reading[val.value];
       if (r?.write) return { replace: r.as };
-      if (ctx.destPart?.kind === "noise" && this.to.hasWord("NOISE_RATE") && RATE_OF_WHITE[val.value])
+      if (ctx.destPart?.kind === "noise" && this.toHas("NOISE_RATE") && RATE_OF_WHITE[val.value])
         return { replace: `:noise-rate ${RATE_OF_WHITE[val.value]}` };
       if (r?.none) { this.say(`:mode ${val.value} on ${this.nameOf(ctx.head)}: ${r.none}; taken out`); return DROP; }
     }
@@ -723,7 +976,8 @@ class Porter {
 
   // ── what the conversion adds ──
 
-  standIn() {
+  standIn(part) {
+    if (twoOp(part)) return "clarinet"; // the OPLL's square-shaped ROM voice
     const loud = !this.to.parts.some((p) => p.kind === "tone")
       && !Object.entries(this.map).some(([k, h]) => h !== "drop" && kindOf(this.from, k) === "fm" && this.to.partOf(h).kind === "fm");
     const name = loud ? "loud-square" : "wave-square";

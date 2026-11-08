@@ -50,6 +50,9 @@ export function noiseNoteOfHz(hz) {
   return NOISE_NOTE_BASE + 15 - best;
 }
 
+/** The clock (Hz) of the noise a note (c2 the slowest) plays at: noiseNoteOfHz's other way. */
+export const noiseHzOfNote = (note) => CLOCK / NOISE_PERIODS[15 - Math.max(0, Math.min(15, Math.round(note) - NOISE_NOTE_BASE))];
+
 const LEVEL = { scale: "linear", steps: 16 }; // the 4-bit volume, 15 loud .. 0 off
 
 // The DMC: its rates (CPU clocks a bit, NTSC), the most bytes a sample has

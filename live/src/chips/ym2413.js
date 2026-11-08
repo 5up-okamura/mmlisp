@@ -127,7 +127,11 @@ function voiceWords(b) {
 // register and are left out.
 const OPLL_ML = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15];
 function voiceAs4op(b) {
-  const w = voiceWords(b);
+  return opllWordsAs4op(voiceWords(b));
+}
+
+/** An OPLL voice's words (FM_AR1 …, the chip's ranges) in the 4-op reading above: a Map of the OPN's words. */
+export function opllWordsAs4op(w) {
   const out = new Map([["FM_ALG", 4], ["FM_FB", w.get("FM_FB")], ["FM_AMS", 0], ["FM_FMS", 0]]);
   for (const n of [1, 2]) {
     const g = (k) => w.get(`${k}${n}`);

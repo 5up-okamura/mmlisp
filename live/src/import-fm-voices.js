@@ -675,7 +675,15 @@ const wordsAsVoice = (w) => ({ alg: w.get("FM_ALG"), fb: w.get("FM_FB"), ops: [1
  * low first.
  */
 export function nearestRomVoice(voice, roms, meanNote) {
-  const v = voiceShape({ ...voice, ops: slotToDisplayOps(voice.ops).map((o) => ({ ...o, ml: o.mul })) });
+  return nearestByShape(voiceShape({ ...voice, ops: slotToDisplayOps(voice.ops).map((o) => ({ ...o, ml: o.mul })) }), roms, meanNote);
+}
+
+/** nearestRomVoice for a voice given as its 4-op words (a Map, FM_ALG …): the nearest of `roms` (name → words). */
+export function nearestVoiceOfWords(words, roms, meanNote = 60) {
+  return nearestByShape(voiceShape(wordsAsVoice(words)), roms, meanNote);
+}
+
+function nearestByShape(v, roms, meanNote) {
   const low = meanNote < BASS_BELOW;
   let best = null, bestD = Infinity;
   for (const [name, words] of roms) {
