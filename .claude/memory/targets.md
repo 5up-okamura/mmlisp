@@ -277,7 +277,14 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   sample rows share a sample channel; the corpus check holds a layered
   channel to sound, the rule test the order and that each hit keeps its
   sample (the voice is per note on PCM, not the channel's). The survey's
-  note counts now unroll `(x N …)` — a hat `(x 64 c16 c16)` was 3 notes. Inline operator words on such a
+  note counts now unroll `(x N …)` — a hat `(x 64 c16 c16)` was 3 notes.
+  A channel has one loop (E_PRIO_LAYER_LOOP, and each layer's `#loop`
+  E_MARKER_DUP): planRows groups the sample rows by their endless loop,
+  read at played ticks as alignLayerLoops does (convertCountedJumps, now
+  exported, + expandLoops — a JUMP's own tick is the written one, 504 for
+  a 6144-tick loop), keeps the group with the most notes (no-loop rows join
+  any), its busiest row the channel's; the others drop, `loopWhy` saying so
+  (the user's pcmt13.muc: part K beside part G's rhythm1-6). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

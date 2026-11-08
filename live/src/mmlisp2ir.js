@@ -5641,7 +5641,7 @@ function compileChannelBody(
 // Runs on a track's merged events, so the label and the `go` may come from
 // different `(fmN …)` forms (mucom multi-line loops). Count-less JUMPs (infinite
 // `(go label)` / `#loop`) are left untouched for the track-level loop.
-function convertCountedJumps(track) {
+export function convertCountedJumps(track) {
   const events = track.events;
   if (!events) return;
   // Left-to-right so an inner counted loop is converted before its outer one;

@@ -2627,7 +2627,10 @@ machine's channels or dropped:
   clap, cymbals, and the hats last; each hit holds the channel a tick
   (`:gate 1t`, a shot plays out anyway), so where two strike at once the
   higher sounds, and otherwise the latest. The other five channels stay the
-  melody's.
+  melody's. A channel has one loop, so the parts sharing it must loop over
+  the same ticks: those that do and play the most notes between them are
+  kept, and a part looping on its own (a mucom88 song's part K beside its
+  rhythm) is left out, said in the log.
 
 A voice crossing between the FM chips with 4 operators (OPN, OPM) and the
 OPLL's 2 (the FM-PAC, the VRC7) plays as follows:

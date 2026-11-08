@@ -408,6 +408,18 @@ const port = (src, to, rows) => {
   const dda = compile(drums.text, join(repo, "tools/tests/t.mmlisp")).ir.tracks.find((t) => /^pcm/.test(t.channel));
   assert.deepEqual([...new Set(dda.events.filter((e) => e.cmd === "PCM_NOTE_ON").map((e) => e.args.sample))].sort(), ["hat", "kick", "snare"], "each hit plays its own sample");
   assert.ok(drums.said.some((w) => /share pcm\d as :prio layers \(the PC Engine's drivers stream samples on one channel\)/.test(w)));
+  // A channel has one loop: rows looping over other ticks cannot be its
+  // layers — the group playing the most notes keeps it (the loops read at
+  // the ticks they play, a counted loop written out), the other is said.
+  const loops = port(`(def-score :target pc88)
+(import "presets/rx5/set.mmlisp")
+(fm1 :len 4 c e g c)
+(rhythm1 kick #loop (x 4 :len 4 c c c c) (go loop))
+(rhythm4 hat #loop (x 16 :len 16 c c c c) (go loop))
+(pcm1 kick :len 4 _ #loop c c c (go loop))`, "pce");
+  assert.equal((loops.text.match(/^\(pcm\d :prio/gm) ?? []).length, 2, `the two that loop alike layer:\n${loops.text}`);
+  assert.doesNotMatch(loops.text, /\(pcm\d (?::prio \d+ )?(?::gate 1t )?kick :len 4 _/, "the one looping over other ticks goes");
+  assert.ok(loops.said.some((w) => /pcm1 \(\d+ notes\) is not converted: .*a channel has one loop, and pcm1 loops over other ticks than rhythm1, rhythm4/.test(w)), loops.said.join("\n"));
   // The FDS's modulation is the PC Engine's LFO: wave2 at :vol 0, wave1 its :fms.
   const fds = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "pce");
   assert.equal(fds.map["fds-wave"], "wave1");

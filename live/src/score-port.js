@@ -39,9 +39,9 @@ import { opllRomVoices } from "./chips/ym2413.js";
 import * as fcApu from "./chips/rp2a03.js";
 import * as gbApu from "./chips/lr35902.js";
 import * as pcePsg from "./chips/huc6280.js";
-import { compileMMLisp } from "./mmlisp2ir.js";
+import { compileMMLisp, convertCountedJumps } from "./mmlisp2ir.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
-import { pitchToMidi } from "./ir-utils.js";
+import { pitchToMidi, expandLoops } from "./ir-utils.js";
 import { waveformOf, carrierOctave, carrierMultiple, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
 import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
@@ -306,10 +306,31 @@ function planFor(text, toName, imports) {
   if (!PORT_TARGETS.includes(from.name)) return { error: `the ${from.system} is not converted at the words' level` };
   let s;
   try { s = survey(text, from, imports); } catch (e) { return { error: `the score does not parse: ${e.message}` }; }
-  return { from: from.name, to: to.name, rows: planRows(s, from, to), s };
+  // Each track's endless loop, as [from, to] ticks (null: none), read off
+  // the score compiled — once, and only if rows are to share a channel.
+  let loops;
+  const loopOf = (head) => {
+    if (!loops) {
+      loops = new Map();
+      let ir = null;
+      try { ir = compileMMLisp(text, "score.mmlisp", { imports: imports ?? new Map() }).ir; } catch { /* none read */ }
+      // At the ticks they play, as the compiler's layering reads them
+      // (alignLayerLoops): the counted loops written out first.
+      for (const t of ir?.tracks ?? []) {
+        const track = { ...t, events: t.events.map((e) => (e.args ? { ...e, args: { ...e.args } } : e)) };
+        convertCountedJumps(track);
+        const evs = track.events.some((e) => e.cmd === "LOOP_BEGIN") ? expandLoops(track.events) : track.events;
+        const jumps = evs.filter((e) => e.cmd === "JUMP");
+        const mark = jumps.length === 1 && evs.find((e) => e.cmd === "MARKER" && e.args?.id === jumps[0].args?.to);
+        if (mark) loops.set(t.scoreChannel ?? t.channel, `${mark.tick}-${jumps[0].tick}`);
+      }
+    }
+    return loops.get(head) ?? null;
+  };
+  return { from: from.name, to: to.name, rows: planRows(s, from, to, loopOf), s };
 }
 
-function planRows(s, from, to) {
+function planRows(s, from, to, loopOf = () => null) {
   const patch = patchHeads(s, to);
   const keys = [];
   for (const head of from.channelNames) {
@@ -407,6 +428,23 @@ function planRows(s, from, to) {
     const layering = (g) => Number.isFinite(streams) && g.every((k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)));
     for (const g of [...groups.values()].sort((a, b) => (own(a) - own(b)) || (notes(a) - notes(b))).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = layering(g) && groups.size > 0 && room > 0 ? "layer" : "drop";
+  }
+  // A channel has one loop (language.md §1): the layers loop as one. A
+  // mucom88 song's parts each loop on their own, so the rows are grouped by
+  // their loop and the group playing the most notes kept — its busiest row
+  // the channel's, the rest its layers (a row with no loop joins it); a row
+  // looping over other ticks goes.
+  if (keys.some((k) => dest[k] === "layer")) {
+    const rows = keys.filter((k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)) && dest[k] !== "drop");
+    const loopsOf = [...new Set(rows.map((k) => loopOf(splitHead(k))).filter((l) => l != null))];
+    const inLoop = (k, l) => l == null || loopOf(splitHead(k)) == null || loopOf(splitHead(k)) === l;
+    const total = (l) => rows.filter((k) => inLoop(k, l)).reduce((n, k) => n + notesOf(k), 0);
+    const best = loopsOf.length ? loopsOf.sort((a, b) => total(b) - total(a))[0] : null;
+    const group = rows.filter((k) => inLoop(k, best)).sort((a, b) => notesOf(b) - notesOf(a));
+    for (const k of rows) {
+      if (k === group[0]) delete dest[k];
+      else dest[k] = group.includes(k) ? "layer" : "drop";
+    }
   }
   // With the FDS's track dropped there is no LFO to keep wave2 for.
   if (reserved.length && dest["fds-wave"] === "drop") { takenBy.delete(to.voiceKey("wave2")); reserved.length = 0; }
@@ -929,6 +967,17 @@ class Porter {
     return out;
   }
 
+  // A sample row left out where the machine streams samples on fewer
+  // channels than the score has rows: one channel has one loop, and this
+  // row's is not the ones kept (planRows).
+  loopWhy(head) {
+    if (this.from.partOf(head)?.kind !== "sample") return "";
+    const on = Object.entries(this.map).filter(([k, h]) => k !== head && h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit && this.from.partOf(k)?.kind === "sample");
+    const streams = this.to.parts.find((p) => p.kind === "sample" && p.streams)?.streams;
+    if (!on.length || !streams) return "";
+    return `: the ${this.to.system} streams samples on ${streams === 1 ? "one channel" : `${streams} channels`}, a channel has one loop, and ${this.nameOf(head)} loops over other ticks than ${on.map(([k]) => this.nameOf(k)).join(", ")} on ${on[0][1]}`;
+  }
+
   defFm(n) {
     const fm = this.toFm;
     const name = n.items[1]?.value;
@@ -1082,7 +1131,7 @@ class Porter {
     }
     if (this.map[head] === "drop" || this.map[head] == null) {
       this.carrySongWords(n, head);
-      const why = head === "fm3-csm-rate" ? `: the ${this.to.system} has no CSM` : "";
+      const why = head === "fm3-csm-rate" ? `: the ${this.to.system} has no CSM` : this.loopWhy(head);
       this.say(`${this.nameOf(head)} (${notes(this.s.heads.get(head)?.notes ?? 0)}) is not converted${why}`);
       return null;
     }
