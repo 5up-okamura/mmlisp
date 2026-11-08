@@ -42,11 +42,8 @@ lessons.
 - **Archives** (2026-10-28): ZIP and LZH only, both first-party
   (`src/archive.js`). No RAR / 7z for now — no small decoder of our own;
   libarchive built to WASM, loaded on demand, if a need shows up.
-- **Import > Song… is gone** (2026-11-08): Open… takes several files (a
-  `.muc` with its `.dat` / `.bin`, an `.mdx` with its `.pdx`: how a phone,
-  with no folder, brings a song's banks), and a `.dat` / `.bin` opened alone
-  re-converts the last mucom88 song with it (`applyMucomBanks`). Import keeps
-  what goes in at the cursor: Instruments…, resynthesis, the rhythm ROM.
+- **No Import > Song…** (2026-11-08): Open… takes a song with its banks
+  (guide.md §23); Import keeps only what goes in at the cursor.
 - **Share links' files** (2026-11-06): not base64 inside the score's text
   (it buries the score, the diff and an AI's context) — a ZIP beside the
   short link (`share-files.js`). No per-file opt-out in the Share dialog: it
@@ -98,8 +95,6 @@ lessons.
 
 ## Deferred editing ideas
 
-- **Target conversion**: planned, targets.md § Machine conversion (the
-  user wants it, 2026-11-07, after "lower priority" on 2026-11-03).
 - **Hiding source by kind** (user's idea, 2026-11-06; still being thought
   over — do not build until the user decides): e.g. hide every `:vel` so a
   dense score (VGM / NSF imports) reads easily. A view setting only: Save,

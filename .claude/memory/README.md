@@ -47,5 +47,5 @@ Rules:
 - [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
   and open items per machine (pc88 … the PC Engine, the Famicom and its six
   expansion chips, the Game Boy: the reasons and sources the docs do not
-  give, and what is not yet heard), and **§ Machine conversion**, the plan
-  for a score of one FM machine on another (not yet built).
+  give, and what is not yet heard), and the rulings of `:target midi` and
+  of the machine conversion.

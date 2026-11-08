@@ -1,5 +1,5 @@
-// A score of one 4-operator FM machine on another — md, pc88, x68k — at the
-// words' level: what the composer wrote (the voices, `:gate`, a glide, a
+// A score of one machine on another — md, pc88, x68k, msx, pce, fc, gb — at
+// the words' level: what the composer wrote (the voices, `:gate`, a glide, a
 // `:pitch+` curve, the loop, the formatting and the comments) is kept, and
 // only what the other machine has not is read in its words or taken out.
 // The VGM road rebuilds a song from its registers; this one moves the text.

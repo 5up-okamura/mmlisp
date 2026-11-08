@@ -51,449 +51,60 @@ The names themselves are guide.md §25; the reasons:
 - No wait for the cursor to rest before the panel swaps. (Drawing on a
   stage vector and wave generators are on the roadmap.)
 
-## MIDI (midi; built 2026-11-07)
+## MIDI (midi)
 
 Rulings, not to re-propose:
-- **No chords** (the user): a channel plays one note at a time, as every
-  machine's; a chord is several channels.
-- **The drums are eight tracks**, `drum1`–`drum8` on channel 10 (the user:
-  singular and from 1, as `sqr1`; eight, above the YM2608 rhythm's six).
-- **No `def-midi`**: an instrument is `:prog` / `:bank`, a patch a `def` of
-  words.
-- **`:vel` stays the language's 16 steps**; a finer velocity waits for a
-  score that needs it.
-- **A CC a word writes is the word's** (the user: both would be ideal, not
-  at the cost of reconciling them); the mode messages are not restricted.
-- **The faders scale the MIDI output's velocities**; the score is not
-  edited.
-- **The GM output is a node of its own** (spessasynth_core, FluidR3Mono or
-  the user's SF2 / SF3). Turned down: GM in the chips' worklet, an FM GM
-  (libOPNMIDI's bank), a first-party SF2 player.
+- **No chords** (the user): a track plays one note at a time; a chord is
+  several channels.
+- **`drum1`–`drum8`** (the user: singular and from 1, as `sqr1`; eight,
+  above the YM2608 rhythm's six).
+- **No `def-midi`**: an instrument is `:prog` / `:bank`, a patch a `def`.
+- **`:vel` stays 16 steps**; a finer velocity waits for a score that needs it.
+- **A CC a word writes is the word's** (the user: both ways would be ideal,
+  not at the cost of reconciling them).
+- **The faders scale the output's velocities**; the score is not edited.
+- **The GM output is a node of its own.** Turned down: GM in the chips'
+  worklet, an FM GM (libOPNMIDI's bank), a first-party SF2 player.
 
-Measured (an iPhone, iOS 18.7, 48 kHz): the worklet module 918 ms, the
-sf3's fetch 4.2 s; a sample decodes on first use on the audio thread (a
-block's worst 39–61 ms against a 2.9 ms budget), so a plan's programs and
-keys are preloaded (141 ms); decoded memory +26 MiB for every program once,
-+175 MiB for every sample; CPU 2–9 % for a five-part demo.
+Measured (iPhone, iOS 18.7, 48 kHz): worklet module 918 ms, the sf3's fetch
+4.2 s; a first-use decode on the audio thread costs a block 39–61 ms against
+2.9 ms (hence the preload, 141 ms); decoded memory +26 MiB for every program
+once, +175 MiB for every sample; CPU 2–9 % for a five-part demo.
+
+## Machine conversion
+
+Rulings, not to re-propose:
+- **At the words' level, not through the VGM** (the user: what the composer
+  wrote — `:gate`, a glide, a `:pitch+` curve, the voices, the loop — must
+  survive).
+- **Short of channels, the pool order is the user's**: nothing drops while
+  a channel is free; FM stays on FM ("FM同士はなるべく活かしてほしい");
+  the bass and the melody before all; the kick and snare a channel each,
+  the rest layered ("a snare of few notes matters"; "the kick and snare
+  are a must, the rest decoration").
+- **Onto the OPLL, one own voice stays a 2-op def-fm** (the user: "同じFM
+  なのに音色定義捨ててるの、roleに寄りすぎ"); only one, since several
+  sounding at once rewrote one another's sound and were hard to hear.
+- **A converted score holds only what it plays** (the user): no "library
+  stays" exception.
+- **The mix**: the song never plays quieter than it did (the user); a level
+  change is a `def-mod`, and only the normalize and the limiter, which shape
+  the sound, sit in a def-pcm's `:fx` (the user). A compressor instead of
+  `(gain 6) (limit)` gained 1 dB more and changed the drums.
 
 Open:
-- The on-screen keyboard and a MIDI keyboard's preview notes go to the
-  silent synth, not to the MIDI output.
-- A program a hot-swap brings mid-play decodes on the audio thread (decode
-  off it and `setAudioData` if it is heard).
+- **Two roads** (put to the user, undecided): VGM, NSF, DefleMask / Furnace,
+  MIDI and mucom88's md write each machine themselves, so Open onto X and
+  Open + Convert to Machine differ (a VGM of ab-core onto pc88: its noise
+  dropped by the writer, kept by the conversion; fc / gb channels chosen
+  differently). MDX, MGS and mucom88 past pc88 / md already go through
+  portScore.
 
-## Machine conversion (built 2026-11-07)
-
-A score of one 4-op FM machine on another — x68k, md, pc88 — at the words'
-level, not through its VGM (the user: what the composer wrote — `:gate`, a
-glide, a `:pitch+` curve, the voice defs, the loop — must survive; the VGM
-road rebuilds them from registers). Two faces of one module, `score-port.js`:
-- **An MDX's Target** (its dialog gets rows as the VGM's: FM A–H, PCM 1–8 →
-  the target's channels / drop; Target x68k / md / pc88 / midi). MGS stays
-  x68k-far: midi only.
-- **Edit > Convert to Machine…**: the open score onto another, the same
-  dialog, one undo step; midi offered there too (chipScoreToMidi). A line
-  `; Converted from :target x68k` at the top, and the log lists every
-  word dropped or approximated.
-- Near = both machines have 4-op FM. msx (FM-PAC), pce, fc, gb: not
-  offered (stand-ins all over); their road is midi.
-
-What the compiler already does, measured on an x68k score with `:target`
-swapped: DT2 is a W_TARGET warning (played without); `:mode whiteN` on an
-SSG reads as `:noise-rate` (targets' `readsAs`); every other mismatch is
-E_TARGET, the whole list below.
-
-Rules (word-level; the VGM importer's readings, which live at register level
-in vgmToMmlisp and cannot be called from here):
-| from → to | rule |
-| --- | --- |
-| x68k fm7/fm8 → md/pc88 | sqr1/sqr2 as square stand-ins (presets/waveforms, `loud-*` as import-song.js), or drop: the rows decide |
-| x68k fm8's `:mode noise` notes → md/pc88 | to `noise`: md the nearest `:mode whiteN` by Hz (125 kHz / n vs the PSG's rates, import-vgm nearestWhite), pc88 `:noise-rate` by Hz; its tone notes stay on the FM channel |
-| `:lfo-freq N` (OPM) → OPN | `:lfo-rate 1–8` nearest in Hz; `:lfo-wave :lfo-pmd :lfo-amd` dropped (depth is already `:fms`/`:ams`) |
-| OPN `:lfo-rate` → x68k | `:lfo-freq` nearest in Hz |
-| md fm3-1…fm3-4 → x68k | each a free FM channel of the eight (fm7, fm8, any fm1–6 the score does not use), under a one-operator voice made from fm3's (operator N the carrier, the others TL 127): the same sound. Nothing drops while a channel is free (the user, 2026-11-07) |
-| md fm3-csm → x68k | fm3's plain notes, the CSM rate dropped and said (the language has no CSM on x68k) |
-| md sqr1–3 → x68k | free FM channels as square stand-ins, after the fm3-N; drop only past the eight, rows decide |
-| md noise → x68k | fm8 `:mode noise` under a voice, `:noise-rate` by Hz (fm8 kept free for it when the score has a noise track) |
-| pc88 sqr `:mode both` / `:env` / `:env-rate` → md | `:mode tone`, the envelope dropped and said (no reading on the PSG); `:mode env` notes dropped |
-| pc88 rhythm1–6 (kit roles) ↔ md pcm1–3 (kit-role samples) | by role: a rhythm track is a pcm track playing `kick` … under the RX5 import, and back where the samples are roles (the import writes both so) |
-| pcm: x68k pcm1–8 / md pcm1–3 / pc88 pcm1 | rows, first come; `:fx`, `:rate`, `:file` as they are |
-| x68k fm `:pan` ↔ md/pc88 | as is (both have it) |
-Levels: the voices' TL as written (the composer's balance); only stand-ins
-take `loud-*` where there are no squares to sit beside.
-
-Checks (`check:score-port`): the MDX fixture (check-import-to-midi.mjs
-builds one) → md and pc88 compile clean and keep every melodic note (midiPlan
-keys, as check-import-to-midi compares); tools/tests' md, pc88 and x68k
-scores each onto the other two compile clean, notes kept where a channel
-takes them; the dropped-words list is what the rules say.
-
-All built: score-port.js + check, the MDX dialog's Target x68k / md / pc88 /
-midi with rows (guide.md § Song imports), Edit > Convert to Machine… (the
-import dialog reused; msx, pce, fc, gb offered midi only; guide.md
-§ Converting to another machine). The log names a source channel by the
-caller's `names` (an MDX's FM A–H, PCM n).
-
-Built (score-port.js, `check:score-port`): `portRows(text, to)` gives the
-dialog its rows ({key, head, kind, notes, to, choices}; x68k fm8's noise
-notes are the row `fm8/noise`), `portScore(text, to, {rows, imports})` the
-text and `said`. Every md score (drv/tests) and the pc88 / x68k test scores
-onto the other two compile clean with each kept track's notes (midiPlan on,
-key) the same. Where it went past the table above, or off it:
-- md noise → x68k is the `noise` channel (fm8's fourth operator alone), not
-  fm8 `:mode noise` under a voice: the same words (a noise track, its PSG
-  level), fm8 kept free all the same (the rows share by voiceKey).
-- OPN `:lfo-rate` → x68k stays `:lfo-rate`: the OPM reads it at full depth,
-  which `:lfo-freq` alone would not (its pmd/amd at 0).
-- pc88 sqr `:mode env` notes play as tone (the mode dropped and said), not
-  dropped.
-- fm3-N → x68k: the patch form `(fm3 v)` goes, its `:tempo` onto the first
-  operator track; another operator's word on an fm3-N track is dropped; the
-  patch's later voices are not followed (said).
-- def-se is dropped off md; onto md `:pcm-voices` is set from the pcm rows;
-  fm6 is taken while a row goes to pcm.
-- The ADPCM-B: a def-pcm's loop becomes its range (`:loop-start` →
-  `:pcm-start` …), the head before the loop cut (said).
-- A song word in a macro is dropped where the part has no `songMacros`
-  (the SSG's `:noise-rate` steps; the OPM's does not).
-
-## Machine conversion, stage 2: PSG and 2-op FM (built 2026-11-08)
-
-md, pc88, x68k, msx, fc, gb convert both ways (score-port.js, voice-port.js;
-guide.md § Converting to another machine says what the user sees; Convert
-to Machine, and the MDX's and the MGS's Target with rows). Decisions:
-- The voice policy (the user's): a role (fm-roles' fifteen = the OPLL's ROM
-  names, a gm-* by its program's family, the VRC7's names) plays the
-  machine's voice for it; any other voice its nearest presets/waveforms
-  voice (nearestRomVoice's weighing, `nearestVoiceOfWords`; a sine that has
-  heard carriers above the first harmonic is the triangle — the weighing
-  reads only modulators); on the OPLL that waveform's ROM voice, so no
-  conversion writes the one user voice. A 4-op def under a ROM name (or an
-  imported fm-roles) would hide the ROM voice: it goes. fm-roles' `:key`
-  moves the sounding key: the check compares onsets only across the families.
-- An OPLL user voice onto 4-op is read as 4-op (opllWordsAs4op), `:ws` and
-  `:ksl` said. `:vib` / `:am` (def, inline, macro) are `:fms 4` / `:ams 2`
-  (ymfm's OPLL: ±12 cents at 6.1 Hz, 4.8 dB), the LFO `:lfo-rate 4` once at
-  the first channel form.
-- The noise by Hz across its three writings: the SN's mode, a song-wide
-  `:noise-rate`, the 2A03's / Game Boy's note pitch (noiseHzOfNote /
-  noiseNoteOfHz in the chips), written again at each change and at a loop's
-  bounds.
-- Short of channels (the user): the most notes keep the channels, per pool
-  (melodic, noise, sample); within the room, the table's order.
-- A kit without pitch (pc88's ROM rhythm) plays every note at c4.
-- fc's defaults are its own board (listsExpansions); the cartridges are
-  choices. A song word counts as the target's only where its part is on the
-  board or a row goes there (fc's 5B has :noise-rate, the 2A03 not).
-- A split (`<head>/noise`): x68k fm8's `:mode noise` and an SSG square's
-  `:mode noise` / `both` (MSX songs' PSG drums) go to the noise where the
-  destination's own squares have no noise mode; the tone half keeps the
-  song's words (tempo, master, LFO). A mode stepped by a macro is not split.
-- Open (stage 3): an SCC song's dead def-wave / wave macros stay.
-
-
-## Machine conversion, stage 3: the wave memories (built 2026-11-08)
-
-pce joins; the SCC, pce, the FDS, the N163 and gb's wave convert both ways
-(wave-port.js; guide.md § Converting to another machine). The user's
-answers: a non-role FM voice onto a wave is its waveform's wave AND an
-envelope macro off its main carrier's EG (`<voice>-env`, fm-model's egStep
-a frame at a time, 2 dB a :vel step); the FDS's modulation ↔ pce's LFO is
-mapped; a `(macro :wave …)` off a wave channel keeps all but its waves.
-Decisions on the way:
-- shapeOf: harmonics 1-15's magnitudes against the six plain shapes; a wave
-  repeating within its cycle is read on one repeat (gb's `tri2`).
-- pce's kinds share its six voices (wave5 / noise5 / pcm5): one room for
-  them all, the noise placed first; FDS-modulated, wave2 is kept for the LFO
-  and the FDS row goes to wave1.
-- pce's noise is a third pitched noise (PITCHED_NOISE, huc6280
-  noiseHzOfNote); it has no :mode.
-- FM's LFO words onto pce / fc, and pce's / the FDS's onto anything but each
-  other, are dropped (another LFO).
-- A def-wave's own curve named as itself (`(def-wave saw :wave (saw …))`)
-  is no use of it: pruning counts uses outside the def.
-- The check: a channel the source shared between kinds (pce) keeps every
-  note it played (a superset there).
-- A review (2026-11-08) fixed: presets/wavetable's `wave-<role>` macros
-  off a wave channel are their role; the FDS LFO's rate rides on the
-  generated wave2 track and a depth written before a track's first note
-  starts wave1; wave2 is no row's choice while it is the LFO; a voice after
-  a role macro clears its waves (`(macro :wave none)`); fc's tri / vrc6-saw
-  keep their shape on a wave; a :duty over half is its mirror; the envelope
-  starts at key-on; a quiet wave's repeat tolerance is 3 % of its swing.
-- The last three (2026-11-08): a track's `:wave (expr)` off a wave channel
-  is read off the wave the compile folds it to (`wave1@line:col` in
-  metadata.waves); a channel sharing another's wave memory (`waveRam`: the
-  SCC's wave5) is taken last and said when its waves differ; a loop whose
-  passes move the noise's octave or a split's :mode is written out pass by
-  pass (not when it holds a label or a (break): said).
-
-## FM kept on FM; the carrier's octave (2026-11-08)
-
-The user, on a mucom88 song onto x68k ("FM同士はなるべく活かしてほしい"):
-short of channels, a row of the machine's own kind keeps its channel before
-a stand-in (then the most notes), so x68k's eight FM take md's six FM and
-two of its squares. And onto pce "オクターブが低い印象": an FM voice whose
-main carrier is at :ml 2 / 4 / 8 sounds that many octaves above the written
-note; a wave or a square plays the written note. Onto them the track is
-written up by `carrierOctave` (voice-port.js): `:oct+ k` at the voice, its
-`:oct N` writes and `(glide cN …)` raised, back at the next voice (a role's
-0: fm-roles' `:key` is theirs). A non-power-of-two multiple (3, 5) is a
-partial: no shift. Not yet done for an FM voice onto the OPLL's ROM voices
-(their own multiples differ by voice).
-
-## 4-op onto the OPLL: the score's own voices kept (2026-11-08)
-
-The user ("同じFMなのに音色定義捨ててるの、roleに寄りすぎてるんじゃない？"):
-a non-role voice of the score's own onto the FM-PAC / VRC7 is no longer a
-ROM voice by shape — it stays as a 2-op `def-fm` (`opnAs2op`: the main
-carrier and the loudest of its modulators per MODULATORS_OF, rates >> 1,
-modulator TL >> 1, FB where op1 is the modulator, SR > 0 → EG 0 with
-RR = SR >> 1, OPLL ML nearest; the other operators and DT said). Only
-one such voice (`pickUserVoice`): the chip's one user voice is every
-channel's, so the own voice with the most notes on rows going to FM keeps
-it, the others the ROM by shape (the user found several sounding at once
-hard to hear: each key-on rewrote the others' sound). Roles and ROM-named
-voices still play the ROM; imported voices (no def to rewrite) and waves
-still the ROM by shape. A converted score holds only what it plays
-(user, 2026-11-08): `pruneUnnamedDefs` (exported) takes out every def /
-def-fm / def-wave / def-pcm nothing names, then what only those named — a
-dropped track's macros, a replaced voice, a score's unused library alike
-(no "library stays" exception any more); the mucom importer's own pc88 /
-md writers run it too (a song's voice list it never plays). envelopeOf reads the carrier's rates with its
-key scaling at the track's middle note (`kc >> (3 − ks)`, as fm-model.js):
-without it a mucom voice of AR 4 / KS 3 at o5–6 read as a second of
-silence and the pce waves were near inaudible (user: "only the PCM plays").
-- **Samples on the PC Engine: one stream** (the user, 2026-11-08: its CPU
-  feeds DDA a sample at a time; two at once is past it, one is the norm).
-  `pceDda.streams: 1` (chips/huc6280.js) — a part's driver-side limit the
-  conversion reads, not a compiler rule (a hand-written score may still use
-  pcm1-6). planRows caps the sample pool at it; the rows past it are
-  "layer" → the kept sample row's channel, and placeLayers writes each a
-  `:prio` by drum role (DRUM_RANKS: kick 1, snare/clap 2, tom 3, rim/other 4,
-  cymbal 5, hat 6) and `:gate 1t` where the row sets no :mode / gate, so a
-  higher layer only wins simultaneous hits (a quarter-note kick held its
-  quarter and swallowed every hat). portScore's one-row-a-channel rule lets
-  sample rows share a sample channel; the corpus check holds a layered
-  channel to sound, the rule test the order and that each hit keeps its
-  sample (the voice is per note on PCM, not the channel's). The survey's
-  note counts now unroll `(x N …)` — a hat `(x 64 c16 c16)` was 3 notes.
-  A channel has one loop (E_PRIO_LAYER_LOOP, and each layer's `#loop`
-  E_MARKER_DUP): planRows groups the sample rows by their endless loop,
-  read at played ticks as alignLayerLoops does (convertCountedJumps, now
-  exported, + expandLoops — a JUMP's own tick is the written one, 504 for
-  a 6144-tick loop), keeps the group with the most notes (no-loop rows join
-  any), its busiest row the channel's; the others drop, `loopWhy` saying so
-  (the user's pcmt13.muc: part K beside part G's rhythm1-6). Its real
-  cause was elsewhere: part K's and part G's loops matched, but pcm1 took
-  :prio 2 as the snare row did — forms of an equal :prio append, not layer,
-  which moved the loop. placeLayers now numbers the rows 1…n in DRUM_RANKS
-  order (the busier first among alike).
-- **The user's MDX set (DTWNB, 19 songs + PDX) onto every machine**
-  (2026-11-08): no conversion errors. Fixed from it: opnAs2op's def is on
-  `init-fm` (a channel coming from a ROM voice kept its :ws / :vib / :ksl,
-  so its "user voice" differed from another channel's → W_TARGET); the
-  compiler's W_SONG_WRITE_RACE only where the two writes differ (each MDX
-  part writing :lfo-freq 204 became five equal `:lfo-rate 5`). Open:
-  x68k's FM renders ~7 dB under the OPN's for one voice and note (−22.2 vs
-  −15.2 dBFS RMS), so an MDX's levels clip on pc88 / md (25k samples on
-  DTWNB00 pc88) — a per-machine gain the conversion does not make up; the
-  user to decide. The fc triangle's `:vel 0` (a mute) still draws its
-  W_TARGET note; left.
-- **Open with a Target ≡ Open, then Convert to Machine…** (user, 2026-11-08:
-  "is it the same processing?"). For the songs read as their own machine
-  first — MDX, MGS, mucom88 past pc88 / md — the Open path is
-  `portImported` (index.html): the source's imports resolved, then
-  portScore, as Convert does; held equal in the browser (DTWNB00 onto pce /
-  msx / md / gb, pcmt13 onto pce / x68k / msx: 0 lines differ). Convert to
-  General MIDI now hands chipScoreToMidi the score's samples (`scorePcm`),
-  as the import's readViaMidi does: without them the drums' roles were read
-  from names (31 lines differed on DTWNB00). Still two roads: VGM, NSF,
-  DefleMask / Furnace, MIDI and mucom88's md write each machine themselves,
-  so Open onto X and Open + Convert differ (a VGM of ab-core onto pc88: its
-  noise dropped by the writer, kept by the conversion; fc / gb channels
-  chosen differently) — put to the user, undecided.
-- **Samples onto another machine play at their peak** (user: "MDX onto md,
-  only the kick is heard", 2026-11-08): `louder` gives each def-pcm of its
-  own :file `:fx [... (normalize)]`. The md DAC peaks ~−12 dBFS (one FM
-  channel's level), so normalize lifts the PDX's drums 2-9 dB but no
-  further; DTWNB00's PCM sits 2.8 dB under its FM on x68k, 19.2 on md
-  before, 13.7 after. The rest is the FM's: md's FM is ~7 dB hotter than
-  x68k's for one voice. Keeping the source's balance (each track's level
-  offset by the machines' part gains) is put to the user.
-- **Drums past a machine's sample channels are layered, not dropped** (user,
-  2026-11-08: "a snare of few notes matters"). planRows' sample pool keeps a
-  channel each for the beat's drums first (drumRank, then notes), and the
-  rest are "layer" rows on the least of the kept (`hostOf`, a kept row whose
-  loop matches; with one channel the loop group with the most notes picks
-  it). placeLayers numbers every (row, its own :prio) layer apart (a pc88
-  rhythm4 with tom :prio 1 / rim :prio 2 had both become one number —
-  appended, not layered). pc88's six rhythm parts onto md: kick pcm1,
-  snare pcm2, ride / hat / tom / rim layers on pcm3 (it kept ride, hat, rim
-  and dropped the kick and snare); onto fc all six on the DPCM.
-  The user: "the kick and snare are a must, the rest decoration — can't
-  it tell without names?" A name that says nothing (an MDX's pdx-003) is
-  ranked by its sound: portScore / portRows take `heard` (name → role,
-  import-to-midi.js `heardRoles`, sampleRole on each hit), which the app
-  fills from the import's samples (portImported, driverSongDialog) and on
-  Convert from the score's own (scorePcm). A name that says a role wins.
-  sampleRole is rough — DTWNB's kick, hats and cymbal come right, its toms
-  read as snares — enough for kick and snare first. `heardBeat` keeps one
-  kick and one snare (the sample the score names most of each), the others
-  "tom".
-- **gb: the kick and snare on the noise** (user, 2026-11-08). planRows: no
-  sample channel and no ROM kit, a noise there → sample rows ranked ≤ 2
-  ("noise-drum") go to it, the rest drop; with the noise's own row they are
-  :prio layers (drums first), and a row looping otherwise goes. The porter
-  (`ctx.drumNoise`): a sample name → NOISE_DRUMS' words (kick: `noise-kick
-  :oct 4 :gate 5f`, note a = 69, a 1365 Hz clock; snare: `noise-snare :oct
-  6 :gate 15f`, d+ = 87, 32768 Hz; their `:vel+` falls, the gate as long so a
-  layer under it gives way only while it sounds — not :gate 1t, a noise note
-  stops at its gate), written once a body; any other sample → its notes
-  rests; the sample's :oct / :pitch / :mode / gates dropped.
-- **msx: an MDX's drums on the FM-PAC rhythm** (user: "MDX onto msx has no
-  drums", 2026-11-08). No sample channel but a ROM kit: planRows fills
-  `s.byEar` (sample name → kit role, KIT_OF_HEARD: kick, snare, tom → tom4,
-  crash → ride (the top cymbal), hat / hat-open → hat) from `heard`, and
-  rolesHere takes a row whose samples are all roles by name or by ear; the
-  porter writes each such sample as its role. pc88 keeps its ADPCM-B for
-  real samples (byEar only where no sample channel).
-- **An FM voice's envelope as lines** (user, 2026-11-08: "adjust the step
-  and the waits go"): envelopeOf fits `(linear a..b :len Nf)` stages to the
-  EG's unrounded level (`lineVector`, within half a step; endpoints to a
-  tenth), the rest rounded values and holds as before; the release is
-  `#rel (linear :to -15 :len Nf)`, falling from where the note is let go
-  (it was a jump to −15 and a wait). Over 957 voices (the mucom songs, the
-  MDX set) every held length kept, within a step of the old staircase
-  (0.23 on average), text 2.5× shorter. A line of fewer than four frames
-  or under a step is not worth its words.
-- **The mix kept** (user: "MDX onto pce / md, the PCM is quiet",
-  2026-11-08, option 1 of three put to them): `live/src/part-levels.js`
-  (generated, `gen:part-levels` / `check:part-levels`: one note at :vel 15
-  a part, peak dBFS — FM a single carrier, a square / wave its default
-  (steady part), a sample a full-scale square (from its start: the DMC's is
-  short)). Porter.mixBalance: each melodic track moved by
-  (src part − src sample − the samples' headroom) − (dst part − dst
-  sample), dB → :vel+ steps (2 dB), written as `def-mod :ch [...] :vel+ N`
-  lines; a track that would go up takes the rest down and the samples by
-  `(gain -M)` after their normalize. `peaks` (name → dBFS, import-to-midi.js
-  samplePeaks) from the app (the import's pcm, Convert's scorePcm); none →
-  headroom 0. DTWNB00: md FM −6 / PSG −4, pce waves −6, pc88 FM −2 and
-  samples −4 dB; melody vs PCM 3.2 dB (md) / 2.6 dB (pce) apart against the
-  X68000's 2.8. The mix was quieter overall (md −11.4 → −20.4 dBFS RMS) —
-  the user: "the whole song getting quieter is wrong". Now: a track comes
-  down no further than the machine plays it louder (`louder` = dst part −
-  src part), and where that cannot reach the balance the samples are
-  limited (`(gain 6) (limit)`, LIMIT_DRIVE_DB / LIMIT_LIFT_DB ≈ +3.3 dB RMS
-  on the PDX at the same peak; a compressor gained 1 dB more and changed
-  the drums). DTWNB00 md: FM −4 / PSG −2, song −16.8 dBFS RMS (x68k
-  −15.9), PCM 3.7 dB under the melody; pce: −1, PCM still ~9 dB under (its
-  DDA is one wave's level and its waves already the X68000's FM's) — said
-  in the log, the song not made quieter for it. No `:master` boost exists
-  (VOL_UNITY is the top). The user: a level change to the score is a
-  def-mod — so the samples' own move is `def-mod :voice [names] :vel+ N`
-  too (it was a `(gain -N)` in their :fx); only the normalize and the
-  limiter, which shape the sound, stay in the def-pcm's :fx.
-- **Review of the day's conversion work** (2026-11-08), fixed: a `:len Nf`
-  curve reaches its end on frame N − 1 (the player samples k/(N−1)), so a
-  line's `b` is the span's last frame, not the next (lineVector); a
-  def-pcm variant with an :fx of its own replaces its base's chain
-  (mmlisp2ir resolve) so it is normalized too, one without inherits; the
-  limiter only on drums (a name or a heard role), not a pad; one compile
-  per conversion (`s.compiled()`, shared by loopOf and the Porter);
-  convertCountedJumps is the compiler's own pass, gone from loopOf;
-  pruneVoices now only drops a def that hides a ROM voice (shadowing) and
-  the fm-roles import — every other unnamed def is pruneUnnamedDefs';
-  allRoles gone; Open's set path awaited inside its try.
-- **The bass kept, and on the machine's bass channel** (user, 2026-11-08:
-  "MDX onto fc, the triangle was silent; the bass should sound; gb too —
-  could melody and bass be told apart automatically?"). Nothing was
-  silent (VU and renders showed tri / wave sounding): fc's tri had fm5, a
-  32nd-note arpeggio in o5, thin on a triangle, and the bass (fm1, median
-  d+3, 8+ semitones under the rest) was dropped by note count. planRows:
-  `bassRow()` = the melodic row whose median note sits BASS_APART (7) under
-  the next (import-to-midi.js's LOW_APART rule), off `s.compiled()`; first
-  in the melodic pool's order, and placed on the machine's `bass` part
-  (chips/parts.js: fc-tri, gb-wave `bass: true`) before the rest. DTWNB:
-  fm1 → tri / wave on every song tried.
-- **gb: every drum on the noise** (user: "a 1-channel PCM song; the
-  gaps are rests — could the noise play more than kick and snare?"):
-  NOISE_DRUMS has tom (d+5, 4096 Hz, 10f), rim (g6, 3f), cymbal (a6, 30f
-  line), hat (a+6, 3f) beside kick / snare; `knownRank` (name or heard,
-  null for neither) picks a sample's drum, noiseDrumOf(rank) its sound; a
-  row of any known drum goes to the noise, layered by rank.
-- **MGS onto pc88: the drums were silent** (user, 2026-11-08). The FM-PAC
-  rhythm rows went to pc88's rhythm1-5, right, but that part plays the
-  user's YM2608 ROM, and without it only samples under the roles' names
-  stand in — the conversion imported none. `userRom: true` on rhythmRom
-  (chips/rhythm-rom.js, parts.js): rows onto such a kit whose roles the
-  score has no samples for set needsKit → `(import "presets/rx5/set.mmlisp")`
-  as import-mucom does; said. Measured: silent without, −29 dBFS with.
-- **The melody kept** (user: "MGS onto pce dropped the melody — hard to
-  tell?"). The "own kind first" pool order let an MSX song's five SCC
-  parts (waves, the PC Engine's own kind) fill pce before its FM lead.
-  planRows' `statsOf()` (per melodic row: notes, middle note, middle
-  length, middle level in dB from :vel and :vol), `melodyRow()`: rows with
-  middle length ≥ ppqn/6 (a gated 16th, MDX's 22 ticks; 32nd runs out) and
-  ≥ MELODY_SHARE (¼) of the busiest's notes, not the bass; the loudest by
-  3 dB bins, then the highest — named only if it stands out (alone in the
-  loudest bin, or MELODY_ABOVE 3 semitones over the next), else none. Pool
-  order: bass, melody, own kind, notes. DTWNB: fm4 / fm3 / none (05: two
-  parts alike) / fm3.
-  The user's BF_4TH.MGS (fc / gb / pce still dropped the melody): its bass
-  is doubled — fm6 and SCC wave1 both at a middle note of 39 — so no part
-  sat a fifth under "the next", no bass was named, and the loud fm6 was
-  taken for the melody, fm1 (65, −4 dB) dropped. Now the parts within
-  BASS_TOGETHER (2) of the lowest are one bass group: its loudest the bass,
-  the others copies, dropped first (pool order: copy last kept, bass,
-  melody, own kind, notes); the melody is never from the group. BF_4TH:
-  fm6 → tri / wave, fm1 kept on all three.
-- **Review of bass / melody / noise drums / the rx5 kit** (2026-11-08),
-  fixed: bassRow / melodyRow read before the pools sort (the copy's rank
-  needs the group); statsOf skips def-se tracks and merges a channel's
-  :prio tracks; a part's weight is the time it sounds (`sounds`, notes ×
-  length), PART_SHARE of the longest-sounding and PART_NOTES (4) notes —
-  so a lead among 32nd runs is the melody, one held low note no bass; a
-  bass sits under BASS_UNDER (G3) too (two mid parts were taken for a
-  doubled bass); a lone part in a tune's lengths is the melody; drum
-  names are whole words (`(?<![a-z])…(?![a-z])`: `909snare`, `tom4` are,
-  `bottom`, `chat`, `prime` are not); FM onto a tone says its part's
-  label (the triangle is no square); rx5 is imported for the roles the
-  score lacks, its own samples winning (the compiler lets a score's def
-  override an import's). A sweep of the user's songs (19 MDX, BF_4TH.MGS,
-  4 mucom88) and VGMs of 9 test scores onto every machine — 198
-  conversions: no error, no warning, no named bass / melody dropped, no
-  kept channel empty; the one "drums gone" is DTWNB18's 12.7 s stream,
-  rightly no drum. Inline operator words on such a
-track are still dropped (the operators are not the 4-op's).
-
-## mucom88's FM3 operator mode, real songs (2026-11-08)
-
-The user's "def-fm がなくてデフォルトの音" on mucom88 → x68k: Yuzo Koshiro's
-sampl1.muc (onitama/mucom88 `package/`, with voice.dat; CC BY-NC-SA, not in
-the repo — fetch them to test: raw.githubusercontent.com/onitama/mucom88/
-master/package/sampl{1,2,3}.muc, voice.dat) uses FM3's operator mode, and
-the pc88 writer puts the shared patch's voice on fm3-1's forms alone (no
-note-less `(fm3 v)`). Onto channels of their own each operator track needs
-it: `readOpVoices` reads a voice at the head of any fm3-N's n-th form as the
-patch's for every fm3-N's n-th form (mucom's sections align forms); a voice
-mid-form stays that track's and is said. Also found: the md writer commented
-part J out on its first line only (a parse error) — every line now.
-sampl3 is PSG-only (no FM voices: its x68k is stand-ins, right).
-
-## Every import onto every machine (2026-11-08)
-
-The user: with every machine converting to every other, no Target list is
-held short. PORT_TARGETS is TARGETS' machines of chips (score-port.js). VGM,
-NSF and DefleMask / Furnace offer every machine to their own writers (the
-holdsSong filter, which kept only machines holding half the notes, is gone:
-every machine's VGM onto every machine compiles clean, check:score-port);
-mucom88 writes pc88 and md itself (its md reading does more than a
-conversion: the SSG envelope as a level macro, the PCM fitted to the
-driver's bank) and every other machine as its pc88 score converted; MDX,
-MGS, MIDI and Convert to Machine already offered all. A split track's
-halves count their own notes: a part all noise gives no channel to an empty
-tone half.
+Test material (not in the repo): the user's DTWNB MDX set (19 songs + PDX),
+BF_4TH.MGS (a doubled bass), pcmt13.muc (part K beside rhythm1–6); Yuzo
+Koshiro's sampl1–3.muc + voice.dat (onitama/mucom88 `package/`, CC BY-NC-SA,
+raw.githubusercontent.com/onitama/mucom88/master/package/; sampl1 uses FM3's
+operator mode, sampl3 is PSG only).
 
 ## The PC Engine (pce; built 2026-10-27)
 

@@ -94,6 +94,10 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## MMLisp Live
 
+- **Machine conversion: an FM voice onto the OPLL's ROM voices** keeps its
+  written octave — the carrier's octave is not written up, as it is onto a
+  wave or a square, since each ROM voice's own multiple differs.
+
 - A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
   is relative to the score's folder, which the picker's stand-in score lacks.
 - **Drawing on a stage vector** in the panel's vector editor: a macro's
@@ -122,9 +126,12 @@ order, waits for its use:
 2. **A plugin** — the machines as instruments in a DAW, held until someone
    needs it: a chip VSTi has makers already (a plugin that plays a score, its
    def-vals the DAW's automation, is the one MMLisp would bring).
-3. **`:target midi`'s video** — its WAV and stems render on the GM
-   SoundFont; the video export records the chips' worklet, which plays
-   nothing on midi, so it would record the GM output's node instead.
+3. **The keyboards on `:target midi`** — the on-screen and MIDI keyboards'
+   preview notes sound on the chips' worklet, which is silent there, not on
+   the MIDI / GM output.
+4. **A program a hot-swap brings mid-play** is decoded on the GM output's
+   audio thread (a block's dropout on a phone); decoding it off that thread
+   (`setAudioData`) would remove it.
 
 ## Future vision
 
