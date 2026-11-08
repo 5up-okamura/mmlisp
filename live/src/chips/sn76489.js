@@ -17,7 +17,8 @@ export const NOISE_MODE_MAP = {
 
 const PSG_LEVEL = { stepDb: 2, steps: 16 }; // the attenuator, 0 loud .. 15 off
 
-export const snSqr = { name: "sqr", label: "SN76489 tone", unit: "psg", kind: "tone", level: PSG_LEVEL, words: NO_WORDS };
+// Its 10-bit period at 3.58 MHz / 32 reaches 109 Hz: A2 (MIDI 45).
+export const snSqr = { name: "sqr", label: "SN76489 tone", unit: "psg", kind: "tone", level: PSG_LEVEL, words: NO_WORDS, lowest: 45 };
 
 export const snNoise = {
   name: "noise",

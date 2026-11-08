@@ -45,6 +45,8 @@
 //             where their notes meet the :prio layering decides across the
 //             names, this rank at an equal :prio (0 first); parts without it
 //             are one or the other in a score
+//   lowest    the lowest MIDI note its tone reaches (the SN76489's 10-bit
+//             period: A2); a conversion writes a lower one up to it
 //   noLevel   true: a part whose chip has no level for it (the 2A03's
 //             triangle) — a note sounds or is halted, so a written :vel /
 //             :vol says so (W_TARGET) and only 0 silences

@@ -1595,6 +1595,12 @@ class Porter {
           outs[i] = ctx.split && ctx.state.mode !== ctx.split ? restOf(v) : this.noiseNote(v, ctx);
           continue;
         }
+        // A note under the destination's lowest (the SN76489's A2), written
+        // up by octaves to it — the note alone, the track's octave unmoved.
+        if (ctx.head && ctx.destPart?.lowest != null && isNote(v)) {
+          const k = this.lowNotes(ctx.head, ctx.destPart.lowest).get(`${it.line}:${it.column}`);
+          if (k) { outs[i] = `${Array(k).fill(">").join(" ")} ${v} ${Array(k).fill("<").join(" ")}`; continue; }
+        }
         const shift = ctx.head ? this.octShift.get(ctx.head) ?? 0 : 0;
         if (shift && v === ":oct" && num(items[i + 1]) != null) { outs[i + 1] = String(num(items[i + 1]) + shift); i++; continue; }
         if (typeof v === "string" && /^:[a-z]/.test(v) && i + 1 < items.length) {
@@ -1958,6 +1964,31 @@ class Porter {
     return null;
   }
 
+  // The notes of a track under `lowest`, by their place in the source
+  // ("line:column") → the octaves each is written up: as the source
+  // compiles, a place played anywhere under it (a phrase played at several
+  // octaves) the most any play needs.
+  lowNotes(head, lowest) {
+    this.lows ??= new Map();
+    const key = `${head}@${lowest}`;
+    if (!this.lows.has(key)) {
+      const at = new Map();
+      for (const t of this.s.compiled?.()?.tracks ?? []) {
+        if ((t.scoreChannel ?? t.channel) !== head) continue;
+        for (const e of t.events) {
+          if (e.cmd !== "NOTE_ON" || e.args.pitch == null || !e.src) continue;
+          const m = pitchToMidi(e.args.pitch);
+          if (!(m < lowest)) continue;
+          const k = Math.ceil((lowest - m) / 12), p = `${e.src.line}:${e.src.column}`;
+          at.set(p, Math.max(k, at.get(p) ?? 0));
+        }
+      }
+      if (at.size) this.say(`${this.nameOf(head)}: ${at.size} note${at.size === 1 ? "" : "s"} under the ${this.to.system}'s lowest (${PITCH_NAMES[lowest % 12]}${Math.floor(lowest / 12) - 1}) written up by octaves to it`);
+      this.lows.set(key, at);
+    }
+    return this.lows.get(key);
+  }
+
   // The lowest and highest MIDI note a track plays (its every form's), as
   // the source compiles: how far its notes can be written up or down.
   noteSpan(head) {
@@ -2170,11 +2201,49 @@ class Porter {
       this.say(`${kw} on ${this.nameOf(ctx.head)} was the FM3 patch's operator ${op}; taken out`);
       return DROP;
     }
+    if (w === "SSG_ENV" && ctx.destPart && !ctx.destPart.words(w)) return this.envAsLevel(val, ctx);
     if (ctx.destPart ? ctx.destPart.words(w) : this.toHas(w)) return KEEP;
     if (w === "PAN" && (val.value === "center" || val.value === "0")) return DROP; // as a channel with none plays
     const label = ctx.srcPart?.words(w) ? ctx.srcPart.label : owners.find((p) => this.from.parts.includes(p))?.label ?? owners[0].label;
     this.say(`${base} (the ${label}'s)${ctx.head ? ` on ${this.nameOf(ctx.head)}` : ""}: ${where} has none; taken out`);
     return DROP;
+  }
+
+  // The SSG's hardware envelope on a channel without one: its shape drawn as
+  // a `:vel*` macro over the note, one cycle a period of the song's
+  // `:env-rate` — as a driver draws a software envelope. A rate past half
+  // the frame rate (a buzzer's timbre) or one that follows the note's pitch
+  // has no frames to draw it in: the level is the note's.
+  envAsLevel(val, ctx) {
+    const v = val.kind === "atom" ? String(val.value) : null;
+    if (v === "none") return { replace: "(macro :vel* none)" };
+    const shape = num(val);
+    if (ctx.macro || shape == null || shape < 0 || shape > 15) {
+      this.say(`:env ${v ?? "(…)"} on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope, and this one is not a shape to draw; taken out`);
+      return { drop: true };
+    }
+    if (this.envHz === undefined) {
+      const rates = [];
+      const look = (n) => { if (isList(n)) n.items.forEach((x, i) => { if (x.kind === "atom" && x.value === ":env-rate") rates.push(n.items[i + 1]); look(x); }); };
+      this.s.roots.forEach(look);
+      const hz = rates.map((r) => (r ? num(r) : null));
+      this.envHz = hz.length && hz.every((x) => x != null && x === hz[0]) ? hz[0] : hz.find((x) => x != null) ?? null;
+      if (hz.length > 1 && !hz.every((x) => x === hz[0])) this.say(`:env-rate changes during the song: the envelopes drawn as levels take ${this.envHz ?? "none"} Hz throughout`);
+    }
+    const frameHz = this.s.compiled?.()?.metadata?.frameHz ?? 60;
+    const frames = this.envHz > 0 ? Math.round(frameHz / this.envHz) : 0;
+    if (frames < 2) {
+      if (!this.saidEnv) { this.saidEnv = true; this.say(`:env on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope, and ${this.envHz == null ? "a period that follows the note" : `${this.envHz} Hz`} is too fast to draw a frame at a time; the note keeps its level`); }
+      return { replace: "(macro :vel* none)" };
+    }
+    const len = `:len ${frames}f`;
+    const once = (from, to, hold) => `[(linear ${from}..${to} ${len}) ${hold}]`;
+    const spec = shape === 8 ? `(saw 1..0 ${len})` : shape === 12 ? `(saw 0..1 ${len})`
+      : shape === 10 ? `(triangle 1..0 ${len})` : shape === 14 ? `(triangle 0..1 ${len})`
+      : shape === 11 ? once(1, 0, 1) : shape === 13 ? once(0, 1, 1)
+      : shape < 4 || shape === 9 ? once(1, 0, 0) : once(0, 1, 0);
+    if (!this.saidEnvLevel?.has(ctx.head)) { (this.saidEnvLevel ??= new Set()).add(ctx.head); this.say(`:env on ${this.nameOf(ctx.head)}: ${ctx.dest} has no hardware envelope; its shape drawn as a :vel* macro at ${this.envHz} Hz`); }
+    return { replace: `(macro :vel* ${spec})` };
   }
 
   songRule(w, kw, val, ctx) {

@@ -84,7 +84,11 @@ function check(file, src, to) {
     // (And an FM voice onto a wave or a square is written at its sounding
     // octave: carrierOctave.)
     const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && (TARGETS[to].partOf(dest).kind !== "fm" || twoOp(from, row.head) !== twoOp(to, dest)));
-    const was = notesOf(before.ir, row.head, kind, until, keyed);
+    // A note under the destination's lowest (the SN76489's A2) is written up
+    // by octaves to it.
+    const lowest = TARGETS[to].partOf(dest)?.lowest;
+    const lift = (x) => { const [on, key] = x.split(":"); return key != null && lowest != null && +key < lowest ? `${on}:${+key + 12 * Math.ceil((lowest - key) / 12)}` : x; };
+    const was = notesOf(before.ir, row.head, kind, until, keyed).map(lift).sort();
     const now = notesOf(after.ir, dest, kind, until, keyed);
     // A channel the source machine shared between parts (the PC Engine's
     // wave5, noise5, pcm5) played only one of them where they met: on
@@ -382,6 +386,22 @@ const port = (src, to, rows) => {
 }
 
 // ── The wave memories (wave-port.js) ──
+{
+  // The SSG's hardware envelope where the destination has none: its shape a
+  // :vel* macro at the song's :env-rate; a period too fast to draw keeps the level.
+  const env = port("(def-score :target pc88)\n(sqr1 :env-rate 4 :env 8 :len 4 c :env 13 d :env none e)", "md");
+  assert.match(env.text, /\(sqr1 \(macro :vel\* \(saw 1\.\.0 :len 15f\)\) :len 4 c \(macro :vel\* \[\(linear 0\.\.1 :len 15f\) 1\]\) d \(macro :vel\* none\) e\)/);
+  const buzz = port("(def-score :target msx)\n(sqr1 :env-rate note :env 8 :len 4 c)", "fc");
+  assert.match(buzz.text, /\(sqr1 \(macro :vel\* none\) :len 4 c\)/);
+  assert.ok(buzz.said.some((x) => /too fast to draw/.test(x)));
+}
+{
+  // An SSG note under the SN76489's lowest (A2): that note written up by
+  // octaves to it, the track's octave unmoved — in a phrase too.
+  const low = port("(def-score :target pc88)\n(def lo :oct 1 c a > c)\n(sqr1 :len 4 lo :oct 2 g a)", "md");
+  const lowIr = compileMMLisp(low.text, join(repo, "tools/tests/t.mmlisp")).ir;
+  assert.deepEqual(lowIr.tracks[0].events.filter((e) => e.cmd === "NOTE_ON").map((e) => e.args.pitch), ["c3", "a2", "c3", "g3", "a2"]);
+}
 {
   // A voice sounding octaves up (its carrier's :ml 8) onto a square: the
   // notes are written up only as far as MIDI 127 reaches.
