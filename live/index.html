@@ -3673,17 +3673,7 @@
       // A part on several channels (MGS's FM rhythm) is told apart by them.
       const shared = new Set(Object.values(partOf).filter((v, i, all) => all.indexOf(v) !== i));
       const name = (h) => (partOf[h] == null ? h : shared.has(partOf[h]) ? `${partOf[h]} (${h})` : partOf[h]);
-      const rowsFor = (target) => {
-        if (target === own || !PORT_TARGETS.includes(target)) return [];
-        const plan = portRows(res.source, target);
-        if (plan.error) return [];
-        return plan.rows.map((r) => ({
-          key: r.key,
-          label: `${name(r.head)}${r.key.endsWith('/noise') ? ' · its noise notes' : ''} · ${r.notes} note${r.notes === 1 ? '' : 's'}`,
-          value: r.to,
-          choices: r.choices,
-        }));
-      };
+      const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { name }));
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary,
@@ -3700,6 +3690,20 @@
       if (out.error) throw new Error(out.error);
       const source = out.text.replace(new RegExp(`^(; Imported from .*?) \\(${tag}\\)`), `$1 (${tag}, read as ${own}, then onto ${target})`);
       return { target, res: { ...res, source, warnings: [...res.warnings, ...out.said] } };
+    }
+    // The conversion's rows as the import dialog shows them (score-port.js
+    // portRows): a row per channel, named by `name`, with its notes.
+    function conversionRows(text, target, { imports = null, name = (h) => h } = {}) {
+      if (!PORT_TARGETS.includes(target)) return [];
+      const plan = portRows(text, target, { imports });
+      if (plan.error) return [];
+      // (A note-less form is a patch: fm3's beside its operator tracks.)
+      return plan.rows.map((r) => ({
+        key: r.key,
+        label: `${name(r.head)}${r.key.endsWith('/noise') ? ' · its noise notes' : ''} · ${r.notes ? `${r.notes} note${r.notes === 1 ? '' : 's'}` : 'no notes'}`,
+        value: r.to,
+        choices: r.choices,
+      }));
     }
     const PORT_HINT = 'another machine takes its voices, loops and gates as written: a part keeps its channel where the machine has it, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or said. General MIDI reads it as its own machine’s, then gives each channel a GM instrument and the drums kit roles';
 
@@ -4455,20 +4459,9 @@
       }
       // Every machine of chips takes every other's score (score-port.js).
       const near = PORT_TARGETS.filter((t) => t !== from);
-      const choices = [...near.map((t) => [t, `${sys(t)} (:target ${t})`]), ['midi', `General MIDI (:target midi) — read as the ${sys(from)}’s`]];
+      const choices = withMidi(near, from);
       const imports = _importSources;
-      const rowsFor = (target) => {
-        if (!near.includes(target)) return [];
-        const plan = portRows(text, target, { imports });
-        if (plan.error) return [];
-        return plan.rows.map((r) => ({
-          key: r.key,
-          // A note-less form is a patch (fm3's beside its operator tracks).
-          label: `${r.head}${r.key.endsWith('/noise') ? ' · its noise notes' : ''} · ${r.notes ? `${r.notes} note${r.notes === 1 ? '' : 's'}` : 'no notes'}`,
-          value: r.to,
-          choices: r.choices,
-        }));
-      };
+      const rowsFor = (target) => (target === from ? [] : conversionRows(text, target, { imports }));
       const got = await showImportDialog({
         title: 'Convert to Machine',
         summary: `The score is the ${sys(from)}’s (:target ${from}).`,

@@ -59,6 +59,7 @@
 
 import { PPQN, emitSong, emitPhrased, qstr, octOf, PITCH_NONE, GLIDE_NONE, FM_DESTS, PSG_DESTS, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { TARGETS, targetProfile } from "./targets.js";
+import { PORT_TARGETS } from "./score-port.js";
 import { OPLL_ROM_NAMES, romVoicesAs4op } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
@@ -329,7 +330,7 @@ export function analyzeTracker(t) {
     .filter((x) => x.n > 0).sort((x, y) => y.n - x.n).map((x) => x.tg);
   const mine = own.includes("md") ? own : [...own, "md"];
   // And every other machine: the rows say what each one keeps.
-  const targets = [...mine, ...Object.keys(TARGETS).filter((tg) => !mine.includes(tg) && TARGETS[tg].sound === "chips")];
+  const targets = [...mine, ...PORT_TARGETS.filter((tg) => !mine.includes(tg))];
   return { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels, targets, target: targets[0] };
 }
 

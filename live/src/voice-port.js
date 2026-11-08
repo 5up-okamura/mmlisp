@@ -42,7 +42,7 @@ const waveWords = ({ alg, fb, ops }) => new Map([
 ]);
 export const WAVEFORM_WORDS = new Map(Object.entries(WAVEFORMS).map(([name, v]) => [name, waveWords(v)]));
 // The ROM voice of each waveform's shape (import-song.js ROM_STAND_IN).
-const ROM_OF_WAVE = { "wave-square": "clarinet", "wave-saw": "synth", "wave-triangle": "flute", "wave-sine": "flute" };
+export const ROM_OF_WAVE = { "wave-square": "clarinet", "wave-saw": "synth", "wave-triangle": "flute", "wave-sine": "flute" };
 
 // A GM program's role, by its family (gm-names.js): the instruments the
 // fifteen stand for. Pads, effects, the ethnic and the percussive have none.

@@ -435,4 +435,18 @@ const port = (src, to, rows) => {
   }
 }
 
+// ── A review of the whole area (2026-11-08) ──
+{
+  // A split's tone half keeps the layer's :mode across forms when its noise half is dropped.
+  assert.match(port("(def-score :target msx)\n(sqr1 :len 8 :mode tone c d :mode noise c c)\n(sqr1 e f :mode tone g a)", "md", { "sqr1/noise": "drop" }).text, /\(sqr1 _ _ g a\)/);
+  // A snippet's :mode the machine's squares have not goes.
+  assert.match(port("(def-score :target pc88)\n(def drum :mode noise c c :mode tone)\n(sqr1 :len 8 drum c)", "md").text, /\(def drum c c\)/);
+  // A sample track not all kit roles is not offered a ROM rhythm channel.
+  assert.ok(portScore('(import "presets/rx5/set.mmlisp")\n(def-pcm mys :file "blip.wav")\n(pcm1 kick mys :len 8 c c)', "pc88", { rows: { pcm1: "rhythm1" } }).error);
+  // A role's wave macro cleared at a voice in a later form.
+  assert.match(port("(def-fm lead init-fm :alg 4 :tl1 20)\n(fm1 piano :len 4 c d)\n(fm1 lead e f)", "gb").text, /\(wave \(macro :wave none\) \w+ lead-env e f\)/);
+  // The log calls :lfo-freq the rate, and a machine with no LFO so.
+  assert.ok(port("(def-score :target x68k)\n(fm1 :lfo-freq 100 :len 4 c)", "gb").said.some((x) => /:lfo-freq: the Game Boy has no LFO/.test(x)));
+}
+
 console.log(`check:score-port ok — ${scores} conversions compile clean with ${tracks} tracks' notes kept, an MDX onto md and pc88, the rules`);

@@ -79,6 +79,7 @@
 import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
   assignBends, PITCH_NONE, gcd, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { TARGETS, targetProfile } from "./targets.js";
+import { PORT_TARGETS } from "./score-port.js";
 import { envCycle } from "./chips/ssg.js";
 import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES } from "./chips/rp2a03.js";
 import { noiseHz as gbNoiseHz, noiseNoteOfHz as gbNoiseNote } from "./chips/lr35902.js";
@@ -2227,7 +2228,7 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
     .filter(([, re]) => tones.some((c) => re.test(c.key)) || (!tones.length && parsed.chips.some((n) => re.test(n))));
   const mine = [...own.map(([t]) => t), "md"];
   // And every other machine: the rows say what each one keeps.
-  const targets = [...mine, ...Object.keys(TARGETS).filter((t) => !mine.includes(t) && TARGETS[t].sound === "chips")];
+  const targets = [...mine, ...PORT_TARGETS.filter((t) => !mine.includes(t))];
   // (A file of PCM alone — a YM2608's ADPCM-B, an OKIM6258, or an arcade's
   // OKIM6295, which fits PCM8 — is its chip's machine's.)
   // (And it has to hold the song's PCM as well as the Mega Drive's three do: a
