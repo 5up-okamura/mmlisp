@@ -315,6 +315,8 @@ function patchHeads(s, to) {
 }
 
 const allRoles = (h, kit) => h.samples.size > 0 && [...h.samples].every((x) => kit.has(x));
+// A role heard (import-to-midi.js sampleRole, heardBeat) as a kit's role.
+const KIT_OF_HEARD = { kick: "kick", snare: "snare", tom: "tom4", tom3: "tom4", crash: "ride", hat: "hat", "hat-open": "hat" };
 
 /**
  * The rows of `text` onto `toName`: each channel the score writes, where it
@@ -373,7 +375,16 @@ function planRows(s, from, to, loopOf = () => null) {
   }
   const roleKit = to.parts.some((p) => p.kit);
   const toKit = kitRoles(to);
-  const rolesHere = (h) => roleKit && h && allRoles(h, toKit);
+  // A machine with no sample channel but a ROM kit (the MSX's FM-PAC):
+  // a sample whose name is no role is the kit's role it sounds as (an
+  // MDX's pdx-000 heard as the kick), so its row plays on the kit.
+  s.byEar = new Map();
+  if (roleKit && !channelsOf(to, "sample", { board: true }).length)
+    for (const [n, r] of s.heard ?? []) {
+      const role = KIT_OF_HEARD[r];
+      if (!toKit.has(n) && role && toKit.has(role)) s.byEar.set(n, role);
+    }
+  const rolesHere = (h) => roleKit && h && h.samples.size > 0 && [...h.samples].every((x) => toKit.has(x) || s.byEar.has(x));
   // A physical voice each channel taken is, and which source voice took it:
   // two of the source's on one of the destination's (md sqr3 and noise onto
   // pc88's sqr3) cannot both go there.
@@ -1408,6 +1419,11 @@ class Porter {
           continue;
         }
         if (ctx.destPart?.kind === "sample" && !this.toKit.size && this.from.parts.some((p) => p.kit?.[v]) && !this.s.samples.has(v)) this.needsKit = true;
+        // A sample on the ROM kit by its sound: its role's name.
+        if (ctx.destPart?.kit && this.s.byEar?.has(v)) {
+          if (!this.saidByEar?.has(v)) { (this.saidByEar ??= new Set()).add(v); this.say(`'${v}' plays the ${ctx.destPart.label}'s ${this.s.byEar.get(v)} (as it sounds)`); }
+          outs[i] = this.s.byEar.get(v);
+        }
       } else if (ctx.head && this.octShift.get(ctx.head) && isList(it, "glide") && /^[a-g][+-]?\d+$/.test(String(it.items[1]?.value))) {
         // A glide's start note, written at its octave: raised with the rest.
         const m = /^([a-g][+-]?)(\d+)$/.exec(it.items[1].value);

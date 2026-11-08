@@ -471,6 +471,19 @@ const port = (src, to, rows) => {
 (fm1 :len 4 c e g c)
 (pcm1 :len 8 smp-a c smp-b c smp-a c smp-b c smp-c c c)`, "gb", { heard: new Map([["smp-a", "kick"], ["smp-b", "snare"], ["smp-c", "snare"]]) });
   assert.match(kitRow.text, /\(noise :len 8 noise-kick :oct 4 :gate 5f a noise-snare :oct 6 :gate 15f d\+ noise-kick :oct 4 :gate 5f a noise-snare :oct 6 :gate 15f d\+ _ _\)/, kitRow.text);
+  // A machine with no sample channel but a ROM kit (the MSX's FM-PAC): a
+  // kit row by ear — each sample its role as it sounds — plays the kit.
+  const toKitByEar = portScore(`(def-score :target x68k)
+(def-pcm smp-a :file "a.wav")
+(def-pcm smp-b :file "b.wav")
+(def-pcm smp-c :file "c.wav")
+(fm1 :len 4 c e g c)
+(pcm1 :len 8 smp-a c smp-b c smp-a c smp-c c)`, "msx", { heard: new Map([["smp-a", "kick"], ["smp-b", "snare"], ["smp-c", "hat"]]) });
+  assert.ok(!toKitByEar.error, toKitByEar.error);
+  assert.match(toKitByEar.text, /\(rhythm1 :len 8 kick c snare c kick c hat c\)/, toKitByEar.text);
+  assert.doesNotMatch(toKitByEar.text, /def-pcm/, "the samples' defs go with their names");
+  // …and with nothing heard, a sample of a name that says nothing has no role there.
+  assert.equal(portScore(`(def-score :target x68k)\n(def-pcm smp-a :file "a.wav")\n(pcm1 smp-a :len 8 c c)`, "msx").map.pcm1, "drop");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

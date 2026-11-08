@@ -2631,6 +2631,10 @@ machine's channels or dropped:
   a level that falls away in a few frames (`noise-kick`, `noise-snare`).
   The rest of the kit is decoration and is left out. A sample whose name
   says nothing (an MDX's `pdx-003`) is told by its sound.
+- A machine with no sample channel but a ROM rhythm (the MSX's FM-PAC)
+  plays a drum track on it: each sample as the kit's role it is named or
+  sounds as (an MDX's samples by their sound: kick, snare, tom, top
+  cymbal, hat).
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
   forms, language.md §1), a `:prio` each: the kick and snare first, then

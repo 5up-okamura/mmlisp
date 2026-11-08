@@ -350,7 +350,14 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   6 :gate 15f`, d+ = 87, 32768 Hz; their `:vel+` falls, the gate as long so a
   layer under it gives way only while it sounds — not :gate 1t, a noise note
   stops at its gate), written once a body; any other sample → its notes
-  rests; the sample's :oct / :pitch / :mode / gates dropped. Inline operator words on such a
+  rests; the sample's :oct / :pitch / :mode / gates dropped.
+- **msx: an MDX's drums on the FM-PAC rhythm** (user: "MDX onto msx has no
+  drums", 2026-11-08). No sample channel but a ROM kit: planRows fills
+  `s.byEar` (sample name → kit role, KIT_OF_HEARD: kick, snare, tom → tom4,
+  crash → ride (the top cymbal), hat / hat-open → hat) from `heard`, and
+  rolesHere takes a row whose samples are all roles by name or by ear; the
+  porter writes each such sample as its role. pc88 keeps its ADPCM-B for
+  real samples (byEar only where no sample channel). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)
