@@ -330,7 +330,15 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   rhythm4 with tom :prio 1 / rim :prio 2 had both become one number —
   appended, not layered). pc88's six rhythm parts onto md: kick pcm1,
   snare pcm2, ride / hat / tom / rim layers on pcm3 (it kept ride, hat, rim
-  and dropped the kick and snare); onto fc all six on the DPCM. Inline operator words on such a
+  and dropped the kick and snare); onto fc all six on the DPCM.
+  The user: "the kick and snare are a must, the rest decoration — can't
+  it tell without names?" A name that says nothing (an MDX's pdx-003) is
+  ranked by its sound: portScore / portRows take `heard` (name → role,
+  import-to-midi.js `heardRoles`, sampleRole on each hit), which the app
+  fills from the import's samples (portImported, driverSongDialog) and on
+  Convert from the score's own (scorePcm). A name that says a role wins.
+  sampleRole is rough — DTWNB's kick, hats and cymbal come right, its toms
+  read as snares — enough for kick and snare first. Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

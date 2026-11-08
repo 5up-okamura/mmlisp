@@ -205,10 +205,14 @@ function walk(items, fn, times = 1) {
   }
 }
 
-// A drum row's :prio as a layer (lower sounds first): by the names it plays.
+// A drum row's place among the drums (lower: the beat's — the kick and the
+// snare — before the toms, a rim, the cymbals and the hats): by the names
+// it plays, or for a name that says nothing (an MDX's `pdx-003`) by its
+// sound as heard (`heard`: name → role, import-to-midi.js heardRoles).
 const DRUM_RANKS = [[/kick|bd|bass-?drum/i, 1], [/snare|sd|clap/i, 2], [/tom/i, 3], [/rim|cow|perc/i, 4], [/crash|ride|cym|splash/i, 5], [/hat|hh/i, 6]];
-function drumRank(h) {
-  const ranks = [...(h?.samples ?? [])].map((n) => DRUM_RANKS.find(([re]) => re.test(n))?.[1] ?? 4);
+const rankOfName = (n) => DRUM_RANKS.find(([re]) => re.test(n))?.[1];
+function drumRank(h, heard = null) {
+  const ranks = [...(h?.samples ?? [])].map((n) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(heard.get(n)) : null) ?? 4);
   return ranks.length ? Math.min(...ranks) : 4;
 }
 
@@ -293,19 +297,22 @@ const allRoles = (h, kit) => h.samples.size > 0 && [...h.samples].every((x) => k
  * goes by default, and where else it could. { from, to, rows: [{ key, head,
  * kind, notes, to, choices }] } or { error }. `to` is a channel or 'drop'.
  */
-export function portRows(text, toName, { imports = null } = {}) {
-  const { s, ...plan } = planFor(text, toName, imports);
+export function portRows(text, toName, { imports = null, heard = null } = {}) {
+  const { s, ...plan } = planFor(text, toName, imports, heard);
   return plan;
 }
 
 // The rows, with the survey they were read from (the Porter reads it too).
-function planFor(text, toName, imports) {
+// `heard`: the score's samples' roles as heard (a Map, name → role), for a
+// drum whose name says nothing.
+function planFor(text, toName, imports, heard = null) {
   const from = TARGETS[scoreTargetOf(text)];
   const to = TARGETS[toName];
   if (!to || !PORT_TARGETS.includes(toName)) return { error: `no conversion onto ${toName}` };
   if (!PORT_TARGETS.includes(from.name)) return { error: `the ${from.system} is not converted at the words' level` };
   let s;
   try { s = survey(text, from, imports); } catch (e) { return { error: `the score does not parse: ${e.message}` }; }
+  s.heard = heard ?? new Map();
   // Each track's endless loop, as [from, to] ticks (null: none), read off
   // the score compiled — once, and only if rows are to share a channel.
   let loops;
@@ -415,7 +422,7 @@ function planRows(s, from, to, loopOf = () => null) {
   // A sample row's place among the drums (drumRank: the kick and snare
   // first, the hats last), for which keeps a channel of its own.
   const isSampleRow = (k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k));
-  const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k))));
+  const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k), s.heard)));
   for (const [inPool, room] of pools) {
     const groups = new Map();
     for (const k of keys.filter((k) => inPool(k) && dest[k] !== "drop" && dest[k] !== "layer")) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
@@ -449,10 +456,10 @@ function planRows(s, from, to, loopOf = () => null) {
     if (kept.length === 1) {
       // One channel: which loop it plays is the group with the most notes.
       const total = (k) => rows.filter((o) => alike(o, k)).reduce((n, o) => n + notesOf(o), 0);
-      const best = [...rows].sort((a, b) => total(b) - total(a) || drumRank(s.heads.get(a)) - drumRank(s.heads.get(b)) || notesOf(b) - notesOf(a))[0];
+      const best = [...rows].sort((a, b) => total(b) - total(a) || drumRank(s.heads.get(a), s.heard) - drumRank(s.heads.get(b), s.heard) || notesOf(b) - notesOf(a))[0];
       if (best !== kept[0]) { dest[kept[0]] = "layer"; delete dest[best]; kept = [best]; }
     }
-    const byRank = [...kept].sort((a, b) => drumRank(s.heads.get(b)) - drumRank(s.heads.get(a)) || notesOf(a) - notesOf(b));
+    const byRank = [...kept].sort((a, b) => drumRank(s.heads.get(b), s.heard) - drumRank(s.heads.get(a), s.heard) || notesOf(a) - notesOf(b));
     for (const k of rows) {
       if (dest[k] !== "layer") continue;
       const host = byRank.find((h) => alike(h, k));
@@ -540,8 +547,8 @@ function planRows(s, from, to, loopOf = () => null) {
  *   names: a channel → the name the log calls it by (an MDX's parts)
  * @returns {{text: string, map: Record<string,string>, said: string[]} | {error: string}}
  */
-export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {} } = {}) {
-  const plan = planFor(text, toName, imports);
+export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null } = {}) {
+  const plan = planFor(text, toName, imports, heard);
   if (plan.error) return { error: plan.error };
   const from = TARGETS[plan.from];
   const to = TARGETS[toName];
@@ -972,7 +979,7 @@ class Porter {
       // Each its own :prio — forms of an equal one append, not layer — in
       // the drums' order, the busier first among alike; a row's own layers
       // (its forms' :prio) each a number of their own, in their order.
-      const order = [...ks].sort((a, b) => drumRank(this.s.heads.get(a)) - drumRank(this.s.heads.get(b)) || (this.s.heads.get(b)?.notes ?? 0) - (this.s.heads.get(a)?.notes ?? 0));
+      const order = [...ks].sort((a, b) => drumRank(this.s.heads.get(a), this.s.heard) - drumRank(this.s.heads.get(b), this.s.heard) || (this.s.heads.get(b)?.notes ?? 0) - (this.s.heads.get(a)?.notes ?? 0));
       let next = 1;
       for (const k of order) {
         const own = [...new Set((this.s.heads.get(splitHead(k))?.forms ?? []).map((f) => (f.items[1]?.value === ":prio" ? String(f.items[2]?.value) : "")))];

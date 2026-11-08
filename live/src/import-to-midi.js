@@ -153,6 +153,22 @@ export function sampleRole({ zcr, low, dur }) {
   return "snare";
 }
 
+/**
+ * The samples' roles as heard (`pcm`: an import's or a score's { mono,
+ * entries }), name → role — for a drum whose name says nothing (an MDX's
+ * `pdx-003`); a stream (a sample longer than a hit) has none.
+ */
+export function heardRoles(pcm) {
+  const out = new Map();
+  for (const sm of pcm?.entries ?? []) {
+    const x = pcm.mono.subarray(sm.offset, sm.offset + sm.frames);
+    const rate = sm.rate ?? pcm.rate;
+    if (!x.length || x.length / rate > STREAM_SEC) continue;
+    out.set(sm.name, sampleRole(sampleFeatures(x, rate)));
+  }
+  return out;
+}
+
 // Roles for the sounds heard (or guessed) as `firsts` — [name, role, zcr],
 // most played first — each taking its family's next role not `taken`: of
 // the low ones the most played kick is the kick and the rest are toms, low to

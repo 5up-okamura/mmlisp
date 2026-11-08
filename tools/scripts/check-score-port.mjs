@@ -419,6 +419,29 @@ const port = (src, to, rows) => {
   assert.deepEqual(["rhythm3", "rhythm4", "rhythm5", "rhythm6"].map((k) => onMd.map[k]), ["pcm3", "pcm3", "pcm3", "pcm3"], "the rest share the third");
   const onFc = port(six, "fc");
   assert.deepEqual(new Set(["rhythm1", "rhythm2", "rhythm3", "rhythm4", "rhythm5", "rhythm6"].map((k) => onFc.map[k])), new Set(["pcm1"]), "the Famicom's one DPCM channel takes them all");
+  // A drum whose name says nothing (an MDX's pdx-003) is ranked by its
+  // sound as heard (`heard`, import-to-midi.js heardRoles): the kick and the
+  // snare keep md's channels before the busier hats and cymbal.
+  const anon = `(def-score :target x68k)
+(def-pcm smp-a :file "a.wav")
+(def-pcm smp-b :file "b.wav")
+(def-pcm smp-c :file "c.wav")
+(def-pcm smp-d :file "d.wav")
+(fm1 :len 4 c e g c)
+(pcm1 smp-a :len 16 c c c c c c c c c c c c c c c c)
+(pcm2 smp-b :len 8 c c c c c c c c)
+(pcm3 smp-c :len 4 c _ c _)
+(pcm4 smp-d :len 4 _ c _ c)`;
+  const byNotes = port(anon, "md");
+  assert.deepEqual([byNotes.map.pcm1, byNotes.map.pcm2], ["pcm1", "pcm2"], "by names that say nothing: the busiest");
+  const heard = new Map([["smp-a", "hat"], ["smp-b", "crash"], ["smp-c", "kick"], ["smp-d", "snare"]]);
+  const byEar = portScore(anon, "md", { heard, imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), anon) });
+  assert.ok(!byEar.error, byEar.error);
+  const on = (k) => byEar.map[k];
+  const alone = (k) => Object.entries(byEar.map).filter(([, h]) => h === on(k)).length === 1;
+  assert.ok(alone("pcm3") && alone("pcm4"), `by ear: the kick and snare keep a channel each: ${JSON.stringify(byEar.map)}`);
+  assert.equal(on("pcm1"), on("pcm2"), "the hat and the cymbal share the third");
+  assert.deepEqual(portRows(anon, "md", { heard }).rows.filter((r) => /^pcm/.test(r.key)).map((r) => r.to), ["pcm1", "pcm2", "pcm3", "pcm4"].map(on), "the dialog's rows read alike");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
   const loud = port(`(def-pcm kick :file "a.wav")

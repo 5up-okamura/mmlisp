@@ -1153,7 +1153,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import-midi.js';
-    import { chipScoreToMidi } from './src/import-to-midi.js';
+    import { chipScoreToMidi, heardRoles } from './src/import-to-midi.js';
     import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/scope-trigger.js';
@@ -3647,9 +3647,11 @@
     // An import read as its own machine's score, onto another: the score's
     // imports resolved, then portScore — as Edit > Convert to Machine… does
     // with the same score open, so the two give the one result.
+    // `heard`: its samples' roles by their sound (heardRoles), for a drum
+    // whose name says nothing — which keeps a channel when they are short.
     async function portImported(res, target, { fileName, rows = undefined, names = undefined, header = false }) {
       const imports = await readImportSources(res.source, mmlispName(fileName));
-      const out = portScore(res.source, target, { rows, imports, header, names });
+      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm) });
       if (out.error) throw new Error(out.error);
       return out;
     }
@@ -3661,7 +3663,8 @@
       const name = (h) => (partOf[h] == null ? h : shared.has(partOf[h]) ? `${partOf[h]} (${h})` : partOf[h]);
       // The rows from the score with its imports, as the conversion reads it.
       const imports = await readImportSources(res.source, mmlispName(fileName));
-      const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { imports, name }));
+      const heard = heardRoles(res.pcm);
+      const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { imports, heard, name }));
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary,
@@ -3680,9 +3683,9 @@
     }
     // The conversion's rows as the import dialog shows them (score-port.js
     // portRows): a row per channel, named by `name`, with its notes.
-    function conversionRows(text, target, { imports = null, name = (h) => h } = {}) {
+    function conversionRows(text, target, { imports = null, heard = null, name = (h) => h } = {}) {
       if (!PORT_TARGETS.includes(target)) return [];
-      const plan = portRows(text, target, { imports });
+      const plan = portRows(text, target, { imports, heard });
       if (plan.error) return [];
       // (A note-less form is a patch: fm3's beside its operator tracks.)
       return plan.rows.map((r) => ({
@@ -4453,7 +4456,10 @@
       const near = PORT_TARGETS.filter((t) => t !== from);
       const choices = withMidi(near, from);
       const imports = _importSources;
-      const rowsFor = (target) => (target === from ? [] : conversionRows(text, target, { imports }));
+      // The score's samples by their sound, as the import heard them.
+      let heard = null;
+      try { heard = heardRoles(await scorePcm(_lastGoodIR)); } catch { /* by their names alone */ }
+      const rowsFor = (target) => (target === from ? [] : conversionRows(text, target, { imports, heard }));
       const got = await showImportDialog({
         title: 'Convert to Machine',
         summary: `The score is the ${sys(from)}’s (:target ${from}).`,
@@ -4475,7 +4481,7 @@
           out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
           said = res.warnings;
         } else {
-          const res = portScore(text, to, { rows: got.rows, imports });
+          const res = portScore(text, to, { rows: got.rows, imports, heard });
           if (res.error) throw new Error(res.error);
           out = res.text;
           said = res.said;
