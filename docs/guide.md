@@ -2635,12 +2635,16 @@ machine's channels or dropped:
   plays a drum track on it: each sample as the kit's role it is named or
   sounds as (an MDX's samples by their sound: kick, snare, tom, top
   cymbal, hat).
-- A score's samples are kept where they sat beside its melody: each
-  machine's parts play at their own levels (the X68000's ADPCM far over its
-  FM, the Mega Drive's DAC one FM channel's), so the melodic channels are
-  moved by one `def-mod :ch […] :vel+ N` line a step — or, where the melody
-  would have to go up, the samples come down (`(gain …)` after their
-  normalize). The song may play quieter; delete the line to undo it.
+- A score's samples sit beside its melody as near to the source's balance
+  as the machine allows without the song playing quieter: each machine's
+  parts play at their own levels (the X68000's ADPCM far over its FM, the
+  Mega Drive's DAC one FM channel's). Where the samples come up short they
+  are limited (`(gain 6) (limit)` after their normalize: louder, the same
+  peak) and the melodic channels come down by `def-mod :ch […] :vel+ N`
+  lines — but no further than the machine plays them louder than the
+  source did; the log says what is still missing. Where the melody would
+  have to go up, the samples come down (`(gain …)`) instead. Delete the
+  lines to undo it.
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
   forms, language.md §1), a `:prio` each: the kick and snare first, then

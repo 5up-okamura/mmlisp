@@ -254,6 +254,12 @@ export function pruneUnnamedDefs(text) {
   return { text: out, gone };
 }
 
+// A sample limited where a machine's samples come up short: driven into a
+// limiter by LIMIT_DRIVE_DB, drums come out ~LIMIT_LIFT_DB louder at the
+// same peak (measured on an MDX's PDX; more drive gains little).
+const LIMIT_DRIVE_DB = 6;
+const LIMIT_LIFT_DB = 3;
+
 // The kick and the snare on a noise channel, where a machine has no sample
 // channel (the Game Boy): each a note — a low clock for the kick, a bright
 // one for the snare — under a level that falls away in a few frames, its gate
@@ -1127,43 +1133,53 @@ class Porter {
     return this.renderList(n, outs);
   }
 
-  // The score's samples where they sat beside its melody: each machine's
-  // parts at full level (part-levels.js) differ — the X68000's ADPCM 17 dB
-  // over its FM, the Mega Drive's DAC one FM channel's — so a melodic track
-  // is moved by what its part and the samples' gained or lost between the
-  // two, less the samples' own headroom (`peaks`, the normalize below lifts
-  // them by it). A track that would have to go up takes everything else
-  // down instead, the samples by a (gain) after their normalize. Written as
-  // `def-mod :ch […] :vel+ N` lines (2 dB a step), one a step.
+  // The score's samples beside its melody, as near as the machine allows
+  // without the song playing quieter than it did: each machine's parts at
+  // full level (part-levels.js) differ — the X68000's ADPCM 17 dB over its
+  // FM, the Mega Drive's DAC one FM channel's — so where the samples come
+  // up short they are limited (louder in loudness at the same peak, ~3 dB
+  // on drums: LIMIT_LIFT_DB) and a melodic track comes down — but only as
+  // far as the machine plays it louder than the source did, never under
+  // the level it had. A track that would have to go up takes the rest down
+  // instead, the samples by a (gain) after their normalize. Written as
+  // `def-mod :ch […] :vel+ N` lines (2 dB a step), one a step. `peaks`: the
+  // samples' own headroom, which the normalize lifts them by.
   mixBalance() {
     const L = (t, kind) => PART_LEVELS[t]?.[kind === "noise" ? "tone" : kind];
     const from = this.from.name, to = this.to.name;
     const sampleRows = Object.entries(this.map).filter(([k, h]) => h !== "drop" && this.from.partOf(splitHead(k))?.kind === "sample" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
     if (!sampleRows.length || L(from, "sample") == null || L(to, "sample") == null) return null;
-    // The samples' headroom: the middle of the played ones' peaks (dBFS).
     const played = [...new Set(sampleRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])]))];
     const known = played.map((n) => this.s.peaks?.get(n)).filter((x) => x != null).sort((a, b) => a - b);
     const room = known.length ? Math.min(0, known[Math.floor(known.length / 2)]) : 0;
-    const adj = new Map();
+    // Each melodic track: where it must go to sit over the samples as at
+    // the source (+ up, − down), and how much louder the machine plays it.
+    const want = new Map(), louder = new Map();
     for (const [k, h] of Object.entries(this.map)) {
       if (h === "drop") continue;
       const sk = isSplit(k) ? "noise" : this.from.partOf(k)?.kind, dk = this.to.partOf(h)?.kind;
       if (!["fm", "tone", "wave", "noise"].includes(sk) || !["fm", "tone", "wave", "noise"].includes(dk)) continue;
       const a = L(from, sk), b = L(to, dk);
       if (a == null || b == null) continue;
-      adj.set(h, a - L(from, "sample") - room - b + L(to, "sample"));
+      want.set(h, a - L(from, "sample") - room - (b - L(to, "sample")));
+      louder.set(h, Math.max(0, b - a));
     }
-    if (!adj.size) return null;
-    const up = Math.max(0, ...adj.values());
+    if (!want.size) return null;
+    // Short: a track that cannot come down far enough for the balance
+    // (further than the machine plays it louder): the samples are limited.
+    const limit = [...want].some(([h, d]) => d < -louder.get(h));
+    const move = new Map([...want].map(([h, d]) => [h, Math.max(d + (limit ? LIMIT_LIFT_DB : 0), -louder.get(h))]));
+    const up = Math.max(0, ...move.values());
     const steps = new Map();
-    for (const [h, d] of adj) {
-      const n = Math.round((d - up) / VEL_DB_PER_STEP);
+    for (const [h, d] of move) {
+      const n = Math.round((Math.min(d, 0) - up) / VEL_DB_PER_STEP);
       if (n) steps.set(n, [...(steps.get(n) ?? []), h]);
     }
     const gain = Math.round(up);
-    if (!steps.size && !gain) return null;
-    this.say(`the samples kept where they sat beside the melody: the ${this.from.system}'s ${from === to ? "" : "parts and the "}${this.to.system}'s play at other levels (part-levels.js)${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod)` : ""}${gain ? `; the samples ${-gain} dB` : ""}`);
-    return { steps, gain };
+    if (!steps.size && !gain && !limit) return null;
+    const left = Math.max(0, ...[...want].map(([h, d]) => -(d + (limit ? LIMIT_LIFT_DB : 0)) - louder.get(h)));
+    this.say(`the samples beside the melody as on the ${this.from.system}: the ${this.to.system}'s parts play at other levels (part-levels.js)${limit ? "; the samples limited (louder, the same peak)" : ""}${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod, no further than the ${this.to.system} plays them louder)` : ""}${gain ? `; the samples ${-gain} dB` : ""}${left > 1 ? `; still ${Math.round(left)} dB under, the song not made quieter for it` : ""}`);
+    return { steps, gain, limit };
   }
 
   // A sample onto another machine plays at its peak (`:fx` … (normalize)):
@@ -1175,7 +1191,7 @@ class Porter {
   louder(n, text) {
     const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
     if (!onSamples || !n.items.some((x) => x.value === ":file") || /\(normalize\b/.test(text)) return text;
-    const tail = this.mix?.gain ? ` (normalize) (gain ${-this.mix.gain})` : " (normalize)";
+    const tail = ` (normalize)${this.mix?.limit ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}${this.mix?.gain ? ` (gain ${-this.mix.gain})` : ""}`;
     if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
     const fx = text.match(/:fx\s*\[/);
     if (fx) {

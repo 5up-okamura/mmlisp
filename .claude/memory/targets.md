@@ -380,7 +380,17 @@ silence and the pce waves were near inaudible (user: "only the PCM plays").
   samplePeaks) from the app (the import's pcm, Convert's scorePcm); none →
   headroom 0. DTWNB00: md FM −6 / PSG −4, pce waves −6, pc88 FM −2 and
   samples −4 dB; melody vs PCM 3.2 dB (md) / 2.6 dB (pce) apart against the
-  X68000's 2.8. The mix is quieter overall (md −11.4 → −20.4 dBFS RMS). Inline operator words on such a
+  X68000's 2.8. The mix was quieter overall (md −11.4 → −20.4 dBFS RMS) —
+  the user: "the whole song getting quieter is wrong". Now: a track comes
+  down no further than the machine plays it louder (`louder` = dst part −
+  src part), and where that cannot reach the balance the samples are
+  limited (`(gain 6) (limit)`, LIMIT_DRIVE_DB / LIMIT_LIFT_DB ≈ +3.3 dB RMS
+  on the PDX at the same peak; a compressor gained 1 dB more and changed
+  the drums). DTWNB00 md: FM −4 / PSG −2, song −16.8 dBFS RMS (x68k
+  −15.9), PCM 3.7 dB under the melody; pce: −1, PCM still ~9 dB under (its
+  DDA is one wave's level and its waves already the X68000's FM's) — said
+  in the log, the song not made quieter for it. No `:master` boost exists
+  (VOL_UNITY is the top). Inline operator words on such a
 track are still dropped (the operators are not the 4-op's).
 
 ## mucom88's FM3 operator mode, real songs (2026-11-08)

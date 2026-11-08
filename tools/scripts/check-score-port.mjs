@@ -500,28 +500,34 @@ const port = (src, to, rows) => {
   assert.doesNotMatch(toKitByEar.text, /def-pcm/, "the samples' defs go with their names");
   // …and with nothing heard, a sample of a name that says nothing has no role there.
   assert.equal(portScore(`(def-score :target x68k)\n(def-pcm smp-a :file "a.wav")\n(pcm1 smp-a :len 8 c c)`, "msx").map.pcm1, "drop");
-  // The samples kept where they sat beside the melody (part-levels.js): the
-  // X68000's ADPCM over its FM by more than the Mega Drive's DAC over its, so
-  // the FM comes down by a def-mod; a sample's own headroom (peaks: the
-  // normalize lifts it by that) takes some of it back; onto the PC-8801,
-  // whose ADPCM-B is louder still, the samples come down instead.
+  // The samples beside the melody as on the source, as near as the machine
+  // allows without the song playing quieter (part-levels.js): onto the Mega
+  // Drive, whose DAC sits far lower over its FM than the X68000's ADPCM, the
+  // FM comes down — no further than the Mega Drive plays it louder — and
+  // the samples are limited; a sample's own headroom takes some of it back;
+  // onto a machine whose samples sit higher, the samples come down instead.
   const mixSrc = `(def-score :target x68k)
 (def-fm lead init-fm :alg 7 :tl1 0 :tl2 127 :tl3 127 :tl4 127)
 (def-pcm smp-k :file "a.wav")
 (fm1 lead :len 4 c e g c)
 (pcm1 smp-k :len 4 c c c c)`;
   const LV = (await import("../../live/src/part-levels.js")).PART_LEVELS;
-  const want = (to, room = 0) => Math.round((LV.x68k.fm - LV.x68k.sample - room - LV[to].fm + LV[to].sample) / 2);
+  const want = (to, room = 0) => (LV.x68k.fm - LV.x68k.sample - room) - (LV[to].fm - LV[to].sample);
+  const louder = (to) => Math.max(0, LV[to].fm - LV.x68k.fm);
+  assert.ok(want("md") < -louder("md"), "the Mega Drive cannot reach the balance by lowering alone");
   const mdMix = portScore(mixSrc, "md");
-  assert.match(mdMix.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${want("md")}\\)`), mdMix.text);
-  const mdRoom = portScore(mixSrc, "md", { peaks: new Map([["smp-k", -6]]) });
-  assert.match(mdRoom.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${want("md", -6)}\\)`), "less, by the sample's headroom");
-  assert.ok(want("md", -6) > want("md"));
+  const mdSteps = Math.round(Math.max(want("md") + 3, -louder("md")) / 2);
+  assert.match(mdMix.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${mdSteps}\\)`), mdMix.text);
+  assert.match(mdMix.text, /:fx \[\(normalize\) \(gain 6\) \(limit\)\]/, "the samples limited");
+  assert.ok(mdSteps >= -Math.round(louder("md") / 2) - 0, "no further down than the Mega Drive plays it louder");
+  const mdRoom = portScore(mixSrc, "md", { peaks: new Map([["smp-k", -12]]) });
+  const roomSteps = Math.round(Math.max(want("md", -12) + (want("md", -12) < -louder("md") ? 3 : 0), -louder("md")) / 2);
+  assert.ok(roomSteps > mdSteps, "less, by the sample's headroom");
+  assert.match(mdRoom.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${roomSteps}\\)`), mdRoom.text);
   const pcMix = portScore(mixSrc, "pc88", { peaks: new Map([["smp-k", -6]]) });
-  const up = LV.x68k.fm - LV.x68k.sample + 6 - LV.pc88.fm + LV.pc88.sample;
-  assert.ok(up > 0, "the PC-8801's ADPCM-B is the louder: the melody would have to go up");
-  assert.match(pcMix.text, new RegExp(`:fx \\[\\(normalize\\) \\(gain ${-Math.round(up)}\\)\\]`), pcMix.text);
-  assert.doesNotMatch(pcMix.text, /def-mod/, "the melody as it was");
+  assert.ok(want("pc88", -6) > 0, "the PC-8801's ADPCM-B is the louder: the melody would have to go up");
+  assert.match(pcMix.text, new RegExp(`:fx \\[\\(normalize\\) \\(gain ${-Math.round(want("pc88", -6))}\\)\\]`), pcMix.text);
+  assert.doesNotMatch(pcMix.text, /def-mod|limit/, "the melody as it was, the samples not limited");
   assert.doesNotMatch(portScore(mixSrc.replace(/\n\(pcm1[^\n]*/, ""), "md").text, /def-mod/, "no samples, no balance to keep");
   // A sample onto another machine plays at its peak: its own :fx chain
   // ends in (normalize), a variant takes its base's, an existing one stays.
