@@ -2288,6 +2288,7 @@ const EXPANSION_KEYS = [
   [/^(VRC6|MMC5) SQ(\d)$/, (m) => [m[1].toLowerCase(), m[2] - 1]],
   [/^VRC6 saw$/, () => ["vrc6", 2]],
   [/^N163 CH(\d)$/, (m) => ["n163", 8 - m[1]]],
+  [/^YM2413 FM(\d)$/, (m) => ["opll", m[1] - 1]], // the FM-PAC's (msx)
 ];
 const expansion = (target, key) => {
   for (const [re, at] of EXPANSION_KEYS) {
@@ -2354,10 +2355,11 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const pools = [fm, sqr, waves, oplls, carts];
   for (const ch of sorted) {
     let d = "drop";
-    // A YM2151 that fits keeps its channels' own numbers: FM8 on fm8, which
-    // is where x68k's noise is; so does a YM2413 on the FM-PAC's (msx).
-    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}`
-      : /^YM2413 FM\d$/.test(ch.key) && oplls.length ? `fm${ch.key.slice(-1)}` : expansion(target, ch.key);
+    // A YM2151 that fits keeps its channels' own numbers on any FM machine:
+    // FM8 on fm8, which is where x68k's noise is. A chip a machine has keeps
+    // its own channels there (expansion: a YM2413 on the FM-PAC's, the
+    // Famicom's expansions on theirs).
+    const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : expansion(target, ch.key);
     const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
     else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }
