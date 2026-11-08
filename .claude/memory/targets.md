@@ -95,7 +95,9 @@ Rulings, not to re-propose:
   every song import writes its own machine's score, and any other machine
   is that score converted (portScore) — Open onto X ≡ Open + Convert. A
   song no one machine has every chip of is the score of the machine that
-  keeps the most of its notes (what that score drops cannot come back), the
+  keeps the most of its notes (what that score drops cannot come back) —
+  never the MSX (the user: its many channels need tuning by hand; a
+  mechanical reading onto its 2-op FM and SCC plays far from the song), the
   only place the VGM and tracker writers still map chips onto another
   machine's channels. Known limit: a phrase played at several octaves takes
   its lowest play's lift under a tone's floor (said; split it per octave if

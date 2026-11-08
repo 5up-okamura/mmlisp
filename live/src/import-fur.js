@@ -59,7 +59,7 @@ const FUR_SYSTEMS = {
     ...named("YM2610B", SSG, "ssg"), ...ADPCM_A(6), { kind: "pcm", name: "ADPCM-B" }],
   0x89: () => named("OPLL", k("opll", 9, "FM"), "opll"),
   0xa7: () => [...named("OPLL", k("opll", 6, "FM"), "opll"), ...named("OPLL", OPLL_DRUMS)],
-  0x9d: () => named("VRC7", k("opll", 6, "FM")),
+  0x9d: () => named("VRC7", k("opll", 6, "FM"), "vrc7"),
   0x8f: () => named("OPL", k("opl", 9, "FM")),
   0x90: () => named("OPL2", k("opl", 9, "FM")),
   0x91: () => named("OPL3", k("opl", 18, "FM")),

@@ -2238,12 +2238,14 @@ export function analyzeVgm(parsed, { followPitch = true } = {}) {
   // A song no one machine has every chip of (an arcade mix, two YM2612s) is
   // the score of the machine that keeps the most of its notes at its rows'
   // defaults — the Mega Drive first among equals: every other machine is
-  // that score converted, so what it drops there is gone.
+  // that score converted, so what it drops there is gone. Not the MSX: its
+  // many channels (the FM-PAC's 2-op FM, the SCC) hold notes a mechanical
+  // reading plays far from the song (the user, 2026-11-08).
   const keptOn = (t) => {
     const { dest } = defaultVgmOptions({ channels, followPitch, fileLoop, pcmPoly, targets, target: t }, t);
     return channels.reduce((n, c) => n + (dest[c.key] && dest[c.key] !== "drop" ? c.notes : 0), 0);
   };
-  const target = mineOwn ?? targets.reduce((best, t) => (keptOn(t) > keptOn(best) ? t : best), "md");
+  const target = mineOwn ?? targets.filter((t) => t !== "msx").reduce((best, t) => (keptOn(t) > keptOn(best) ? t : best), "md");
   return { channels, followPitch, fileLoop, pcmPoly, targets: [target, ...targets.filter((t) => t !== target)], target };
 }
 

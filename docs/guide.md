@@ -1868,7 +1868,9 @@ MIDI instrument's, so it starts on `midi` (a channel each, the drums on
 VGM, NSF, tracker module, MDX, MGS or mucom88 song starts on the machine of
 its own chips, which keeps what they have — or, where no one machine has them
 all (an arcade mix, a Furnace module of two machines' chips), the machine that
-keeps the most of its notes — and offers every other machine: the song is written as its
+keeps the most of its notes, but never the MSX, whose 2-op FM and SCC hold
+notes a mechanical reading plays far from the song — and offers every other
+machine: the song is written as its
 own machine's score, then moved onto the one chosen at the words' level, as
 Edit ▸ Convert to Machine… moves a score (§ Converting to another machine) —
 so opening a song onto a machine and opening it, then converting it, give the
@@ -2003,12 +2005,14 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   level; `12xx` and the duty macro are `:duty`, on the noise `11xx` and the
   duty macro the `:mode`; `10xx` the wavetable, `08xy` the side. The sweep's
   `13xy` and `14xx` are left out.
-- An **NES** module starts at `fc` (where the 2A03, the VRC6 and the FDS
-  play the most notes). The VRC6's channels go to `vrc6-sqr1`,
+- An **NES** module starts at `fc` (where the 2A03, the VRC6, the FDS and
+  the VRC7 play the most notes). The VRC6's channels go to `vrc6-sqr1`,
   `vrc6-sqr2` and `vrc6-saw`: a pulse's duty is its duty macro and `12xx` (eight, `:duty
   1`–`8`), the columns and volume macros linear (the saw's to 63); a
   pulse's PCM mode (a sample instrument, `17xx`) is left out, as are the
-  other expansions' channels (VRC7, N163, MMC5). The FDS goes to `fds-wave`:
+  N163's and the MMC5's channels. The VRC7's go to `vrc7-fm1`–`vrc7-fm6`, a
+  preset its ROM voice by the VRC7's name, a user voice a 2-op def-fm, as
+  the FM-PAC's (below). The FDS goes to `fds-wave`:
   its wavetables as 64-step def-waves (a 32-step one as it is), its gain
   0–32 linear, and its modulation unit as the song's `:lfo-wave` (the
   instrument's table, or `15xx`'s made of a wavetable), `:lfo-freq` (its

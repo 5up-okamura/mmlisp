@@ -294,6 +294,21 @@ function oldDmf() {
 }
 
 {
+  // A VRC7 channel (Furnace's system 0x9d) is the Famicom's: an NES module
+  // with one stays fc, on vrc7-fm1, its preset a VRC7 ROM voice by name.
+  const t = await parseDmf(nesDmf());
+  const e = { note: null, vol: -1, ins: -1, fx: [] };
+  const fmIns = t.instruments.length;
+  t.instruments.push({ ...t.instruments[0], name: "keys", kind: "fm", fm: { alg: 0, fb: 0, fms: 0, ams: 0, ops: [{}, {}], opllPreset: 3 } });
+  t.channels.push({ ...t.channels[0], kind: "opll", name: "VRC7 FM1", chip: "vrc7", patterns: new Map([[0, [{ ...e, note: 48, vol: 15, ins: fmIns }, e, { ...e, note: 52 }, e]]]) });
+  for (const row of t.orders) row.push(0);
+  const a = analyzeTracker(t);
+  assert.equal(a.target, "fc", "an NES module with a VRC7 is the Famicom's");
+  const { source } = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "fc"), phrases: false, fileName: "t.fur" }, a);
+  assert.match(source, /\(vrc7-fm1 [^\n]*\bwurly\b/, "the VRC7 channel on vrc7-fm1, preset 3 the VRC7's wurly");
+  assert.deepEqual(bad(source), [], "the VRC7 module compiles clean");
+}
+{
   const t = await parseDmf(oldDmf());
   const fm = t.instruments[0].fm;
   assert.deepEqual([fm.alg, fm.fb, fm.fms, fm.ams], [4, 5, 2, 1], "the old FM words past their spares");

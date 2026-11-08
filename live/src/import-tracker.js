@@ -81,7 +81,7 @@ const CHANNEL_KINDS = {
 // module offers the targets whose chips play its notes, the one playing the
 // most first (a tie: this order), md, then every other machine.
 const TARGET_CHIPS = {
-  pce: ["pce"], fc: ["nes", "vrc6", "fds"], gb: ["gb"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
+  pce: ["pce"], fc: ["nes", "vrc6", "fds", "vrc7"], gb: ["gb"], msx: ["ssg", "scc", "opll", "opll-rhythm"], x68k: ["opm"],
   pc88: ["opn", "ssg", "opna-rhythm"], md: ["ym2612", "sn76489"],
 };
 // A target's channels by what they take (import-song.js destsFor), its
@@ -335,14 +335,17 @@ export function analyzeTracker(t) {
   // that machine has not (a Furnace module of the Genesis and the MSX's, an
   // NES module with a chip no machine here reads as its own) is the score of
   // the machine that keeps the most of its notes at its rows' defaults — its
-  // own first among equals: every other machine is that score converted.
+  // own first among equals: every other machine is that score converted. Not
+  // the MSX: its 2-op FM and SCC hold notes a mechanical reading plays far
+  // from the song (the user, 2026-11-08).
   const base = { seq, loopIndex, rowsPerBeat, framesPerRow, bpm, channels };
   const keptOn = (tg) => {
     const { dest } = defaultTrackerOptions({ ...base, targets: all, target: tg }, tg);
     return channels.reduce((n, c) => n + (dest[c.index] != null && dest[c.index] !== "drop" ? c.notes : 0), 0);
   };
   const mixed = channels.some((c) => c.notes > 0 && !(TARGET_CHIPS[all[0]] ?? []).includes(c.chip));
-  const target = mixed ? all.reduce((best, tg) => (keptOn(tg) > keptOn(best) ? tg : best), all[0]) : all[0];
+  const pool = all.filter((tg) => tg !== "msx");
+  const target = mixed ? pool.reduce((best, tg) => (keptOn(tg) > keptOn(best) ? tg : best), pool[0]) : all[0];
   return { ...base, targets: [target, ...all.filter((tg) => tg !== target)], target };
 }
 
@@ -383,6 +386,7 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     for (const ch of a.channels) {
       const i = a.channels.filter((c) => c.chip === ch.chip && c.index < ch.index).length;
       dest[ch.index] = !(ch.notes > 0) ? "drop" : ch.chip === "vrc6" ? VRC6_DESTS[i] ?? "drop" : ch.chip === "fds" ? "fds-wave"
+        : ch.chip === "vrc7" ? (i < 6 ? `vrc7-fm${i + 1}` : "drop")
         : ch.chip !== "nes" ? "drop" : ch.kind === "pcm" ? "pcm1" : FC_DESTS[i] ?? "drop";
     }
     return { dest, phrases: true, bpm: null, target };
@@ -555,11 +559,11 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   // (Its wave macro switches the patch: the one it settles on, its loop's
   // step or its last, is the note's.)
   const patchMoves = new Set();
-  const opllVoice = (i) => {
+  const opllVoice = (i, romNames = OPLL_ROM_NAMES) => {
     const { fm: f, wave: wm } = t.instruments[i];
     const preset = wm?.values.length ? wm.values[wm.loop ?? wm.values.length - 1] : f.opllPreset;
     if (wm?.values.some((x) => x !== preset)) patchMoves.add(i);
-    if (preset >= 1 && preset <= 15) return OPLL_ROM_NAMES[preset - 1];
+    if (preset >= 1 && preset <= 15) return romNames[preset - 1];
     if (preset) return null;
     const key = `opll:${i}`;
     return defs.of(key, () => {
@@ -1038,7 +1042,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     const own = !!TARGET_CHIPS[tg]?.includes(chn.chip);
     const ssgCh = own && chn.chip === "ssg" && part?.name === "ssg";
     const sccCh = own && chn.chip === "scc" && part?.kind === "wave";
-    const opllCh = own && chn.chip === "opll" && part?.name === "opll-fm";
+    // (The VRC7 is the OPLL's core with a ROM of its own, on fc's vrc7-fm.)
+    const opllCh = own && ((chn.chip === "opll" && part?.name === "opll-fm") || (chn.chip === "vrc7" && part?.name === "vrc7-fm"));
     const rhythmCh = /^rhythm/.test(ch.dest);
     // The FDS on fc's fds-wave: its wavetables 64 steps, its gain 0-32 linear,
     // its modulation unit as the song's :lfo- words.
@@ -1157,7 +1162,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         return usedMacro ? [chn.drum, "(macro none)"] : [chn.drum];
       }
       if (opllCh) {
-        const v = it?.fm ? opllVoice(ins) : null;
+        const v = it?.fm ? opllVoice(ins, part.romNames ?? OPLL_ROM_NAMES) : null;
         if (it?.kind === "std") { usedMacro = true; return [...(v ? [v] : []), env(ins, null, false, null, vol < 0 ? colMax : vol, note, false, vm)]; }
         return usedMacro ? [...(v ? [v] : []), "(macro none)"] : v ? [v] : [];
       }
