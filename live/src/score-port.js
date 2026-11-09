@@ -88,6 +88,9 @@ function lineStarts(text) {
 }
 // The melodic kinds: a track of one goes onto a channel of any (wave-port.js).
 const MELODIC_KINDS = ["fm", "tone", "wave"];
+// The kinds whose channel is a timbre of its own — FM, a wave, a sample —
+// a row of one keeps a channel of its kind before the others (planRows).
+const TIMBRE_KINDS = ["fm", "wave", "sample"];
 // A machine's kit roles (the ROM rhythms').
 const kitRoles = (target) => new Set(target.parts.flatMap((p) => Object.keys(p.kit ?? {})));
 // A tone part whose shape is its own, on a wave channel.
@@ -610,46 +613,64 @@ function planRows(s, from, to, loopOf = () => null) {
     for (const k of keys.filter((k) => inPool(k) && !(k in dest && ["drop", "layer", "noise-drum"].includes(dest[k])))) groups.set(groupOf(k), [...(groups.get(groupOf(k)) ?? []), k]);
     if (groups.size <= room) continue;
     const notes = (g) => g.reduce((n, k) => n + notesOf(k), 0);
-    // A row of a kind the machine has (FM onto FM) keeps its channel before
-    // one that would play a stand-in (the user, 2026-11-08); among those
-    // alike, the most notes.
-    const own = (g) => g.some((k) => channelsOf(to, kindOf(from, k), { board: true }).length > 0);
     // Samples past the machine's sample channels (or the one its drivers
-    // stream on) are not dropped: they are :prio layers on a kept one
-    // (placeLayers) — and the drums that keep a channel of their own are the
-    // beat's (a snare plays fewer notes than the hats, and matters more).
+    // stream on), and noises past its noises, are not dropped: they are
+    // :prio layers on a kept one (placeLayers) — and the drums that keep a
+    // channel of their own are the beat's (a snare plays fewer notes than
+    // the hats, and matters more).
     const samples = (g) => g.every(isSampleRow);
+    const noises = (g) => g.every((k) => kindOf(from, k) === "noise");
     // The bass is kept before every other melodic part.
     const isBass = (g) => g.includes(bassRow());
     const isMelody = (g) => g.includes(melodyRow());
     // A copy of the bass line (the group's other parts) goes first: the bass
     // already plays what it plays.
     const isCopy = (g) => g.some((k) => s.bassGroup.includes(k) && k !== bassRow());
+    // A row of a timbre the machine has (FM onto FM, a wave onto a wave)
+    // keeps its channel before one that would play a stand-in (the user,
+    // 2026-11-08) — as many of a kind as the machine has channels of it,
+    // the bass and the melody first (they are kept), then the busiest; a
+    // square is a square everywhere, and among those alike — squares among
+    // FM parts on a machine of squares — the most notes.
+    const ownRows = new Set();
+    for (const kind of TIMBRE_KINDS) {
+      // Less a channel the bass takes (the Game Boy's wave), and the
+      // channels the drivers stream samples on.
+      const streams = kind === "sample" ? to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams) : [];
+      const room = Math.min(...streams, channelsOf(to, kind, { board: true }).filter((h) => !takenBy.has(to.voiceKey(h)) && !(h === bassChannel && bassRow() && kindOf(from, bassRow()) !== kind)).length);
+      const ofKind = [...groups.values()].filter((g) => g.some((k) => kindOf(from, k) === kind)).sort((a, b) => (isBass(b) || isMelody(b)) - (isBass(a) || isMelody(a)) || notes(b) - notes(a));
+      for (const g of ofKind.slice(0, room)) ownRows.add(g);
+    }
+    const own = (g) => ownRows.has(g);
     // A row with no notes (a form of words and rests) goes before any that
     // sounds: a channel of the machine's own kind is no reason to keep it.
-    const order = (a, b) => ((notes(a) > 0) - (notes(b) > 0)) || (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (own(a) - own(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : 0) || (notes(a) - notes(b));
+    // Among samples, the drums' order.
+    const order = (a, b) => ((notes(a) > 0) - (notes(b) > 0)) || (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : own(a) - own(b)) || (notes(a) - notes(b));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
-      for (const k of g) dest[k] = samples(g) && room > 0 ? "layer" : "drop";
+      for (const k of g) dest[k] = (samples(g) || noises(g)) && room > 0 ? "layer" : "drop";
   }
-  // The layers' channel: the kept sample row least among the drums (the
-  // kick and snare keep theirs to themselves), of those looping as the
-  // layers do — a channel has one loop (language.md §1), and a mucom88
-  // song's parts each loop on their own. With one channel (the PC Engine's
-  // one stream) the kept row is the loop's group playing the most notes.
-  // A layer looping over other ticks than any kept row goes.
+  // The layers' channel: the kept row least among the drums (the kick and
+  // snare keep theirs to themselves; a noise row is no drum), of those
+  // looping as the layers do — a channel has one loop (language.md §1), and
+  // a mucom88 song's parts each loop on their own. With one channel (the PC
+  // Engine's one stream, a machine's one noise) the kept row is the loop's
+  // group playing the most notes. A layer looping over other ticks than any
+  // kept row goes.
   const hostOf = {};
-  if (keys.some((k) => dest[k] === "layer")) {
-    const rows = keys.filter((k) => isSampleRow(k) && dest[k] !== "drop");
+  const loopOfRow = (k) => loopOf(splitHead(k));
+  const alike = (a, b) => loopOfRow(a) == null || loopOfRow(b) == null || loopOfRow(a) === loopOfRow(b);
+  const rankRow = (k) => (isSampleRow(k) ? drumRank(s.heads.get(k), s.heard) : 4);
+  for (const isRow of [isSampleRow, (k) => kindOf(from, k) === "noise"]) {
+    const rows = keys.filter((k) => isRow(k) && dest[k] !== "drop" && dest[k] !== "noise-drum");
+    if (!rows.some((k) => dest[k] === "layer")) continue;
     let kept = rows.filter((k) => dest[k] !== "layer");
-    const loopOfRow = (k) => loopOf(splitHead(k));
-    const alike = (a, b) => loopOfRow(a) == null || loopOfRow(b) == null || loopOfRow(a) === loopOfRow(b);
     if (kept.length === 1) {
       // One channel: which loop it plays is the group with the most notes.
       const total = (k) => rows.filter((o) => alike(o, k)).reduce((n, o) => n + notesOf(o), 0);
-      const best = [...rows].sort((a, b) => total(b) - total(a) || drumRank(s.heads.get(a), s.heard) - drumRank(s.heads.get(b), s.heard) || notesOf(b) - notesOf(a))[0];
+      const best = [...rows].sort((a, b) => total(b) - total(a) || rankRow(a) - rankRow(b) || notesOf(b) - notesOf(a))[0];
       if (best !== kept[0]) { dest[kept[0]] = "layer"; delete dest[best]; kept = [best]; }
     }
-    const byRank = [...kept].sort((a, b) => drumRank(s.heads.get(b), s.heard) - drumRank(s.heads.get(a), s.heard) || notesOf(a) - notesOf(b));
+    const byRank = [...kept].sort((a, b) => rankRow(b) - rankRow(a) || notesOf(a) - notesOf(b));
     for (const k of rows) {
       if (dest[k] !== "layer") continue;
       const host = byRank.find((h) => alike(h, k));
@@ -706,7 +727,7 @@ function planRows(s, from, to, loopOf = () => null) {
     const h = cands.find((c) => free(k, c));
     dest[k] = h ? claim(k, h) : "drop";
   }
-  // A layered sample row plays on its host's channel.
+  // A layered row plays on its host's channel.
   for (const k of keys) if (dest[k] === "layer") dest[k] = hostOf[k] && dest[hostOf[k]] && dest[hostOf[k]] !== "drop" ? dest[hostOf[k]] : "drop";
   // The drums on the noise, as :prio layers over its own part (the
   // beat first): they loop as one, so a row looping on other ticks than the
@@ -769,9 +790,10 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
     const key = to.voiceKey(h);
     const prev = seen.get(key);
     // Sample rows on one sample channel are its :prio layers (placeLayers).
-    // So are drum rows on a noise channel (NOISE_DRUMS), with its own part.
+    // So are noise rows on a noise channel, and drum rows there
+    // (NOISE_DRUMS) with its own part.
     const layers = prev && prev.h === h && ((to.partOf(h).kind === "sample" && kindOf(from, k) === "sample" && kindOf(from, prev.k) === "sample")
-      || (to.partOf(h).kind === "noise" && [k, prev.k].some((x) => kindOf(from, x) === "sample") && [k, prev.k].every((x) => ["sample", "noise"].includes(kindOf(from, x)))));
+      || (to.partOf(h).kind === "noise" && [k, prev.k].every((x) => ["sample", "noise"].includes(kindOf(from, x)))));
     if (prev && !layers && (prev.h === h || srcKey(prev.k) !== srcKey(k)))
       return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
@@ -1192,9 +1214,9 @@ class Porter {
     const byDest = new Map();
     for (const [k, h] of Object.entries(this.map)) {
       if (h === "drop" || this.to.partOf(h)?.kit) continue;
-      // A sample channel's rows, and a noise channel's where drums play on it.
+      // A sample channel's rows, and a noise channel's.
       const kind = this.to.partOf(h)?.kind;
-      if (kind !== "sample" && !(kind === "noise" && Object.entries(this.map).some(([o, d]) => d === h && this.from.partOf(splitHead(o))?.kind === "sample"))) continue;
+      if (kind !== "sample" && kind !== "noise") continue;
       byDest.set(h, [...(byDest.get(h) ?? []), k]);
     }
     const out = new Map();
@@ -1205,7 +1227,9 @@ class Porter {
       // Each its own :prio — forms of an equal one append, not layer — in
       // the drums' order, the busier first among alike; a row's own layers
       // (its forms' :prio) each a number of their own, in their order.
-      const order = [...ks].sort((a, b) => drumRank(this.s.heads.get(a), this.s.heard) - drumRank(this.s.heads.get(b), this.s.heard) || (this.s.heads.get(b)?.notes ?? 0) - (this.s.heads.get(a)?.notes ?? 0));
+      const rank = (k) => (this.from.partOf(k)?.kind === "sample" ? drumRank(this.s.heads.get(k), this.s.heard) : 4);
+      const notesOf = (k) => (isSplit(k) ? this.s.heads.get(splitHead(k))?.noiseNotes : this.s.heads.get(k)?.notes) ?? 0;
+      const order = [...ks].sort((a, b) => rank(a) - rank(b) || notesOf(b) - notesOf(a));
       let next = 1;
       for (const k of order) {
         const own = [...new Set((this.s.heads.get(splitHead(k))?.forms ?? []).map((f) => (f.items[1]?.value === ":prio" ? String(f.items[2]?.value) : "")))];
@@ -1704,7 +1728,7 @@ class Porter {
         const mode = ctx.state?.mode;
         const saved = ctx.noise && { ...ctx.noise };
         if (ctx.noise) ctx.noise.bodyFirst = undefined; // the state the body's first noise note plays in
-        let inner = this.body(it.items, 1, isMacro ? { ...ctx, macro: true } : ctx);
+        let inner = this.body(it.items, 1, isMacro ? { ...ctx, macro: true } : it.items[0].value === "echo" ? { ...ctx, echo: true } : ctx);
         const bodyFirst = ctx.noise?.bodyFirst;
         if (ctx.noise) ctx.noise.bodyFirst = saved.bodyFirst;
         // A loop (x N …) whose body moves the octave or the split's mode is
@@ -2127,8 +2151,9 @@ class Porter {
     }
     if (base === ":mode") return this.modeRule(val, ctx);
     // A channel of one level (the 2A03's triangle) sounds or is halted: a
-    // level written there is not heard, except 0.
-    if ((base === ":vel" || base === ":vol") && ctx.destPart?.noLevel && !ctx.srcPart?.noLevel && val.value !== "0") {
+    // level written there is not heard, except 0. An echo's :vel+ / :vel*
+    // stay: they are what its taps are (one level, every tap sounds).
+    if ((base === ":vel" || base === ":vol") && !(ctx.echo && kw !== ":vel") && ctx.destPart?.noLevel && !ctx.srcPart?.noLevel && val.value !== "0") {
       this.say(`${base} on ${this.nameOf(ctx.head)}: ${ctx.dest} (the ${ctx.destPart.label}) has one level; taken out`);
       return DROP;
     }

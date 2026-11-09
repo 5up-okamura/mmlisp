@@ -95,9 +95,10 @@ function check(file, src, to) {
     // channels of their own every note sounds — the source's among them.
     const sharedAtSource = rows.some((x) => x.head !== row.head && TARGETS[from].voiceKey(x.head) === TARGETS[from].voiceKey(row.head) && TARGETS[from].partOf(x.head) !== TARGETS[from].partOf(row.head));
     // Sample rows layered on one channel (:prio, the PC Engine's one DDA
-    // stream): a lower layer's notes give way to a higher's (language.md §1),
-    // so the channel is held to sound, its layers' order by the rules below.
-    const layers = kind === "sample" ? rows.filter((x) => x.to === dest) : [];
+    // stream), noise rows on one noise: a lower layer's notes give way to a
+    // higher's (language.md §1), so the channel is held to sound, its
+    // layers' order by the rules below.
+    const layers = kind === "sample" || kind === "noise" ? rows.filter((x) => x.to === dest) : [];
     if (layers.length > 1) {
       assert.ok(now.length > 0, `${file} → ${to}: ${dest}, ${layers.map((x) => x.head).join(" + ")}'s layers, plays`);
     } else if (sharedAtSource) assert.ok(was.every((x) => now.includes(x)), `${file} → ${to}: ${row.head} on ${dest} keeps every note it played`);
@@ -355,9 +356,29 @@ const port = (src, to, rows) => {
 {
   // A machine short of channels keeps the parts with the most notes.
   const r = port("(fm1 :len 8 c d e f g a b c)\n(fm2 :len 2 c c)\n(sqr1 :len 4 c e g e)\n(sqr2 :len 1 c)", "gb");
-  // (gb's three: its two pulses to the squares, their own kind, its wave to
-  // the busier FM row.)
-  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["wave", "drop", "sqr1", "sqr2"]);
+  // (gb's three: a square is no timbre of its own to keep, so the FM rows
+  // count notes with the squares — sqr2's one note goes.)
+  assert.deepEqual([r.map.fm1, r.map.fm2, r.map.sqr1, r.map.sqr2], ["wave", "sqr2", "sqr1", "drop"]);
+  // A wave keeps its kind's channel before a busier FM row.
+  const w = port("(def-score :target msx)\n(wave1 :len 4 c e)\n(fm1 :len 8 c d e f g a b c)\n(fm2 :len 8 c d e f g a b c)\n(fm3 :len 8 c d e f)", "gb");
+  assert.deepEqual([w.map.wave1, w.map.fm3], ["wave", "drop"], "the SCC's wave keeps gb's wave before notes count");
+  // ... but not where the bass takes that channel: the FDS's few notes go
+  // before a busier square.
+  const b = portRows("(def-score :target fc)\n(def-wave saw :wave (saw 0..63))\n(sqr1 :oct 5 :len 8 c d e f g a b > c)\n(sqr2 :oct 5 :len 8 e f g a b > c d e)\n(tri :oct 2 :len 4 c c g g)\n(fds-wave saw :oct 5 :len 2 g e)", "gb");
+  assert.deepEqual(b.rows.map((r) => r.to), ["sqr1", "sqr2", "wave", "drop"]);
+}
+{
+  // On the triangle (one level) a :vel goes, an echo's :vel+ stays: it is
+  // what the echo's taps are.
+  const r = port("(def-score :target pc88)\n(fm1 :len 8 :vel 12 c (echo 1 :vel+ -4 :back 2) d)", "fc", { fm1: "tri" });
+  assert.match(r.text, /\(tri :len 8 c \(echo 1 :vel\+ -4 :back 2\) d\)/);
+}
+{
+  // Noises past the machine's one are :prio layers on it, the busiest first,
+  // as samples past its sample channels are: the AY's three squares' noise
+  // notes all onto md's noise.
+  const r = port("(def-score :target msx)\n(sqr1 :len 8 :mode tone c :mode noise c c c)\n(sqr2 :len 8 :mode noise _ _ c _)\n(sqr3 :len 8 :mode noise c _ _ _)", "md");
+  assert.match(r.text, /\(noise :prio 1 [^\n]*_ c c c\)\n\(noise :prio 2 [^\n]*_ _ c _\)\n\(noise :prio 3 [^\n]*c _ _ _\)/);
 }
 
 // ── What a review found (2026-11-08) ──

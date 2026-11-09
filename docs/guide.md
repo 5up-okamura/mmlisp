@@ -2606,9 +2606,13 @@ machine's channels or dropped:
 - The converted score keeps only what it plays: a def — a macro, a voice,
   a wave, a sample — that nothing names any more goes, as does one the score
   only kept (the log lists them). A mucom88 import does the same.
-- A machine short of channels keeps the parts of its own kind first (FM
-  onto FM), then the parts with the most notes — counted as they play, a
-  loop's body as many times as it repeats. The song's bass — the part whose
+- A machine short of channels keeps the parts of a sound it has first —
+  FM onto FM, a wave onto a wave, a sample onto a sample, as many as it has
+  channels of that kind (less the one its bass line takes) — then the parts
+  with the most notes, counted as they play, a loop's body as many times as
+  it repeats. A square is a square on every machine, so onto a machine of
+  squares (the Famicom, the Game Boy) a song's squares and its FM parts
+  count their notes alike. The song's bass — the part whose
   notes sit a fifth or more under every other's (a line doubled at the
   bottom counts as one: the louder part is the bass, its copy the first to
   go) — is kept before them all,
@@ -2622,6 +2626,9 @@ machine's channels or dropped:
   beat's (the kick, the snare) keep a channel each, and the rest share one
   as `:prio` layers in the drums' order — a snare is kept before the hats
   however few its notes.
+- Noise parts past a machine's noise channels share one the same way, as
+  `:prio` layers, the busiest first (an AY song's three squares' noise
+  onto the Mega Drive's one noise).
 - A machine with no sample channel (the Game Boy) plays its drums on its
   noise, as `:prio` layers over the noise's own part: each a noise note of
   its own — a low clock for the kick, a bright one for the snare, a middle
