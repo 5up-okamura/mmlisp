@@ -138,10 +138,7 @@ order, waits for its use:
 2. **A plugin** — the machines as instruments in a DAW, held until someone
    needs it: a chip VSTi has makers already (a plugin that plays a score, its
    def-vals the DAW's automation, is the one MMLisp would bring).
-3. **The keyboards on `:target midi`** — the on-screen and MIDI keyboards'
-   preview notes sound on the chips' worklet, which is silent there, not on
-   the MIDI / GM output.
-4. **A program a hot-swap brings mid-play** is decoded on the GM output's
+3. **A program a hot-swap brings mid-play** is decoded on the GM output's
    audio thread (a block's dropout on a phone); decoding it off that thread
    (`setAudioData`) would remove it.
 

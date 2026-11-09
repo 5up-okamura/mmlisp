@@ -74,6 +74,8 @@ const velDb = (v) => (Math.max(0, Math.min(15, v)) - 15) * VEL_DB_PER_STEP;
 export const faderDb = (v) => (v <= 0 ? -Infinity : (Math.min(VOL_UNITY, v) - VOL_UNITY) * VOL_STEP_DB);
 // dB → a 7-bit level, as GM reads one: gain ∝ (value / 127)².
 const level7 = (db) => (db === -Infinity ? 0 : Math.max(0, Math.min(127, Math.round(127 * 10 ** (db / 40)))));
+// A key's velocity for a :vel 0–15 (never 0, which would be a key's off).
+export const velocity7 = (vel) => Math.max(1, level7(velDb(vel)));
 const pan7 = (p) => Math.max(0, Math.min(127, Math.round(p < 0 ? 64 + p * 64 : 64 + p * 63)));
 
 const gcd = (a, b) => (b ? gcd(b, a % b) : a);
@@ -585,7 +587,7 @@ function trackEvents(events, ctx, chan, drums, notes) {
       const fader = n.volW?.length ? n.volW[0][1] : lineAt(vol, on);
       velocity = level7(velDb(vel) + faderDb(fader) + faderDb(lineAt(master, on)));
       if (!velocity) continue;
-    } else velocity = Math.max(1, level7(velDb(vel)));
+    } else velocity = velocity7(vel);
 
     if (!drums) {
       // The voice: a gm-* one, a role or a ROM voice is its program; at the

@@ -22,6 +22,9 @@
 //                            master's dB read on GM's curve (the score's CC7
 //                            stays the score's); a fader at 0 is a mute
 //   stop                     every key let go, All Notes Off on each channel
+//   Live's keyboards         a key at once on a channel (keyOn / keyOff);
+//                            stopped, the channel takes its opening voice
+//                            from the plan first (channelOpening)
 //
 // A track past fifteen melodic channels is the file's second port: one
 // output has one, so it is not sent (`onSkip` says so once).
@@ -32,7 +35,7 @@
 // (tools: check:midi-out).
 // ---------------------------------------------------------------------------
 
-import { RPN_BEND, midiPlan, faderDb } from "./export-midi.js";
+import { RPN_BEND, midiPlan, faderDb, velocity7 } from "./export-midi.js";
 import { compileMMLisp } from "./mmlisp2ir.js";
 
 export const midiOutSupported = typeof navigator !== "undefined"
@@ -89,6 +92,29 @@ const chaseKey = (b) => {
 // Grace for a plan that comes after its run began (it compiles off the
 // page's thread): notes due this recently still go, at once.
 const LATE_SEC = 0.25;
+
+/**
+ * A channel's opening voice in a plan: its bank, program, volume and pan as
+ * they stand before its first key (the first track on it that sets each) —
+ * what a key Live's keyboards play on it is sent after while the song is
+ * stopped. Bytes, in the order to send them.
+ */
+export function channelOpening(plan, channel) {
+  const got = new Map();
+  for (const t of plan?.tracks ?? []) {
+    if (t.port > 0 || t.channel !== channel) continue;
+    const own = new Map();
+    for (const { bytes } of t.events) {
+      const kind = bytes[0] & 0xf0;
+      if (kind === 0x90 && bytes[2] > 0) break;
+      if (kind === 0xc0) own.set("prog", bytes);
+      else if (kind === 0xb0 && OPENING_CC.includes(bytes[1])) own.set(bytes[1], bytes);
+    }
+    for (const [k, b] of own) if (!got.has(k)) got.set(k, b);
+  }
+  return [0, 32, "prog", 7, 10].filter((k) => got.has(k)).map((k) => [...got.get(k)]);
+}
+const OPENING_CC = [0, 32, 7, 10];
 
 export class MidiOutRun {
   /**
@@ -319,6 +345,22 @@ export class MidiOutRun {
     for (const st of this.tracks) this.letGo(st, when);
     const at = this.perfAt(cleared ? when : Math.max(when, this.lastAt + 0.001));
     for (const ch of new Set(this.plan.tracks.filter((t) => t.port === 0).map((t) => t.channel))) this.send([0xb0 | ch, 123, 0], at);
+  }
+
+  /**
+   * A key of Live's keyboards on `channel`, now: `:target midi`'s sound is
+   * the output's, so its keys go there, beside the song. Stopped, the
+   * channel is first given its opening voice in `ir`'s plan; playing, it has
+   * the song's. `vel` is the language's :vel (15 when not given).
+   */
+  keyOn(ir, channel, note, vel, now) {
+    const at = this.perfAt(now);
+    if (!this.running) for (const b of channelOpening(this.plans.get(ir), channel)) this.send(b, at);
+    this.send([0x90 | channel, note, velocity7(vel ?? 15)], at);
+  }
+
+  keyOff(channel, note, now) {
+    this.send([0x80 | channel, note, 0], this.perfAt(now));
   }
 
   /** The run stopped (or the output was turned off): everything let go now. */

@@ -13441,6 +13441,7 @@
     }
 
     function previewTake(target, midi, vel) {
+      if (midiSound(_lastGoodIR)) return midiKeyTake(midi, vel);
       // The driver's run keeps its channels (and op masks) to itself.
       if (target.slot !== PCM_PREVIEW_CH && !claimPreviewPlayer()) return null;
       const use = previewSongUse();
@@ -13477,12 +13478,37 @@
     }
 
     function previewRelease(voice) {
+      if (voice?.midiCh != null) { _midiOutRun?.keyOff(voice.midiCh, voice.note, audioCtx?.currentTime ?? 0); return; }
       if (voice?.ch == null || _previewVoices.get(voice.ch) !== voice) return;
       _previewVoices.delete(voice.ch);
       previewNoteOff(voice.ch);
       if (isFmSlot(voice.ch) && _borrowedKeyMask.delete(voice.ch.ch)) {
         workletNode?.port.postMessage({ type: 'hold-ch', ch: voice.ch.ch, on: false });
       }
+    }
+
+    // `:target midi`'s keys: its sound is the MIDI output's, so a key goes
+    // there (MidiOutRun keyOn), on the selected track's channel — a drum
+    // track's is channel 10, the key a kit's — else the score's first
+    // melodic one. Stopped, the channel takes its opening voice first.
+    let _midiKeysWarned = false;
+    function midiKeyTake(note, vel) {
+      if (!_midiOutRun) {
+        if (!_midiOutName && !_midiKeysWarned) {
+          _midiKeysWarned = true;
+          log('The keys sound on a MIDI output on this machine: choose MMLisp > MIDI > Output (GM, or a MIDI port)', 'warn');
+        }
+        return null;
+      }
+      const ch = midiKeyChannel();
+      _midiOutRun.keyOn(_lastGoodIR, ch, note, vel, audioCtx?.currentTime ?? 0);
+      return { midiCh: ch, note };
+    }
+    function midiKeyChannel() {
+      const c = selectedChannel ? channelVoice(selectedChannel) : null;
+      if (c) return c.part.kind === 'midi' ? c.voice : 9;
+      const plan = _midiOutRun?.plans.get(_lastGoodIR);
+      return plan?.tracks.find((t) => t.port === 0 && !t.drums)?.channel ?? 0;
     }
 
     // A patch onto a borrowed channel, register by register, past the player:

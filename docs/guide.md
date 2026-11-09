@@ -1485,8 +1485,12 @@ Dynamic Parameters slider and an edit's swap at the bar all follow; a seek
 sends each channel's program and controllers first, and a stop lets every key
 go. Tracks past fifteen channels are the file's second port and are not sent,
 and an effect played alone (a `def-se`) is not sent. While the output is on,
-each edit compiles the score once more for its plan. The chosen output is
-remembered by its name.
+each edit compiles the score once more for its plan. The keyboards (on
+screen, the computer's, MIDI) play there too: a key goes out at once on the
+selected track's channel — a drum track's is channel 10, the key a GM kit's
+— else on the score's first channel, beside the song; while the score is
+stopped, the channel first takes the bank, program, volume and pan its track
+opens with. The chosen output is remembered by its name.
 
 ---
 

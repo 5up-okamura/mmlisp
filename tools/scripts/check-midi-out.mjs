@@ -18,13 +18,16 @@
 //                       plan made again (a def-val moved)
 //                       sends nothing twice, a plan that comes late sends
 //                       what fell due since the run began
+//   Live's keyboards    a key on `:target midi` goes out at once; stopped,
+//                       after its channel's opening voice (bank, program,
+//                       volume, pan before its first key), playing, alone
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
 import { midiPlan } from "../../live/src/export-midi.js";
-import { MidiOutRun } from "../../live/src/midi-output.js";
+import { MidiOutRun, channelOpening } from "../../live/src/midi-output.js";
 import { IRPlayer } from "../../live/src/ir-player.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
@@ -289,6 +292,29 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
   run.pass(p, 0.12);
   const first = sent.filter((m) => isOn(m.b));
   assert.deepEqual(first.slice(0, 2).map((m) => [m.b[1], m.t]), [[60, 0.12], [67, 0.12]], "c and g, late, at once");
+}
+
+// ── Live's keyboards ──────────────────────────────────────────────────────
+{
+  const { ir, plan } = both(`(def-score :target midi)
+(ch3 :tempo 120 :bank 130 gm-flute :vol 20 :pan -0.5 :len 4 c d gm-trumpet e)
+(ch5 :len 4 _ :prog 20 c)`);
+  assert.deepEqual(channelOpening(plan, 2), [[0xb2, 0, 1], [0xb2, 32, 2], [0xc2, 73], [0xb2, 7, 36], [0xb2, 10, 32]],
+    "ch3's bank, program, volume and pan before its first key, not the trumpet after it");
+  assert.deepEqual(channelOpening(plan, 4), [[0xc4, 20], [0xb4, 7, 127]], "a program after a rest is still the opening one");
+  assert.deepEqual(channelOpening(plan, 0), [], "a channel the score does not use: nothing");
+  const sent = [];
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b: [...b], t: ms / 1000 }) });
+  run.setPlan(plan, ir);
+  run.keyOn(ir, 2, 64, undefined, 1);
+  run.keyOff(2, 64, 1.5);
+  assert.deepEqual(sent.map((m) => m.b), [...channelOpening(plan, 2), [0x92, 64, 127], [0x82, 64, 0]], "stopped: the voice, then the key");
+  assert.deepEqual(sent.map((m) => m.t), [1, 1, 1, 1, 1, 1, 1.5], "at once");
+  sent.length = 0;
+  run.running = true;
+  run.keyOn(ir, 2, 64, 7, 2);
+  assert.equal(sent.length, 1, "playing: the song's voice stands, the key alone");
+  assert.ok(sent[0].b[2] > 1 && sent[0].b[2] < 127, "a :vel 7 key below full velocity");
 }
 
 console.log("check:midi-out ok");
