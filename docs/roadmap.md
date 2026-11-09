@@ -62,7 +62,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 ## Importers
 
 - **Famicom: ppmck's MML**, if a composer's files call for it.
-- **mucom**: part G's per-sound pan `p$xy` is not read.
 - **MGS**: an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
 - **MDX**: the OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts

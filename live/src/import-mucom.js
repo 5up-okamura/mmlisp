@@ -2,10 +2,10 @@
 // mucom88 (.muc) -> MMLisp import
 //
 // mucom88 targets the PC-8801 / YM2608 (OPNA): FM A-C,H-J, SSG D-F, rhythm G,
-// ADPCM K. MMLisp targets the Mega Drive (YM2612 FM1-6 + SN76489 PSG). FM maps
-// near 1:1; SSG -> PSG square is an approximate pitch/level map; ADPCM K becomes
-// a PCM track (its `#pcm` bank is decoded to samples — see mucom-pcm.js); rhythm
-// G plays the RX5 kit on one PCM track, a :prio layer per sound (rhythmLayers).
+// ADPCM K — written as a `:target pc88` score, each part on its own channel
+// (another machine is that score converted, score-port.js). ADPCM K plays its
+// `#pcm` bank decoded to samples (mucom-pcm.js); rhythm G a track per sound
+// (rhythmLayers).
 //
 // This converts MML *text* into MMLisp *source text*. Anything not in the
 // supported subset is skipped and reported in `warnings`.
@@ -81,10 +81,7 @@ const SSG_PRESETS = [
 ];
 
 // G is the OPNA's built-in rhythm generator: six sounds in the chip's ROM, each
-// with its own voice. They become the RX5 kit's samples on one PCM track, so
-// where two overlap one is chosen by priority (rhythmLayers). Its channel is pcm1, or pcm2 when
-// part K plays. On pc88 they are the chip's own sounds, each a voice of its
-// own: a track per sound, rhythm1-rhythm6 in key-on bit order, no :prio.
+// a voice of its own: a track per sound, rhythm1-rhythm6 in key-on bit order.
 const RHYTHM_PART = "G";
 // The six, in the order of the key-on bits (`@` is a mask) and of `v`'s
 // levels: the sample, its priority (lower wins, as :prio) and how long it
@@ -508,8 +505,9 @@ function tokenizeBody(body, state, warn, partLetter, macros, depth = 0) {
     // Pan: p0=off, p1=right, p2=left, p3=center
     if (c === "p") {
       i++;
-      // On G, `p$xy` pans sound x: a mono PCM track has nothing to carry it to.
-      if (partLetter === RHYTHM_PART) { if (body[i] === "$") i++; while (i < n && /[0-9a-fA-F]/.test(body[i])) i++; continue; }
+      // On G, `p$xy` pans sound y (RHYTHM_SOUNDS' order) as p x does a part
+      // (music.asm STE2: x's two bits are the sound's L and R).
+      if (partLetter === RHYTHM_PART) { const v = readNum(); if (v != null) push({ t: "rhythmPan", sound: v & 15, v: (v >> 4) & 3 }); continue; }
       const v = readInt();
       if (v != null) push({ t: "pan", v });
       continue;
@@ -1377,19 +1375,17 @@ function lfoBeforeNote(ctx, out, letter, acc) {
 
 // --- rhythm (part G) ----------------------------------------------------------
 
-// Part G's forms as one :prio layer per sound (RHYTHM_SOUNDS), each a copy of
+// Part G's forms as one track per sound (RHYTHM_SOUNDS), each a copy of
 // G's ops — its loops and `L` kept — that plays the notes whose `@` mask keys
-// its sound and rests through the rest. The compiler's layering then picks
-// what plays: a hit is dropped while a higher-priority one sounds (its :gate,
-// the ring time) and cuts a lower one. A hit's level is the total plus the
-// sound's own, against the loudest the part plays (:vel 15). `@` and `v` carry
-// from pass to pass, so a loop whose passes key differently is written out
-// pass by pass. Returns, per form, the layers' ops (null: the sound is never
+// its sound and rests through the rest. A hit's level is the total plus the
+// sound's own, its pan the sound's `p$xy`. `@`, `v` and `p` carry from pass
+// to pass, so a loop whose passes key differently is written out pass by
+// pass. Returns, per form, the layers' ops (null: the sound is never
 // keyed anywhere in the part).
 // A hit's level is absolute — the ROM sound's IL takes vel + vol + master,
 // as the chip's RTL + IL did.
 function rhythmLayers(forms, warnings) {
-  const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31] };
+  const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31], pans: [3, 3, 3, 3, 3, 3] };
   const KEEP = new Set(["loopBreak", "loopMarker", "loopGo", "globalLoop", "tempo", "lenSet", "bar"]);
   const walk = (ops) => ops.flatMap((op) => {
     switch (op.t) {
@@ -1398,6 +1394,7 @@ function rhythmLayers(forms, warnings) {
         op.levels.forEach((v, k) => { if (v != null && k < 7) st.levels[k] = clamp(v, 0, k ? 31 : 63); });
         return [];
       case "velAdj": st.levels[0] = clamp(st.levels[0] + op.d, 0, 63); return [];
+      case "rhythmPan": if (op.sound < 6) st.pans[op.sound] = op.v; return [];
       case "loop": {
         const first = walk(op.body);
         const second = walk(op.body);
@@ -1413,7 +1410,7 @@ function rhythmLayers(forms, warnings) {
       case "note": {
         const hits = {};
         RHYTHM_SOUNDS.forEach((_, k) => {
-          if (st.mask >> k & 1) hits[k] = RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]);
+          if (st.mask >> k & 1) hits[k] = { db: RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]), pan: st.pans[k] };
         });
         return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc, hits }];
       }
@@ -1434,13 +1431,17 @@ function rhythmLayers(forms, warnings) {
   items.forEach(scan);
   return RHYTHM_SOUNDS.map((s, k) => {
     if (!keyed.has(k)) return null;
-    let vel = null;
+    // A hit writes its level, and its pan off the centre it starts at, where
+    // they change from the hit before.
+    let vel = null, pan = 3;
+    const PAN = { 1: "right", 2: "left" };
     const layer = (ops) => ops.flatMap((op) => {
       if (op.t === "loop") return [{ ...op, body: layer(op.body) }];
       if (!op.hits) return [op];
       if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks, wc: op.wc }];
-      const v = clamp(Math.round(15 - op.hits[k] / VEL_DB_PER_STEP), 0, 15);
+      const v = clamp(Math.round(15 - op.hits[k].db / VEL_DB_PER_STEP), 0, 15);
       const pre = v !== vel ? [{ t: "raw", text: `:vel ${(vel = v)}` }] : [];
+      if (op.hits[k].pan !== pan) pre.push({ t: "raw", text: `:pan ${PAN[(pan = op.hits[k].pan)] ?? "center"}` });
       return [...pre, { t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc }];
     });
     return items.map(layer);
@@ -1707,8 +1708,7 @@ function renderOps(ops, ctx, out, depth = 0) {
         break;
       case "pan":
         if (!fm3Patch(ctx)) break;
-        // The ADPCM-B pans, as the FM does; the rhythm part (G) has no pan lane.
-        if (ctx.isPcm && !adpcmFader(ctx)) { warnOnce(ctx.warnings, "pcmPan", "part G: pan (p) has no rhythm equivalent; dropped"); break; }
+        // The ADPCM-B pans as the FM does (part G's are its sounds', rhythmLayers).
         if (ctx.isSsg) { warnOnce(ctx.warnings, "ssgPan", "SSG parts: pan (p) has no PSG equivalent; dropped"); break; }
         // mucom p: 0=off,1=right,2=left,3=center -> MMLisp :pan
         out.push(`:pan ${{ 1: "right", 2: "left" }[op.v] ?? "center"}`);

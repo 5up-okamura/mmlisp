@@ -895,6 +895,9 @@ const port = (src, to, rows, options) => {
     assert.deepEqual(compile(text, join(repo, "tools/tests/t.mmlisp")).bad, [], `mucom88 onto ${target} compiles clean`);
   }
   assert.deepEqual(MUCOM_TARGETS.slice().sort(), PORT_TARGETS.slice().sort(), "mucom88 offers every machine");
+  // Part G's `p$xy` pans sound y (BD SD TOP HH TOM RIM) as `p x` does a part.
+  const panned = importMucom(new TextEncoder().encode("#title pan\n\nG l8 v15 @16c p$14@16c p$24@16c p$34@16c\n")).source;
+  assert.match(panned, /\(rhythm5 [^)]*c8 :pan right c8 :pan left c8 :pan center c8\)/, `the tom panned:\n${panned}`);
   // A VGM of each machine offers every machine: written as its own
   // machine's score, then converted onto each (the one road Live's dialog
   // takes, as Convert to Machine… does), each clean.

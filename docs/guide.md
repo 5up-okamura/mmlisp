@@ -1762,7 +1762,7 @@ than approximating:
   `v`'s total and per-sound levels become an absolute `:vel`, which the
   chip's level takes back. The RX5 kit is imported beside it: its sounds
   stand in for the ROM's until you load yours (File ▸ Import ▸ YM2608 Rhythm ROM…).
-  The rhythm's per-sound pan is not read.
+  `p$xy` pans sound y (0 BD … 5 RIM) as `p x` does a part: `:pan` on its track.
 - **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
   notes), `w` the song's `:noise-rate`. SSG reverb rings without its level
   drop.
