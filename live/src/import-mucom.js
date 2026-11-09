@@ -1387,30 +1387,45 @@ function lfoBeforeNote(ctx, out, letter, acc) {
 function rhythmLayers(forms, warnings) {
   const st = { mask: 0, levels: [63, 31, 31, 31, 31, 31, 31], pans: [3, 3, 3, 3, 3, 3] };
   const KEEP = new Set(["loopBreak", "loopMarker", "loopGo", "globalLoop", "tempo", "lenSet", "bar"]);
+  // A jump back (a loop across lines, `L`) is read once: where a sound's pan
+  // moves on the way and comes back as it left the target, the target
+  // restates it (`same`), so every pass plays it.
+  const targets = new Map();
+  let top = null;
+  const open = [];
+  const back = (m) => m.pans.map((p, k) => m.moved[k] && p === st.pans[k]);
   const walk = (ops) => ops.flatMap((op) => {
     switch (op.t) {
+      case "loopMarker": { const m = { ...op, pans: [...st.pans], moved: [] }; targets.set(op.label, m); open.push(m); return [m]; }
+      case "loopGo": { const m = targets.get(op.label); if (m) { m.same = back(m); open.splice(open.indexOf(m), 1); } return [op]; }
+      case "globalLoop": open.push((top = { ...op, pans: [...st.pans], moved: [] })); return [top];
       case "voice": st.mask = op.n; return [];
       case "rhythmLevels":
         op.levels.forEach((v, k) => { if (v != null && k < 7) st.levels[k] = clamp(v, 0, k ? 31 : 63); });
         return [];
       case "velAdj": st.levels[0] = clamp(st.levels[0] + op.d, 0, 63); return [];
-      case "rhythmPan": if (op.sound < 6) st.pans[op.sound] = op.v; return [];
+      case "rhythmPan":
+        if (op.sound < 6 && st.pans[op.sound] !== op.v) { st.pans[op.sound] = op.v; for (const m of open) m.moved[op.sound] = true; }
+        return [];
       case "loop": {
-        const first = walk(op.body);
-        const second = walk(op.body);
-        if (JSON.stringify(first) === JSON.stringify(second)) return [{ ...op, body: first }];
-        // Written out: passes 3.. from where the one before left, the last
-        // stopping at its `/`.
-        const head = op.body.slice(0, Math.max(0, op.body.findIndex((o) => o.t === "loopBreak")));
-        const passes = [first, second];
-        for (let p = 3; p <= op.count; p++) passes.push(walk(p === op.count && head.length ? head : op.body));
-        if (op.count === 2 && head.length) passes[1] = second.slice(0, second.findIndex((o) => o.t === "loopBreak"));
-        return passes.slice(0, Math.max(1, op.count)).flat().filter((o) => o.t !== "loopBreak");
+        // Each pass from where the one before left, the last stopping at its
+        // `/` — what the driver plays, and the state it leaves after the loop.
+        const n = Math.max(1, op.count);
+        const brk = op.body.findIndex((o) => o.t === "loopBreak");
+        const passes = [];
+        for (let p = 1; p <= n; p++) passes.push(walk(p === n && brk >= 0 ? op.body.slice(0, brk) : op.body));
+        // Every pass alike (the last, the first's up to its `/`): one body.
+        const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const upToBreak = (ops) => { const i = ops.findIndex((o) => o.t === "loopBreak"); return i < 0 ? ops : ops.slice(0, i); };
+        if (passes.slice(1, -1).every((x) => same(x, passes[0])) && same(passes[n - 1], n > 1 ? upToBreak(passes[0]) : passes[0]))
+          return [{ ...op, body: passes[0] }];
+        return passes.flat().filter((o) => o.t !== "loopBreak");
       }
       case "note": {
         const hits = {};
         RHYTHM_SOUNDS.forEach((_, k) => {
-          if (st.mask >> k & 1) hits[k] = { db: RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]), pan: st.pans[k] };
+          // A sound panned to neither side (`p$0y`) is not heard: it rests.
+          if (st.mask >> k & 1 && st.pans[k]) hits[k] = { db: RHYTHM_DB_PER_STEP * (63 - st.levels[0] + 31 - st.levels[k + 1]), pan: st.pans[k] };
         });
         return [{ t: "note", letter: "c", acc: 0, len: op.len, clocks: op.clocks, wc: op.wc, hits }];
       }
@@ -1422,6 +1437,7 @@ function rhythmLayers(forms, warnings) {
     }
   });
   const items = forms.map((f) => walk(f.ops));
+  if (top) top.same = back(top);
 
   const keyed = new Set();
   const scan = (ops) => ops.forEach((op) => {
@@ -1432,11 +1448,25 @@ function rhythmLayers(forms, warnings) {
   return RHYTHM_SOUNDS.map((s, k) => {
     if (!keyed.has(k)) return null;
     // A hit writes its level, and its pan off the centre it starts at, where
-    // they change from the hit before.
-    let vel = null, pan = 3;
+    // they change from the hit before. The level is the compile's, as `v`
+    // is mucom's: a loop's body is read once. The pan is a write the chip
+    // gets when played: a pass starts with the one before's, and a loop
+    // left at its `/` ends with the pan there — where that is not the pan
+    // the body was written from, it is stated again (null: not known).
+    let vel = null, pan = 3, atBreak = null;
     const PAN = { 1: "right", 2: "left" };
     const layer = (ops) => ops.flatMap((op) => {
-      if (op.t === "loop") return [{ ...op, body: layer(op.body) }];
+      if (op.t === "loop") {
+        const was = pan, velWas = vel, outer = atBreak;
+        atBreak = undefined;
+        let body = layer(op.body);
+        if (pan !== was) { const end = pan; pan = null; vel = velWas; atBreak = undefined; body = layer(op.body); pan = end; }
+        if (atBreak !== undefined && atBreak !== pan) pan = null;
+        atBreak = outer;
+        return [{ ...op, body }];
+      }
+      if (op.t === "loopBreak") { if (atBreak === undefined) atBreak = pan; return [op]; }
+      if (op.same?.[k]) { pan = null; return [op]; }
       if (!op.hits) return [op];
       if (op.hits[k] == null) return [{ t: "rest", len: op.len, clocks: op.clocks, wc: op.wc }];
       const v = clamp(Math.round(15 - op.hits[k].db / VEL_DB_PER_STEP), 0, 15);
