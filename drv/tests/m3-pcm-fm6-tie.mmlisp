@@ -1,0 +1,11 @@
+; fm6 and the PCM at the same time (language.md §16): the later write takes
+; the DAC, as the driver's frame has it — pcm1 is the earlier track, so on
+; the beats both play, fm6's note takes the DAC back and is heard.
+(def-pcm blip :file "blip.wav")
+(def-fm bell :alg 4 :fb 3
+  :ar1 31 :dr1 6 :sr1 1 :rr1 6 :sl1 2 :tl1 24 :ks1 0 :ml1 2 :dt1 0
+  :ar2 31 :dr2 8 :sr2 2 :rr2 8 :sl2 2 :tl2 8 :ks2 0 :ml2 1 :dt2 0
+  :ar3 31 :dr3 6 :sr3 1 :rr3 6 :sl3 2 :tl3 28 :ks3 0 :ml3 4 :dt3 0
+  :ar4 31 :dr4 9 :sr4 2 :rr4 9 :sl4 3 :tl4 4 :ks4 0 :ml4 1 :dt4 0)
+(pcm1 :tempo 120 :oct 4 :len 4 blip c c c c)
+(fm6 bell :oct 5 :len 4 _ c c _)

@@ -511,20 +511,36 @@
   "vgm": "8ef6c21f1baf34f8",
   "mid": "9857e09d09513e31"
  },
+ "drv/tests/m3-pcm-fm6-tie.mmlisp": {
+  "diagnostics": "fb79018444e70d27",
+  "ir": "355ab7d83e33bcbd",
+  "regs": "856892852224db50",
+  "mmb": "ea8a436aaee90d96",
+  "vgm": "fe8ea239152bc832",
+  "mid": "78bb7fa43974ff6c"
+ },
+ "drv/tests/m3-pcm-fm6-tie.mmlisp @pal": {
+  "diagnostics": "fb79018444e70d27",
+  "ir": "30e32dd197ff2723",
+  "regs": "856892852224db50",
+  "mmb": "42d6ac866dc289ba",
+  "vgm": "5fb128c35fe261ba",
+  "mid": "78bb7fa43974ff6c"
+ },
  "drv/tests/m3-pcm-fm6.mmlisp": {
   "diagnostics": "fb79018444e70d27",
   "ir": "3a459e951f0780f8",
-  "regs": "411de52fe8158e46",
+  "regs": "16fe8ac854834f50",
   "mmb": "28d6c175dc07f2ad",
-  "vgm": "60cd0b8858a00922",
+  "vgm": "c1f0e5e2966c35cc",
   "mid": "b19fbf7b96fed776"
  },
  "drv/tests/m3-pcm-fm6.mmlisp @pal": {
   "diagnostics": "fb79018444e70d27",
   "ir": "665a7b691d584940",
-  "regs": "411de52fe8158e46",
+  "regs": "16fe8ac854834f50",
   "mmb": "e86668b5233725a5",
-  "vgm": "9ce4bb1e24991e7e",
+  "vgm": "4a91ddf6853f7c25",
   "mid": "b19fbf7b96fed776"
  },
  "drv/tests/m3-pcm-master.mmlisp": {

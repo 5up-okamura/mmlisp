@@ -6571,9 +6571,12 @@ export class IRPlayer {
     const rising = mask & ~(this._fmKeyMask[ch] ?? 0) & 0xf0;
     this._fmKeyMask[ch] = mask;
     // The channel the DAC shares (fm6): its key-on takes it back from PCM.
+    // At the note's own time, not ahead of it: a PCM note at the same time
+    // dispatched before it (an earlier track) writes there too, and the later
+    // write takes the DAC, as in the driver's frame.
     if (rising && ch === this._dacShareCh && this._dacOn && when != null) {
       this._dacOn = false;
-      this._write(0, 0x2b, 0, when - KEY_ORDER_EPS_SECS);
+      this._write(0, 0x2b, 0, when);
     }
     if (rising && this._chRegs[ch]?.lfoSync && when != null) {
       const writes = this._fmEnc.lfoReset?.(this._lfoRate) ?? [];

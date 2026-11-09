@@ -191,6 +191,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-pcm-fm6-tie.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-pcm-fm6.mmlisp": {
     "ok": true,
     "mismatches": 0,
