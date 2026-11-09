@@ -278,7 +278,7 @@ export const REFERENCE = [
   {
     name: '(rhythm1 …)', aliases: ['rhythm2', 'rhythm3', 'rhythm4', 'rhythm5', 'rhythm6', 'rhythm', 'drums'], cat: 'channels', section: '§19', tracks: PCM,
     syntax: '(def-score :target pc88) (rhythm1 kick c …)',
-    summary: 'pc88: the YM2608\'s ROM rhythm, its six sounds named by the kit roles (kick snare ride hat tom4 rim) with no def. A track is one line, its :prio layers competing as on any channel; sounds that ring together, each with its own :vol and :pan, go on tracks of their own. msx: the FM-PAC\'s five (no rim, no :pan) on rhythm1–rhythm5, in place of fm7–fm9; a hit\'s note tunes its sound, and :pitch, (glide …) and pitch macros move it on through its release (a kick\'s pitch-down).',
+    summary: 'pc88: the YM2608\'s ROM rhythm, its six sounds named by the kit roles (kick snare ride hat tom4 rim) with no def. A track is one line, its :prio layers competing as on any channel; sounds that ring together, each with its own :vol and :pan, go on tracks of their own. msx: the FM-PAC\'s five (no rim, no :pan) on rhythm1–rhythm5, sharing channels 7–9 with fm7–fm9 in turn (a hit holds them for its note); a hit\'s note tunes its sound, and :pitch, (glide …) and pitch macros move it on through its release (a kick\'s pitch-down).',
     insert: '(rhythm1 :len 4 kick c snare c)',
     example: '(def-score :target pc88)\n(rhythm1 :prio 1 :len 4 kick c c c c)\n(rhythm1 :prio 2 :len 8 hat c c c c c c c c)\n(rhythm2 :pan right :len 2 snare _ c)',
   },

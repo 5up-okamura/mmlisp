@@ -537,9 +537,15 @@ function opllChip(clock, { ev, vrc7 = false, hits = [] }) {
       const was = r[a];
       r[a] = d;
       if (a === 0x0e) {
-        for (const [bit] of OPLL_RHYTHM) {
+        for (const [bit, , ch] of OPLL_RHYTHM) {
           const h = held[bit];
           if (h && (!rhythmOn() || !(d & bit))) { h.off = t; delete held[bit]; }
+          // The mode turned off as it was hit — a driver taking channels 7-9
+          // back as tones (Tetris's intro) — sounds nothing: no hit.
+          if (h && !rhythmOn() && t - h.t < FRAME / 2) {
+            hits.splice(hits.indexOf(h), 1);
+            if (ringing[ch] === h) delete ringing[ch];
+          }
         }
         if (!rhythmOn()) return;
         // Channels 7-9 keyed as tones stop where the drums take them.

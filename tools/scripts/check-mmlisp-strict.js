@@ -337,9 +337,14 @@ async function main() {
       expected: [],
     },
     {
-      label: "the FM-PAC's rhythm: in place of fm7-fm9, no rim, no pan, a pair at one pitch",
+      label: "the FM-PAC's rhythm: no pan, a pair at one pitch, fm7-fm9 beside it said where they meet",
       src: '(def-score :target msx)\n(rhythm1 snare c)\n(rhythm2 hat d)\n(rhythm3 :pan left kick c)\n(fm8 piano c)',
-      expected: ["E_TARGET", "E_TARGET", "W_TARGET"],
+      expected: ["E_TARGET", "W_TARGET", "W_TARGET"],
+    },
+    {
+      label: "the FM-PAC's rhythm and fm7-fm9 taking turns: nothing to say",
+      src: '(def-score :target msx)\n(rhythm1 kick :len 4 c _ _ c)\n(fm7 piano :len 4 _ _ e _)',
+      expected: [],
     },
     {
       label: "a ROM voice name plays everywhere",

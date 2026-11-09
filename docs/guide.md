@@ -2083,7 +2083,7 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   are, its volume linear. A YM2413 instrument is its ROM voice by name
   (`piano` …) or a 2-op `def-fm` of the FM-PAC's words; its drums mode
   goes to `rhythm1`–`rhythm5` (`kick` `snare` `tom4` `ride` `hat`), at c4,
-  and takes `fm7`–`fm9`. The YM2608's rhythm goes to pc88's
+  beside `fm7`–`fm9`, which share its channels in turn. The YM2608's rhythm goes to pc88's
   `rhythm1`–`rhythm6`, with the RX5 kit imported to stand in for a
   rhythm ROM not loaded; the ADPCM is left out. On x68k DT2 comes along
   and channel 8's noise (`10xx`, the duty macro) is `fm8`'s `:mode noise`

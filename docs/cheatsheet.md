@@ -274,7 +274,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   `:vib1` and the channel's `:sus 1`; no `:alg`, `:tl2`, `:pan`.
   `rhythm1`–`rhythm5` the FM-PAC's rhythm (`kick snare tom4 ride hat`, no
   def; a hit's note tunes it, c4 the chip's, and `:pitch` / `(glide …)` /
-  pitch macros move it on through the release) in place of `fm7`–`fm9`. No
+  pitch macros move it on through the release), sharing channels 7–9 with
+  `fm7`–`fm9` in turn (a hit holds them for its note; where they meet the
+  later note takes them, `W_TARGET`). No
   PCM. VGM and WAV.
 - `(def-score :target pce)` holds a score to the PC Engine's HuC6280 (§19):
   `wave1`–`wave6` wave channels as the SCC's (`def-wave`, `:wave`, its

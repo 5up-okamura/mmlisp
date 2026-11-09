@@ -2945,8 +2945,14 @@ the kit has sounds, each playing any of them:
 | --- | --- | --- | --- | --- | --- |
 | ROM sound | BD | SD | TOM | TOP-CYM | HH |
 
-The rhythm takes the chip's channels 7–9, so a score with a rhythm track
-has no `fm7`–`fm9` (`E_TARGET`); the mode is the whole song's. There is no
+The rhythm takes the chip's channels 7–9 while a hit sounds — from the hit
+for its note's length — and `fm7`–`fm9` have them the rest of the time: a
+score writes both, and the chip's rhythm mode goes off at an `fm7`–`fm9`
+note and on again at the next hit (its volumes and tunings written again
+there). Where a hit's note and an `fm7`–`fm9` note meet, the later takes the
+channels — the hit's sounds stop, or the tone is cut — and the compiler says
+so once, where they first meet (`W_TARGET`). A hit rings on past its note
+until the FM takes the channels. There is no
 `rim` and no `:pan`. A hit's level is vel + vol + master on the sound's
 4-bit volume (3 dB a step, as a channel's), moving while it sounds; a
 `:vol 0` releases it. A sound is keyed until its next hit — which keys it

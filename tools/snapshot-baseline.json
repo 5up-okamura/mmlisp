@@ -2226,6 +2226,13 @@
   "vgm": "adcbe90505d8fd59",
   "mid": "dac669d274084c8c"
  },
+ "tools/tests/msx/rhythm-share.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ea822b366aed11a5",
+  "regs": "fafe9b56e96f755d",
+  "vgm": "0cdffa9a50ef34bd",
+  "mid": "2d50dc6966cd969e"
+ },
  "tools/tests/msx/scc-expr.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1cc9b1ede7ea18da",

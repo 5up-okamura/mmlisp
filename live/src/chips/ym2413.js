@@ -310,14 +310,11 @@ export const opllRhythm = {
       }
     }
   },
-  // The rhythm takes channels 7-9 from the FM: a score has one or the other.
+  // The rhythm takes channels 7-9 from the FM while a hit sounds: a score
+  // plays both, a hit's note the rhythm's and an fm7-9 note the FM's, the
+  // later taking them where they meet (mmlisp2ir warnSharedChannels).
   takes: (c) => c?.part === opllFm && c.voice >= 6,
-  checkScore({ target, allHeads, push }) {
-    const rhythm = [...allHeads].filter((h) => target.partOf(h) === this);
-    const fm = [...allHeads].filter((h) => this.takes(target.channels[h]));
-    if (rhythm.length && fm.length)
-      push("error", "E_TARGET", `the FM-PAC's rhythm (${rhythm.join(", ")}) plays on its channels 7-9, so ${fm.join(", ")} cannot play beside it`);
-  },
+  sharesTaken: true,
 };
 
 // The OPLL as the IR player's FM (chips/opn-fm.js has the contract). One per
@@ -342,6 +339,12 @@ export const opllRhythm = {
 // until the channel's next call and moved then, at its own time — the
 // write's fourth element — so a key-off sent after it is known first.
 const KEEP = 128; // the spans a channel keeps: well past the player's lookahead
+// Channels 7-9 change hands this far ahead of the note that takes them —
+// the rhythm's mode off ahead of an FM key-on, the FM's keys off ahead of a
+// hit — a few of the chip's samples: a channel's key is its FM key bit and
+// its rhythm bit together, so the two written on one sample would leave it
+// keyed through, and the new note would not attack.
+const TAKES_AHEAD = 1e-4;
 // How far behind its latest entry a timeline keeps what was in force: a
 // note's macros are set ahead whole (a long note's vibrato, hundreds of
 // frames), so a count would drop the note's own onset before its key reads it.
@@ -373,6 +376,9 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
   const romIndexOf = (bytes) => romIndex(bytes, rom);
   let started, ops, fb, voice, vol, pitch, sus, spans, moved, latest;
   let rmode, rq, rkeys, rvols, rtune; // the rhythm: on, its queue, keys, volume bytes, channel tunings
+  // Channels 7-9 are the rhythm's from a hit until an FM note keys one, the
+  // FM's from that note until the next hit: the times each side took them.
+  let hitTimes, fmTimes;
   const reset = () => {
     started = false;
     ops = Array.from({ length: channels }, () => [{}, {}]); // the latest operator fields
@@ -389,8 +395,38 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     rkeys = 0;
     rvols = { 0x36: 0, 0x37: 0, 0x38: 0 };
     rtune = {};
+    hitTimes = [];
+    fmTimes = [];
   };
   reset();
+  const lastAt = (list, t) => list.reduce((m, x) => (x <= t + EPS && x > m ? x : m), -Infinity);
+  const remember = (list, t) => {
+    list.push(t);
+    if (list.length > KEEP) list.shift();
+  };
+  // The rhythm's at `t` (channels 7-9 are its): a hit at or before it, and
+  // no FM note since.
+  const rhythmAt = (t) => {
+    const h = lastAt(hitTimes, t);
+    return h > -Infinity && h >= lastAt(fmTimes, t);
+  };
+  // An FM note keying channel 7-9 at `t` takes them: the rhythm's mode off
+  // there, in its queue's time order (rhythmOps' "fm").
+  const fmTakes = (ch, t) => {
+    if (ch < 6) return;
+    remember(fmTimes, t);
+    rq.push({ k: "fm", t });
+  };
+  // The FM's writes to channel 7-9 go into the rhythm's queue, each at its
+  // time, and reach the chip only if the channels are the FM's then
+  // (rhythmOps' "fmw"): the player sends a note's key-off as it keys it,
+  // before a hit between the two is known.
+  let sharing = false; // the score plays the rhythm (rhythmTracks): channels 7-9 change hands
+  const route = (ch, t, writes) => {
+    if (ch < 6 || !sharing) return writes;
+    for (const x of writes) rq.push({ k: "fmw", t: x[3] ?? t, x: [x[0], x[1], x[2], x[3] ?? t] });
+    return [];
+  };
   // A call with no time — the run's start, a live edit, a key preview — is
   // now: the latest time the encoder has heard of.
   const at = (when) => {
@@ -458,55 +494,63 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     csm: false,
     carriers: [1], // op2
     reset,
+    // Whether the score plays the rhythm: only then do the FM's writes to
+    // channels 7-9 wait for the rhythm's queue (the player flushes it with
+    // the chip's sample voices).
+    rhythmTracks(on) { sharing = !!on; },
     op(ch, opIdx, reg, o, when) {
       if (opIdx > 1) return [];
       if (opIdx === 1 && reg === "tl") {
-        vol[ch].set(at(when), fit(o.tl, 4));
-        return [...flush(ch), ...(started ? [w(0x30 + ch, r3x(ch, at(when)))] : [])];
+        const t = at(when);
+        vol[ch].set(t, fit(o.tl, 4));
+        return route(ch, t, [...flush(ch), ...(started ? [w(0x30 + ch, r3x(ch, t))] : [])]);
       }
       Object.assign(ops[ch][opIdx], o);
-      return voiceMoved(ch, at(when));
+      return route(ch, at(when), voiceMoved(ch, at(when)));
     },
     alg(ch, regs, when) {
       fb[ch] = fit(regs.feedback, 3);
-      return voiceMoved(ch, at(when));
+      return route(ch, at(when), voiceMoved(ch, at(when)));
     },
     pan: () => [], // mono
     pitch(ch, midi, when) {
       const t = at(when);
       const { fnum, block } = fnumOf(midi);
       pitch[ch].set(t, { fnum, block });
-      return [...flush(ch), ...(started ? [w(0x10 + ch, fnum & 0xff), w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
+      return route(ch, t, [...flush(ch), ...(started ? [w(0x10 + ch, fnum & 0xff), w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])]);
     },
-    // The player's word, before a note's macros, that it keys at `when`.
+    // The player's word, before a note's macros, that it keys at `when`
+    // (on channel 7-9, that the FM takes it there).
     noteOn(ch, when) {
-      open(ch, at(when));
-      return flush(ch);
+      const t = at(when);
+      open(ch, t);
+      fmTakes(ch, t);
+      return route(ch, t, flush(ch));
     },
     // The key: both operators at once, on any mask but 0. A key-off closes
-    // the latest span open at its time. Channels 7-9 are the rhythm's in
-    // its mode, and an FM key does not reach them.
+    // the latest span open at its time. A key-on on channel 7-9 takes it
+    // from the rhythm; a key-off there while the rhythm has it reaches nothing.
     key(ch, mask, when) {
       const t = at(when);
-      if (rmode && ch >= 6) return [];
       if (!mask) {
         const sp = spans[ch].findLast((x) => x.off === Infinity && x.on <= t + EPS);
         if (sp) sp.off = t;
-        return [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, false, t))] : [])];
+        return route(ch, t, [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, false, t))] : [])]);
       }
+      if (!fmTimes.some((x) => Math.abs(x - t) < EPS)) fmTakes(ch, t);
       open(ch, t);
-      return [...flush(ch), ...settle(ch, t), w(0x10 + ch, pitch[ch].get(t).fnum & 0xff), w(0x20 + ch, r2x(ch, true, t))];
+      return route(ch, t, [...flush(ch), ...settle(ch, t), w(0x10 + ch, pitch[ch].get(t).fnum & 0xff), w(0x20 + ch, r2x(ch, true, t))]);
     },
     // :sus, $2x bit 5.
     sus(ch, v, when) {
       const t = at(when);
       sus[ch].set(t, v ? 1 : 0);
-      return [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])];
+      return route(ch, t, [...flush(ch), ...(started ? [w(0x20 + ch, r2x(ch, keyedAt(ch, t), t))] : [])]);
     },
     // A live edit (IRPlayer.setParam: the panel, a MIDI CC, the AI link) is
     // heard at once, sounding or not: the channel's voice, now.
     live(ch) {
-      if (ch < 0 || ch >= channels || !started || (rmode && ch >= 6)) return [];
+      if (ch < 0 || ch >= channels || !started || (ch >= 6 && rhythmAt(latest))) return [];
       moved[ch] = null;
       return settle(ch, latest);
     },
@@ -569,9 +613,31 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     };
     // One op into the chip; `t` its time, stamped on its writes (none: now).
     const apply = (out, op, t) => {
+      // An FM note takes channels 7-9: the mode off just ahead of its writes
+      // (its voice, volume and pitch are its key-on's), the keys gone with
+      // it, and the next hit sets the mode, the volumes and its tuning again.
+      if (op.k === "fmw") {
+        if (!rmode) out.push(op.x);
+        return;
+      }
+      if (op.k === "fm") {
+        if (rmode && !hitTimes.some((x) => Math.abs(x - t) < EPS)) {
+          out.push(w(0x0e, 0, t - TAKES_AHEAD));
+          rmode = false;
+          rkeys = 0;
+          rtune = {};
+        }
+        return;
+      }
       const r = RHYTHM[op.sound];
+      // A sound's level, tuning or key-off after the FM took its channel:
+      // the sound is gone, and the channel the FM's.
+      if (!rmode && op.k !== "hit") return;
       if (!rmode) {
-        // The mode, and the volumes' start, at the first rhythm write.
+        // The mode and the volumes, at a hit while it is off: the first, or
+        // the first after an FM note took channels 7-9 — whose keys go off
+        // first (a note still keyed there would hold the drums keyed).
+        if (t !== undefined) for (let ch = 6; ch < 9; ch++) if (keyedAt(ch, t)) out.push(w(0x20 + ch, r2x(ch, false, t), t - TAKES_AHEAD));
         started = rmode = true;
         out.push(w(0x0e, 0x20, t));
         for (const a of [0x36, 0x37, 0x38]) out.push(w(a, rvols[a], t));
@@ -588,7 +654,10 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
     // A call with a time joins the queue; one with none (an audition, a
     // live edit) is written now.
     const take = (when, op) => {
-      if (when !== undefined && when !== null) return queue({ ...op, t: at(when) });
+      if (when !== undefined && when !== null) {
+        if (op.k === "hit") remember(hitTimes, at(when));
+        return queue({ ...op, t: at(when) });
+      }
       const out = [];
       apply(out, op);
       return out;
@@ -609,7 +678,9 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
         return out;
       },
       flush(horizon) {
-        const due = rq.filter((op) => op.t <= horizon + EPS).sort((a, b) => a.t - b.t);
+        // In time order; at one time a hit first (it wins a tie: the FM's
+        // writes there find the channels the rhythm's).
+        const due = rq.filter((op) => op.t <= horizon + EPS).sort((a, b) => a.t - b.t || (b.k === "hit") - (a.k === "hit"));
         if (!due.length) return [];
         rq = rq.filter((op) => op.t > horizon + EPS);
         const out = [];

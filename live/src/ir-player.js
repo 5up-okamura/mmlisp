@@ -6562,6 +6562,9 @@ export class IRPlayer {
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
+    // An FM chip whose rhythm shares its channels (the OPLL's): whether the
+    // score plays it.
+    this._fmEnc.rhythmTracks?.((this._ir?.tracks ?? []).some((t) => this._target.partOf(t.scoreChannel ?? t.channel)?.sharesTaken));
     for (const enc of this._queuedEncoders()) enc.reset?.();
     this._waveLfo = {}; // a wave chip's LFO words as last written (a sweep with no :from starts there)
     // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js

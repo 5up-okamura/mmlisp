@@ -1,0 +1,10 @@
+; msx: the FM-PAC's rhythm and fm7-fm9 in turn on channels 7-9 — the kick,
+; the snare and a tom pitched down, then fm7-fm9 as tones (the rhythm mode
+; off), then the drums again (its volumes and tunings written again).
+(def-score :target msx :title "msx rhythm share")
+(rhythm1 kick :tempo 120 :len 4 c c _ _ c c)
+(rhythm2 snare :len 4 _ c _ _ _ c)
+(rhythm3 tom4 :len 8 _ _ g (macro :pitch+ (linear 0..-700 :len 8f)) c _ _ _ _ _ _ _ _)
+(fm7 piano :len 4 _ _ e _ _ _)
+(fm8 guitar :len 4 _ _ g _ _ _)
+(fm9 flute :len 4 _ _ > c _ _ _)
