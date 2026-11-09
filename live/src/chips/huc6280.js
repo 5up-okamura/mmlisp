@@ -76,6 +76,7 @@ export const pceWaveLfo = {
   ...pceWave,
   name: "pce-lfo",
   label: "PC Engine wave (ch1)",
+  lfoSwayed: true, // the channel the chip's LFO moves (its :fms), as importers find it
   words: words("WAVE", "PAN", "FM_FMS", "LFO_SYNC"),
 };
 

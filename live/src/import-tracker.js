@@ -146,6 +146,12 @@ const pceHead = (n, kind) => chipHeads("pce", "pce").find((h) => {
 const PCE_NOISE_TABLE = [4, 13, 15, 18, 21, 23, 25, 27, 29, 31, 0, 2];
 const PCE_NOISE_BASE = 36; // chips/huc6280.js NOISE_NOTE_BASE: c2 is rate 0
 const PCE_FX = { 0x10: "wave", 0x11: "noise", 0x12: "LFO mode", 0x13: "LFO speed", 0x17: "DDA" };
+// The PC Engine's LFO (pce.cpp): 12xx its mode, $09 — wave1's :fms, channel
+// 1 swayed by channel 2 — and 13xx its speed, $08 = 255 − xx, the song's
+// :lfo-freq (256 less the register, whose 0 is 256: 13FF is :lfo-freq 0).
+// Furnace starts it at $08 = 255.
+const pceLfoFreq = (xx) => (256 - (255 - xx)) & 255;
+const PCE_LFO_FREQ_START = pceLfoFreq(0);
 // The 2A03 noise's register rate (0 the fastest) for a note — Furnace's,
 // which DefleMask's modules play by (nes.cpp noiseTable, properNoiseLayout off).
 const FC_NOISE_UP = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4], FC_NOISE_TOP = [3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 5, 4];
@@ -873,6 +879,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const speedMarks = [];
   const shuffleMarks = [];
   const rowFrames = [];
+  // The PC Engine's LFO, the chip's whatever channel writes it: collected
+  // here in the song's order, stated on wave1's track (pceLfoMarks).
+  const pceLfoMarks = [];
+  let pceLfo = { mode: 0, freq: PCE_LFO_FREQ_START }, pceLfoSaid = null, pceLfoHigh = 0;
   {
     let sp = [...t.speeds];
     let cur = 0;
@@ -886,12 +896,24 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
         let changed = false;
         t.channels.forEach((chn, c) => {
           for (const [code, val] of chn.patterns.get(t.orders[order][c])?.[r]?.fx ?? []) {
+            if (chn.chip === "pce" && (code === 0x12 || code === 0x13) && val >= 0) {
+              if (!onPce) fxSkipped.set(PCE_FX[code], (fxSkipped.get(PCE_FX[code]) ?? 0) + 1);
+              else if (code === 0x12) { pceLfo.mode = val & 3; if (val & ~3) pceLfoHigh++; }
+              else pceLfo.freq = pceLfoFreq(val);
+            }
             if (code === 0x09 && grooves.length) { if (val >= 0 && val < grooves.length) { sp = [...grooves[val]]; cur = 0; changed = true; } }
             else if (code === 0x09 && val > 0) { sp[0] = val; changed = true; }
             else if (code === 0x0f && val > 0) { sp[sp.length === 2 && !grooves.length ? 1 : 0] = val; changed = true; }
           }
         });
         const tick = segStart[si] + r * rowTicks;
+        if (pceLfo.mode !== (pceLfoSaid?.mode ?? 0) || (pceLfoSaid && pceLfo.freq !== pceLfoSaid.freq)) {
+          const tokens = [];
+          if (!pceLfoSaid || pceLfo.freq !== pceLfoSaid.freq) tokens.push(`:lfo-freq ${pceLfo.freq}`);
+          if (pceLfo.mode !== (pceLfoSaid?.mode ?? 0)) tokens.push(`:fms ${pceLfo.mode}`);
+          pceLfoMarks.push({ tick, tokens });
+          pceLfoSaid = { ...pceLfo };
+        }
         // (One set on the first row is the song's from the start.)
         if (changed) speedMarks.push({ tick, tempo: true, tokens: [tempoOf(sp.reduce((s, x) => s + x, 0) / sp.length)] });
         let turn = sp;
@@ -1042,6 +1064,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
 
   const tracks = [];
   let tempoTrack = true;
+  let pceLfoPlaced = false;
   for (const ch of used) {
     const chn = t.channels[ch.index];
     if ((onFc && chn.chip === "nes" && ch.kind === "pcm") || ch.samples) {
@@ -1410,11 +1433,12 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0xed && val > 0) delay = val;
           else if (code === 0xec && val >= 0) cut = val;
           else if (code === 0x09 || code === 0x0f) { /* the song's speed: speedMarks */ }
+          else if (chn.chip === "pce" && (code === 0x12 || code === 0x13)) { /* the chip's LFO: pceLfoMarks, or said there */ }
           else if (code === 0x0b || code === 0x0d) { /* the order walk */ }
           else if (code >= 0) {
             // A tremolo stops a volume slide (the two do not run at once).
             if (code === 0x07 && val & 15) slide = 0;
-            const k = (pceVol ? PCE_FX[code] : fcCh ? FC_FX[code] : gbCh ? GB_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
+            const k = (chn.chip === "pce" ? PCE_FX[code] : fcCh ? FC_FX[code] : gbCh ? GB_FX[code] : null) ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
             fxSkipped.set(k, (fxSkipped.get(k) ?? 0) + 1);
           }
         }
@@ -1666,6 +1690,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     tracks.push({ ch, notes, marks, noVel: fcCh === "tri" });
     if (tempoTrack) { marks.push(...speedMarks); tempoTrack = false; }
+    if (pceLfoMarks.length && part?.lfoSwayed) { marks.push(...pceLfoMarks); pceLfoPlaced = true; }
     marks.push(...shuffleMarks);
   }
 
@@ -1682,6 +1707,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   }
 
   for (const [k, n] of fxSkipped) warnings.push(`effect ${k} skipped (${n}×)`);
+  if (pceLfoMarks.length && !pceLfoPlaced) warnings.push("the PC Engine's LFO (12xx / 13xx) sways wave1, which the song does not play: left out");
+  if (pceLfoHigh) warnings.push(`12xx above 03 is read as its low two bits, the LFO's modes (${pceLfoHigh}×)`);
   if (insPitchUnder) warnings.push(`an instrument's pitch macro under a row's slide or vibrato gives way to it (${insPitchUnder}×)`);
   if (vibUnderSlide) warnings.push(`a vibrato under a slide is dropped for that note (${vibUnderSlide}×)`);
   if (!tracks.length) warnings.push("no notes to import");

@@ -70,6 +70,8 @@
 //   mixVoice  (voice) → the IR player's key for a sample part's voice that
 //             is the chip's own, not the Mega Drive's soft mix (muteVoice,
 //             setVoiceVol: "adpcm", "pcm8-N", "dpcm")
+//   lfoSwayed true: the channel the chip's LFO moves, through its :fms (the
+//             PC Engine's channel 1): where an importer puts the LFO's mode
 //   opKeys    true: an FM part whose key-on names its operators one by one
 //             (the OPN's $28, the OPM's $08), so Live's panel can key a
 //             voice with operators off; the OPLL keys its two together

@@ -40,6 +40,10 @@ function pceDmf() {
   rows[0][2] = { note: 4, oct: 4, vol: -1, fx: [], ins: 1 };
   rows[4][0] = { note: 12, oct: 1, vol: 31, fx: [[0x11, 1]], ins: -1 };
   rows[4][2] = { note: 2, oct: 2, vol: -1, fx: [], ins: -1 };
+  // The chip's LFO, written on channel 2 (it has no notes): on at row 1,
+  // its speed 13 80 ($08 = 7F), off at row 3.
+  rows[1][1] = { ...empty, fx: [[0x12, 2], [0x13, 0x80]] };
+  rows[1][3] = { ...empty, fx: [[0x12, 0]] };
   for (let ch = 0; ch < 6; ch++) {
     u8(2); // effect columns
     for (const r of rows[ch]) {
@@ -74,9 +78,12 @@ const bad = (src) => compileMMLisp(src, "t.mmlisp", { imports: readImportSources
   .diagnostics.filter((d) => d.severity === "error").map((d) => d.message);
 assert.deepEqual(bad(source), [], "the pce score compiles clean");
 assert.deepEqual(warnings, [], "nothing left out");
+// The LFO on wave1's track, where channel 2 wrote it: :lfo-freq 256 − $7F.
+assert.match(source.slice(source.indexOf("; wave1")), /:lfo-freq 129 :fms 2\b[^\n]*:fms 0\b/, "12xx / 13xx as wave1's :fms and the song's :lfo-freq");
 
 const md = trackerToMmlisp(t, { ...defaultTrackerOptions(a, "md"), fileName: "t.dmf" }, a);
 assert.doesNotMatch(md.source, /:target|def-wave/, "md: no wavetables");
+assert.ok(md.warnings.some((w) => /LFO mode/.test(w)) && md.warnings.some((w) => /LFO speed/.test(w)), "md: the PC Engine's LFO skipped, and said by its own names");
 assert.deepEqual(bad(md.source), [], "the md score compiles clean");
 
 // A DefleMask 0x17 module for the NES (system 0x06): one order of four

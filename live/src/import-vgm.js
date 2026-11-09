@@ -616,9 +616,14 @@ const waveOf = (steps, top) => steps.map((v) => Math.max(-128, Math.min(127, Mat
 // volume, $05 its left / right levels, $06 its wave (a step a write, from
 // step 0 after the DDA bit drops), $07 — on channels 5 and 6 — its noise.
 // A note is the channel on at a volume; on the noise, its row's (the rate
-// as the note: c2 the slowest).
+// as the note: c2 the slowest). The LFO — $08 its divider, $09 its mode,
+// channel 2 swaying channel 1 — is channel 1's notes' `lfo`, as the FDS's
+// modulation is: its mode the depth (wave1's :fms), its speed the song's
+// :lfo-freq, 256 less the divider. Its reset (bit 7) is not followed.
 function pceChip(clock, { ev, skip }) {
   let sel = 0;
+  let lfoDiv = 0, lfoMode = 0;
+  const lfo = () => (lfoMode ? { freq: (256 - lfoDiv) & 255, depth: lfoMode } : null);
   const N = 6;
   const freq = new Uint16Array(N), ctrl = new Uint8Array(N), bal = new Uint8Array(N).fill(0xff);
   const ram = Array.from({ length: N }, () => new Uint8Array(32)), index = new Uint8Array(N), noise = new Uint8Array(N);
@@ -637,7 +642,7 @@ function pceChip(clock, { ev, skip }) {
     const rate = noise[c] & 31;
     ev(row, nz
       ? { t, kind: "on", pitch: 36 + rate, vel: vel(c), pan: pan(c), noiseHz: clock / (64 * Math.max(0.5, 31 - rate)), kindOf: "noise" }
-      : { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), pan: pan(c), wave: waveOf([...ram[c]], 31), kindOf: "wave" });
+      : { t, kind: "on", pitch: pitchOf(hz(c)), vel: vel(c), pan: pan(c), wave: waveOf([...ram[c]], 31), kindOf: "wave", ...(c === 0 ? { lfo: lfo() } : {}) });
   };
   const release = (c, t) => { if (sounding[c]) ev(sounding[c], { t, kind: "off" }); sounding[c] = null; };
   return {
@@ -672,7 +677,12 @@ function pceChip(clock, { ev, skip }) {
         // A channel turned to or from its noise while it sounds: another note.
         if (changed && vol(c)) { release(c, t); strike(c, t); }
         else if (onNoise(c) && sounding[c]) ev(sounding[c], { t, kind: "retrig", pitch: 36 + (d & 31), pan: pan(c) });
-      } else if (a === 0x08 || a === 0x09) skip("HuC6280 LFO");
+      } else if (a === 0x08 || a === 0x09) {
+        if (a === 0x08) lfoDiv = d;
+        else { if (d & 0x80) skip("HuC6280 LFO reset"); lfoMode = d & 3; }
+        // Moved under channel 1's note: that note's, from there.
+        if (sounding[0] === key(0)) ev(key(0), { t, kind: "lfo", lfo: lfo() });
+      }
     },
   };
 }
@@ -1910,13 +1920,16 @@ function notesOf(events, followPitch, endT) {
     // The FDS's modulation set in the setup burst is the note's; its depth
     // moved later, where it moved (`lfos`: a driver's delayed vibrato; its
     // rate or table moved alone, a sweep, is not followed). The last set at
-    // one time stands (a table rewritten halts the unit for a moment).
+    // one time stands (a table rewritten halts the unit for a moment). The
+    // PC Engine's LFO (no table) follows its speed too: a driver sets it
+    // with a note, not as a sweep.
     else if (e.kind === "lfo" && e.t - cur.t <= SETUP_T) cur.lfo = e.lfo;
     else if (e.kind === "lfo") {
       const ls = cur.lfos;
       if (ls.length && ls[ls.length - 1][0] === e.t) ls.pop();
       const was = ls.length ? ls[ls.length - 1][1] : cur.lfo;
-      if ((e.lfo?.depth ?? 0) !== (was?.depth ?? 0)) ls.push([e.t, e.lfo]);
+      const speed = !e.lfo?.table && !was?.table && (e.lfo?.freq ?? null) !== (was?.freq ?? null) && e.lfo && was;
+      if ((e.lfo?.depth ?? 0) !== (was?.depth ?? 0) || speed) ls.push([e.t, e.lfo]);
     }
     // A pan written in the note's setup burst (after its key-on) is the note's.
     else if (e.kind === "pan" && e.t - cur.t <= SETUP_T) cur.pan = e.pan;
@@ -2639,9 +2652,11 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       }
       note.pan = target.partOf(d)?.words?.("PAN") && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
-      // The FDS's modulation, where the channel has its table (fc's wave1).
-      // (A slur's part of the note: the depth in force where it starts.)
-      if (target.partOf(d)?.lfoTable) {
+      // The FDS's modulation, where the channel has its table (fc's wave1),
+      // and the PC Engine's LFO, where the channel is the one it sways
+      // (pce's wave1). (A slur's part of the note: the depth in force where
+      // it starts.)
+      if (target.partOf(d)?.lfoTable || target.partOf(d)?.lfoSwayed) {
         note.lfo = n.lfo;
         for (const [t, lfo] of n.lfos) if (t <= n.t) note.lfo = lfo;
         note.lfos = n.lfos.filter(([t]) => t > n.t && t < n.end);
@@ -2742,9 +2757,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
       if (n.tieIn && (i === 0 || tr.notes[i - 1].tick + tr.notes[i - 1].len !== n.tick)) n.tieIn = false;
     }
   }
-  // The FDS's modulation depth moved under a note: the note tied on (`~`)
-  // where it moved, the depth written there — its envelope one macro through
-  // the tie, as the chip's.
+  // The FDS's modulation depth (the PC Engine's LFO, its depth or speed)
+  // moved under a note: the note tied on (`~`) where it moved, the depth
+  // written there — its envelope one macro through the tie, as the chip's.
   for (const tr of tracks) {
     tr.notes = tr.notes.flatMap((n) => {
       const out = [n];
@@ -2753,7 +2768,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
         // (Two moves within a tick: the later stands. One past the key-off,
         // in the release, is not written.)
         if (k <= prev.tick) { prev.lfo = lfo; continue; }
-        if (k >= end || (lfo?.depth ?? 0) === (prev.lfo?.depth ?? 0)) continue;
+        // (The PC Engine's speed moves too, a tableless LFO's.)
+        const same = (lfo?.depth ?? 0) === (prev.lfo?.depth ?? 0) && (lfo?.table || prev.lfo?.table || lfo?.freq === prev.lfo?.freq);
+        if (k >= end || same) continue;
         prev.len = k - prev.tick;
         out.push({ ...prev, tick: k, len: end - k, tieIn: true, lfoTie: true, lfo });
       }
@@ -2826,14 +2843,16 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     const anyWave = tr.notes.some((n) => n.waveMac);
     const anyBend = tr.notes.some((n) => n.bendName);
     const anyLfo = tr.notes.some((n) => n.lfo);
+    // Its depth: the FDS's :lfo-pmd, or the swayed channel's own :fms.
+    const depthWord = target.partOf(tr.d)?.lfoSwayed ? ":fms" : ":lfo-pmd";
     for (const n of tr.notes) {
       // (A def holds its voice's level against the others', in its carriers'
       // TL; a ROM voice has no def, so its notes hold it.)
       if (n.voiceRec) n.vel = Math.max(0, Math.min(15, Math.round(15 - ((n.minTl - (n.voiceRec.rom ? romBase : n.voiceRec.base)) * 0.75) / 2)));
       const lfoSt = {
-        lfoWave: n.lfo ? `:lfo-wave ${lfoName(n.lfo.table)}` : cur.lfoWave,
+        lfoWave: n.lfo?.table ? `:lfo-wave ${lfoName(n.lfo.table)}` : cur.lfoWave,
         lfoFreq: n.lfo ? `:lfo-freq ${n.lfo.freq}` : cur.lfoFreq,
-        lfoPmd: anyLfo ? `:lfo-pmd ${n.lfo?.depth ?? 0}` : null,
+        lfoPmd: anyLfo ? `${depthWord} ${n.lfo?.depth ?? 0}` : null,
       };
       // (A tie the modulation moved at says its depth, nothing else.)
       const st = n.lfoTie ? { ...cur, ...lfoSt } : {

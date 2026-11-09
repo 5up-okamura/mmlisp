@@ -2005,7 +2005,10 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   plays it (Furnace's: the note; a DefleMask module's: its table by the
   note's name); one that plays both kinds goes to both names, the noise
   over the wave where they meet (language.md §19's `:prio` across a channel's names).
-  The LFO (`12xx` `13xx`) and DDA (`17xx`) are left out. `08xy` is the channel's pan between its left and right
+  The LFO, whichever channel writes it, is the chip's: `12xx` its mode as
+  `wave1`'s `:fms` (channel 1 swayed by channel 2), `13xx` its speed as the
+  song's `:lfo-freq`, both on `wave1`'s track (on md it is left out, and
+  said). DDA (`17xx`) is left out. `08xy` is the channel's pan between its left and right
   levels, the volume column the chip's 5-bit volume (1.5 dB a step).
 - A **Game Boy** module starts at `gb`. Each channel keeps its place. An
   instrument's hardware envelope, its sequence and its sound length are baked
@@ -2162,7 +2165,9 @@ them: a key-on starts a note, a key-off ends it.
   `noise5` / `noise6` at the rate it played, and where a channel plays
   both, the row with more notes keeps it. Its left and right levels come
   back as `:pan` with the note (a pan moving under a note is not
-  followed); its LFO and DDA are counted. On md the waves play on a
+  followed). Its LFO comes back on `wave1`'s notes — its mode their `:fms`,
+  its speed the song's `:lfo-freq`, each where it moved (its reset is
+  counted, not followed); its DDA is counted. On md the waves play on a
   `presets/waveforms` stand-in and the busier noise on `noise`.
 - A **Game Boy** file (`:target gb` by default) goes to `sqr1`, `sqr2`, `wave`
   and `noise`. Its hardware envelope comes back as a `:vel+` envelope, its

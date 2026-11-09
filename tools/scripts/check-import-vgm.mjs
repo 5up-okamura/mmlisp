@@ -180,6 +180,25 @@ const writesOf = (source, addr) => {
   // side 10 of 15); one moving under a note (a sweep, a macro) does not.
   for (const pan of ["0:127", "1:240", "4:15", "4:250"]) assert.ok(writesOf(source, 5).split(" ").includes(pan), `pce: the pan ${pan}`);
 }
+// The HuC6280's LFO: wave1's :fms (the mode, $09) and the song's :lfo-freq
+// (the divider, $08) come back as they were written, each depth and speed.
+{
+  const src = fs.readFileSync(path.join(ROOT, "tools/tests/pce/lfo.mmlisp"), "utf8");
+  const parsed = await vgmOf("tools/tests/pce/lfo.mmlisp");
+  const { source } = imported(parsed, "pce", false);
+  const lfoOf = (text) => {
+    const { ir } = compileMMLisp(text, "t.mmlisp");
+    const modes = new Set(), divs = new Set();
+    for (const w of new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog().writes) {
+      if (w.addr === 9) modes.add(w.data & 3);
+      if (w.addr === 8) divs.add(w.data);
+    }
+    return `modes ${[...modes].sort()} dividers ${[...divs].sort((x, y) => x - y)}`;
+  };
+  assert.match(source, /\(wave1 [^\n]*:fms 1/, "pce: the LFO's mode as wave1's :fms");
+  assert.equal(lfoOf(source), lfoOf(src), "pce: the LFO's modes and speeds as played");
+  imported(parsed, "md");
+}
 // The SCC: an msx score's wave channels come back as msx's.
 {
   const parsed = await vgmOf("tools/tests/msx/scc.mmlisp");
