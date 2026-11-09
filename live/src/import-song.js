@@ -639,6 +639,7 @@ export function stateChange(from, to) {
   return out;
 }
 export const GLIDE_NONE = "(glide none)";
+const NONE_MACRO = /^\(macro :[a-z+*-]+ none\)$/;
 const isGlide = (t) => t.startsWith("(glide");
 
 /** Cut a track into units at the bar ends and the loop point. */
@@ -978,7 +979,7 @@ export function emitStructured(song) {
       const said = (toks) => toks.filter((t) => !p.again?.includes(t));
       if (whole) {
         // At the track's start there is no macro to clear.
-        const sw = start ? held.filter((t) => !/^\(macro :[a-z+*-]+ none\)$/.test(t)) : held;
+        const sw = start ? held.filter((t) => !NONE_MACRO.test(t)) : held;
         return { tokens: [...said(sw), `:oct ${oct}`, ...(tr.noVel ? [] : [`:vel ${p.vel}`])], st: { oct, vel: p.vel, st: held, len: st.len } };
       }
       const sw = st.st.length ? stateChange(st.st, held) : held;
@@ -1313,7 +1314,8 @@ export function withPre(song) {
         cur = n.state;
         return { ...n, pre };
       });
-      return { ...tr, head: tr.notes[0]?.state ?? [], notes };
+      // At the track's start there is no macro to clear (as emitStructured's head).
+      return { ...tr, head: (tr.notes[0]?.state ?? []).filter((t) => !NONE_MACRO.test(t)), notes };
     }),
   };
 }

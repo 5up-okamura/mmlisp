@@ -93,4 +93,19 @@ assert.deepEqual([noiseNoteOfHz(500), noiseNoteOfHz(1804), noiseNoteOfHz(12000)]
   const r = midiToMmlisp(parsed, { ...opts("md"), dest: { "0:0": "wave1", "1:0": "fm1" } }, a);
   assert.ok(r.warnings.some((w) => /wave1 is not the Mega Drive's/.test(w)), "a channel the machine lacks is dropped with a warning");
 }
+{
+  // CC10 is each note's pan, as it is at the note-on: −1..1, the centre
+  // 64, where the channel pans (an FM channel snaps it to its bits).
+  const panned = new Uint8Array([
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 1, Q >> 8, Q & 255,
+    ...track([[0, 0xc0, 80], [0, 0xb0, 10, 0], ...notes(0, [60, 62, 64, 65]), [Q - 1, 0xb0, 10, 127], [2 * Q - 1, 0xb0, 10, 96], [3 * Q - 1, 0xb0, 10, 64]]),
+  ]);
+  const p = parseMidi(panned), pa = analyzeMidi(p);
+  for (const [t, want] of [["midi", /:pan left[^)]*c :pan right d :pan 0\.51 e :pan center f/], ["md", /:pan left[^)]*c :pan right d :pan 0\.51 e :pan center f/]]) {
+    const { source } = midiToMmlisp(p, { ...defaultMidiOptions(pa, t), structure: true, fileName: "pan.mid" }, pa);
+    assert.match(source, want, `${t}: a pan a note:\n${source}`);
+    const bad = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics.filter((d) => d.severity === "error");
+    assert.deepEqual(bad, [], `${t}: compiles`);
+  }
+}
 console.log("check-import-midi: ok");

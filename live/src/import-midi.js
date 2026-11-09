@@ -19,7 +19,8 @@
 // noise channel a rate and an envelope by the kind of hit (DRUM_KINDS).
 //
 // Volume (CC7), expression (CC11) and velocity fold into `:vel`; the song's
-// loudest note lands on 15. Pan (CC10) sets an FM track's `:pan`. The
+// loudest note lands on 15. Pan (CC10) is a note's `:pan`, as it was at its
+// note-on, where the channel pans. The
 // sustain pedal (CC64) holds notes. A part sent to the PSG takes the
 // envelope of its program's family from presets/envelopes. Pitch bend (its
 // range from RPN 0) is read frame by frame through each note and drawn as a
@@ -36,7 +37,7 @@
 //   midiToMmlisp(parsed, options, analysis) → { source, warnings }
 // ---------------------------------------------------------------------------
 
-import { PPQN, RATE, barEnds, emitSong, emitStructured, bestBars, qstr, estimateGrid, regrid,
+import { PPQN, RATE, barEnds, emitSong, emitStructured, withPre, dropIdleNones, bestBars, qstr, estimateGrid, regrid,
   assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
 import { DEFAULT_TARGET, targetProfile } from "./targets.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
@@ -273,7 +274,7 @@ export function analyzeMidi(parsed, { mono = false } = {}) {
         } else if (e.a === 1) mods[e.ch].push([e.tick, e.b]);
         else if (e.a === 7) vol[e.ch] = e.b;
         else if (e.a === 11) expr[e.ch] = e.b;
-        else if (e.a === 10) pan[e.ch] ??= e.b;
+        else if (e.a === 10) pan[e.ch] = e.b;
         else if (e.a === 111) loopStart ??= e.tick;
         else if (e.a === 64) {
           sustain[e.ch] = e.b >= 64;
@@ -291,7 +292,7 @@ export function analyzeMidi(parsed, { mono = false } = {}) {
         const prev = sounding.get(k);
         if (prev?.length) for (const n of prev.splice(0)) close(n, e.tick);
         const n = {
-          tick: e.tick, end: null, ch: e.ch, key: e.a, vel: e.b, program: program[e.ch], ti: e.ti,
+          tick: e.tick, end: null, ch: e.ch, key: e.a, vel: e.b, program: program[e.ch], ti: e.ti, pan: pan[e.ch],
           level: gainDb(e.b) + gainDb(vol[e.ch]) + gainDb(expr[e.ch]),
         };
         notes.push(n);
@@ -353,7 +354,6 @@ export function analyzeMidi(parsed, { mono = false } = {}) {
       const voice = drums ? "drums" : GM_VOICES[prog];
       lanes.push({
         key: `${ch}:${l}`, ch, lane: l, drums, program: prog, voice, notes: mine.length,
-        pan: pan[ch],
         label: `ch${ch + 1}${ends.length > 1 ? ` · ${l + 1}/${ends.length}` : ""} · ${voice} · ${mine.length} notes`,
       });
     }
@@ -391,6 +391,9 @@ function valueAt(list, at) {
   while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (list[mid][0] <= at) lo = mid; else hi = mid - 1; }
   return list[lo][1];
 }
+
+/** CC10 as `:pan` −1..1, 64 the centre (a chip with a left and a right bit snaps it). */
+const panOf = (v) => (v === 64 ? "center" : v <= 1 ? "left" : v === 127 ? "right" : String(+((v - 64) / 63).toFixed(2)));
 
 /** dB of a 0-127 MIDI level (GM: 40 log10). */
 const gainDb = (v) => (v <= 0 ? -96 : 40 * Math.log10(v / 127));
@@ -668,6 +671,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     const lane = analysis.lanes.find((l) => l.key === key);
     const part = tp.partOf(d);
     const src = (keptByLane.get(key) ?? []).sort((a, b) => a.tick - b.tick);
+    const panned = !!part.words("PAN");
     const notes = [];
     let cur = null;
     for (const n of src) {
@@ -683,19 +687,19 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
         // The kick and snare tell where the bars go (bestBars).
         if (n.key === 35 || n.key === 36) note.drum = { id: "kick", bright: 0 };
         else if (n.key === 38 || n.key === 40) note.drum = { id: "snare", bright: 1 };
-        if (name !== cur) { note.pre = [name]; cur = name; }
+        cur = name;
       } else {
         note.midi = n.key;
-        const voice = voiceOf(part, n.program);
-        if (voice && voice !== cur) { note.pre = [voice]; cur = voice; }
+        cur = voiceOf(part, n.program) ?? cur;
         pitchOf(n, note);
       }
       note.voice = cur;
+      if (panned && n.pan != null) note.pan = `:pan ${panOf(n.pan)}`;
       note.midi = Math.max(0, Math.min(127, note.midi));
       const prev = notes[notes.length - 1];
       if (prev && prev.tick === tick) {
         // Two notes quantized onto one start: keep the louder.
-        if (note.vel > prev.vel) notes[notes.length - 1] = { ...note, pre: note.pre ?? prev.pre };
+        if (note.vel > prev.vel) notes[notes.length - 1] = note;
         continue;
       }
       if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
@@ -708,30 +712,18 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     }
     if (!notes.length) continue;
     laneNotes.push(notes);
-    // The first note's switch goes in the head (its pitch, below).
-    const head = notes[0].pre ?? [];
-    delete notes[0].pre;
-    if (part.kind === "fm" && part.words("PAN") && lane.pan != null) head.push(`:pan ${lane.pan < 43 ? "left" : lane.pan > 85 ? "right" : "center"}`);
-    tracks.push({ channel: d, head, notes, marks: [], drums: lane.drums, noVel: !!part.noLevel });
+    tracks.push({ channel: d, head: [], notes, marks: [], drums: lane.drums, noVel: !!part.noLevel });
   }
   if (tracks.length) tracks[0].marks = tempoMarks;
   else warnings.push("no notes to import");
 
-  // Bends and modulation → `:pitch`, stated as a switch beside the voice;
-  // `(macro :pitch none)` after one.
+  // Bends and modulation → `:pitch`. A note's switches — its voice, its
+  // pan, its pitch macro (`(macro :pitch none)` after one) — are its state;
+  // the writer writes where they change.
   const bendDefs = assignBends(laneNotes.flat());
   for (const [i, notes] of laneNotes.entries()) {
-    if (!notes.some((n) => n.bendName)) continue;
-    let curP = null;
-    notes.forEach((n, j) => {
-      const tok = n.bendName ?? PITCH_NONE;
-      n.state = [...(n.voice ? [n.voice] : []), ...tracks[i].head.filter((t) => t.startsWith(":pan")), tok];
-      if (tok !== curP && !(curP == null && tok === PITCH_NONE)) {
-        if (j === 0) tracks[i].head.push(tok);
-        else n.pre = [...(n.pre ?? []), tok];
-      }
-      curP = tok;
-    });
+    for (const n of notes) n.state = [n.voice, n.pan, n.bendName ?? PITCH_NONE].filter(Boolean);
+    tracks[i].notes = dropIdleNones(notes);
   }
   const ccs = [...analysis.counts.cc].map(([c, n]) => `CC${c}×${n}`);
   if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
@@ -749,7 +741,7 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   // Timed by its notes, the file's bars say nothing: the meter is read
   // from how the song repeats, the downbeat from the drums (bestBars).
   const song = { header, bars, endTick, loopTick, tracks };
-  const source = options.structure === false ? emitSong(song)
+  const source = options.structure === false ? emitSong(withPre(song))
     : emitStructured(beats ? { ...song, bars: bestBars(song) } : song);
   return { source, warnings };
 }

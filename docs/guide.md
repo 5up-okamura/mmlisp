@@ -1917,7 +1917,8 @@ On `fc` the triangle, which has no level, takes the lowest lane.
   plays the nearest of its sounds; on a noise channel, a rate and an envelope
   by the kind of hit (kick, tom, snare, hat, cymbal).
 - Velocity, volume (CC7) and expression (CC11) become `:vel`, the loudest
-  note at 15; pan (CC10) sets `:pan`; the sustain pedal holds notes.
+  note at 15, as each note's note-on finds them; pan (CC10) is each note's
+  `:pan` (−1..1) where the channel pans; the sustain pedal holds notes.
 - Pitch bend (its range from RPN 0) becomes a `:pitch` macro on the notes it
   moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN` defs as a
   VGM's are (below). The modulation wheel (CC1) is a vibrato on a fixed
