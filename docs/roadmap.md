@@ -97,10 +97,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## MMLisp Live
 
-- **Machine conversion: an FM voice onto the OPLL's ROM voices** keeps its
-  written octave — the carrier's octave is not written up, as it is onto a
-  wave or a square, since each ROM voice's own multiple differs.
-
 - A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
   is relative to the score's folder, which the picker's stand-in score lacks.
 - **Drawing on a stage vector** in the panel's vector editor: a macro's

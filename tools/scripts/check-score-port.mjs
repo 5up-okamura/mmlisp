@@ -276,6 +276,15 @@ const port = (src, to, rows, options) => {
   assert.match(two4.text, /\(def-fm lead init-fm :fb 5 /, "the busier voice is the user voice, as two operators");
   assert.doesNotMatch(two4.text, /def-fm bass/, "the other's def goes");
   assert.match(two4.text, /\(fm2 (?!bass)[\w-]+ :len 4 c g\)/, "the other plays a ROM voice");
+  // A ROM voice sounds at its own carrier's multiple: a voice an octave up
+  // on FM (its carrier :ml 2) is written up an octave on its stand-in, and
+  // back down where the track turns to a voice that is not.
+  const up = port(`(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :tl2 0 :tl3 30 :tl4 0)
+(def-fm high init-fm :alg 7 :ml1 2 :ml2 2 :ml3 2 :ml4 2)
+(fm1 lead :len 8 c d e f g a b > c)
+(fm2 high :len 4 c d lead e f)`, "msx");
+  assert.match(up.text, /\(fm2 [\w-]+ :oct\+ 1 :len 4 c d lead :oct\+ -1 e f\)/, `the stand-in written up an octave:\n${up.text}`);
+  assert.ok(up.said.some((w) => /'high' sounds 1 octave up from its stand-in/.test(w)), up.said.join("\n"));
   // A channel coming to the user voice from a ROM voice carries none of the
   // ROM's registers: the user voice is one on every channel (no W_TARGET).
   const fromRom = port(`(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :ml1 2 :tl2 0 :tl3 30 :tl4 0)

@@ -35,7 +35,7 @@ import { TARGETS, partsWithWord, configuredTarget } from "./targets.js";
 import { canonicalTarget } from "./mmlisp2ir.js";
 import { loudDefs } from "./import-song.js";
 import { OPN_LFO_HZ, lfoHz } from "./chips/ym2151.js";
-import { opllRomVoices } from "./chips/ym2413.js";
+import { opllRomVoices, romVoicesAs4op } from "./chips/ym2413.js";
 import * as fcApu from "./chips/rp2a03.js";
 import * as gbApu from "./chips/lr35902.js";
 import * as pcePsg from "./chips/huc6280.js";
@@ -2088,13 +2088,15 @@ class Porter {
     return this.spans.get(head);
   }
 
-  // A voice's sounding octave (its main carrier's multiple) on a channel
-  // that plays the written note: the track moves up that far — `:oct+` at
-  // the switch, its `:oct` writes and glides after it raised (body).
-  octaveFor(v, ctx) {
+  // A voice's sounding octave (its main carrier's multiple) against its
+  // stand-in's: `onto` the stand-in's 4-op words (an OPLL's ROM voice), none
+  // on a channel that plays the written note. The track moves up that far —
+  // `:oct+` at the switch, its `:oct` writes and glides after it raised
+  // (body). A role's stand-in is the role's: it moves none.
+  octaveFor(v, ctx, onto = null) {
     const def = this.voices.get(v);
     const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
-    const want = roleOf(v) ? 0 : carrierOctave(words);
+    const want = roleOf(v) ? 0 : carrierOctave(words) - (onto ? carrierOctave(onto) : 0);
     // As far as the track's notes stay within MIDI 0..127: a high part under
     // a high multiple sounds past the range on FM, and is written only up to it.
     const { lo, hi } = this.noteSpan(ctx.head);
@@ -2104,7 +2106,8 @@ class Porter {
     if (want !== 0 && !this.saidOct?.has(v)) {
       (this.saidOct ??= new Set()).add(v);
       const by = (n) => `${Math.abs(n)} octave${Math.abs(n) === 1 ? "" : "s"} ${n > 0 ? "up" : "down"}`;
-      this.say(`'${v}' sounds ${by(want)} on FM (its carrier's :ml ${carrierMultiple(words)}); on ${ctx.dest} its notes are written ${k === want ? "so" : k ? by(k) + ", as far as MIDI 0..127 reaches" : "as they are: MIDI 0..127 has no room"}`);
+      const as = onto ? `${by(want)} from its stand-in (carriers :ml ${carrierMultiple(words)} and ${carrierMultiple(onto)})` : `${by(want)} on FM (its carrier's :ml ${carrierMultiple(words)})`;
+      this.say(`'${v}' sounds ${as}; on ${ctx.dest} its notes are written ${k === want ? "so" : k ? by(k) + ", as far as MIDI 0..127 reaches" : "as they are: MIDI 0..127 has no room"}`);
     }
     return k === was ? "" : ` :oct+ ${k - was}`;
   }
@@ -2149,13 +2152,19 @@ class Porter {
     if (ctx.family && !twoOp(ctx.srcPart)) {
       // A role's voice is the ROM's; the one user voice (pickUserVoice)
       // stays itself, read as two operators (defFm); the rest the ROM's.
-      if (v === this.userVoice) return undefined;
+      // A ROM voice sounds at its own carrier's multiple: the track moves
+      // by the octaves between the voice's and its stand-in's.
+      if (v === this.userVoice) {
+        const oct = this.octaveFor(v, ctx, def?.words);
+        return oct ? `${v}${oct}` : undefined;
+      }
       const r = onOpll(v, def?.words ?? new Map(), ctx.destPart);
       if (r.why) this.say(r.why);
       if (r.name !== v) this.replaced.add(v);
       // A 4-op def named as the ROM's voice would hide it: the def goes.
       else if (def && !def.imported) { this.shadowing.add(v); this.say(`'${v}' plays the ${ctx.destPart.label}'s ${v} (its role); its 4-op def is taken out`); }
-      return r.name === v ? undefined : r.name;
+      const oct = this.octaveFor(v, ctx, romVoicesAs4op(ctx.destPart).get(r.name));
+      return r.name === v && !oct ? undefined : `${r.name}${oct}`;
     }
     // The OPLL onto 4-op: a ROM voice its role's, presets/fm-roles'; a user
     // voice goes as itself, its def read as 4-op (defFm).

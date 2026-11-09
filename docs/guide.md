@@ -2726,7 +2726,9 @@ Game Boy's `wave`) take FM, squares and one another's waves the same way:
   main carrier is at `:ml 2` (4, 8) sounds an octave (two, three) above the
   written note; on a wave or a square, which play the written note, its
   track is written that far up (`:oct+ 1`, its `:oct` writes and glides
-  raised), and the log says so.
+  raised), and the log says so. Onto the OPLL, where it plays the ROM voice
+  of its waveform, it is written by the octaves between its carrier and the
+  ROM voice's; a role's voice, which plays the role's own, is not moved.
 - The FDS's modulation and the PC Engine's LFO (wave2 swaying wave1) are one
   another's: the FDS's table summed is wave2's wave, held at `:vol 0`; its
   rate is wave2's pitch with `:lfo-freq`; its depth is wave1's nearest
