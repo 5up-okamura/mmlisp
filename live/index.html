@@ -6072,7 +6072,9 @@
     // `target` is the IRPlayer that plays `ir`: it learns the bank's rate, so
     // its loop lengths round as the driver's do (the Library's preview has its own).
     // It also picks the synth the worklet plays on, the score's machine's.
-    async function syncPcmBankToWorklet(ir, target = player, current = () => true) {
+    // `keep`: a build's under a playing song — the voices keep what the run has
+    // set, and the same bank again (its token) leaves them playing as they are.
+    async function syncPcmBankToWorklet(ir, target = player, current = () => true, { keep = false } = {}) {
       if (!workletNode || !current()) return;
       const machine = targetProfile(ir?.metadata?.target);
       await setWorkletMachine(machine.name);
@@ -6114,9 +6116,16 @@
       // The Mega Drive's soft mix, on the driver's engine.
       } else if (bake) {
         configurePcmRate(target, { bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz });
-        workletNode.port.postMessage({ type: 'pcm-set-bank', bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz, entryIds: bake.entryIds });
+        // Compared here, off the audio thread: the worklet only reads the token.
+        const ids = JSON.stringify(bake.entryIds ?? {});
+        const was = _pcmBankSent;
+        const same = was && was.pcmVoices === bake.pcmVoices && was.frameHz === bake.frameHz && was.ids === ids
+          && was.bank.length === bake.bank.length && was.bank.every((b, i) => b === bake.bank[i]);
+        if (!same) _pcmBankSent = { bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz, ids, token: (was?.token ?? 0) + 1 };
+        workletNode.port.postMessage({ type: 'pcm-set-bank', bank: bake.bank, pcmVoices: bake.pcmVoices, frameHz: bake.frameHz, entryIds: bake.entryIds, keep, token: _pcmBankSent.token });
       } else clear();
     }
+    let _pcmBankSent = null; // the last bank syncPcmBankToWorklet sent, and its token
 
     // `name` covers the handle-less case (a drag & drop in a browser without
     // getAsFileSystemHandle): the score keeps its file name, but with no handle
@@ -8319,7 +8328,7 @@
         // The new IR's samples first: a swap that lands before its bank (or
         // the ADPCM-B's RAM) would play its first notes on the old one.
         try {
-          await syncPcmBankToWorklet(ir);
+          await syncPcmBankToWorklet(ir, player, undefined, { keep: player.isPlaying?.() });
         } catch (e) {
           log('PCM sync failed: ' + e.message, 'err');
         }

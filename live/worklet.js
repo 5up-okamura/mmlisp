@@ -16,9 +16,10 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *         the song's register shadow does not record
  *   { type: 'hold-ch', ch: 0-15, on: boolean }  — the keys hold an FM channel
  *       over a playing song (index.html previewTake)
- *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id} }
+ *   { type: 'pcm-set-bank', bank: Uint8Array|null, pcmVoices: 0-3, entryIds: {"name|midi": id}, keep?: bool, token? }
  *       — the score's baked sample bank (the one an export ships), which the
- *         IR preview plays through the driver's own engine model
+ *         IR preview plays through the driver's own engine model; `keep`: under
+ *         a playing song (a build's), `token` the same for the same bank
  *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, vol, track }
  *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'point' | 'master', … }
  *       — the IR's PCM events, applied in time order to the sequencer's voice
@@ -430,11 +431,25 @@ class YM2612Processor extends AudioWorkletProcessor {
       this._pcmSeq = null;
       return;
     }
+    // A hot-swap's build (`keep`) plays on. The bank it already has (the
+    // page's `token`) leaves the voices as they are; another starts its engine
+    // with what the run had set — the voices' levels and points, the master,
+    // whose the DAC is — which a fresh model would forget until the score
+    // writes them again (a :vol before its loop).
+    const keep = !!msg.keep && !!this._pcmSeq;
+    if (keep && msg.token != null && this._pcmBank?.token === msg.token) return;
+    const was = keep ? { seq: this._pcmSeq, claims: this._pcmClaimsDac, byWrites: this._dacByWrites } : null;
     const window = new Uint8Array(0x8000);
     window.set(bank.subarray(0, 0x8000));
     const { entries, multibank } = parsePcmBank(bank);
-    this._pcmBank = { window: multibank ? bank : window, entries, multibank, entryIds: msg.entryIds ?? {}, img: multibank ? bankedEngineImage(voices,msg.frameHz ?? 60) : engineImage(voices, msg.frameHz ?? 60) };
+    this._pcmBank = { window: multibank ? bank : window, entries, multibank, entryIds: msg.entryIds ?? {}, img: multibank ? bankedEngineImage(voices,msg.frameHz ?? 60) : engineImage(voices, msg.frameHz ?? 60),
+      token: msg.token ?? null };
     this._pcmRestart();
+    if (was) {
+      this._pcmSeq.carry(was.seq);
+      this._pcmClaimsDac = was.claims;
+      this._dacByWrites = was.byWrites;
+    }
   }
 
   // A fresh engine and voice model on the current bank: what a reset, a flush

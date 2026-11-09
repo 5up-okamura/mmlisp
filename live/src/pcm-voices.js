@@ -338,4 +338,15 @@ export class PcmIrVoices {
     }
     return false;
   }
+
+  /** What the score has set on `from`, for a model that takes over mid-run
+   *  (a build's new bank under a playing song): each voice's levels and its
+   *  track's own points, and the master. No note comes with it. */
+  carry(from) {
+    const KEPT = ["velBase", "vel", "volBase", "vol",
+      "oHasRs", "oRs", "oRKind", "oRBound", "oHasLs", "oLs", "oLKind", "oLBound"];
+    this.seq.voices.forEach((v, i) => { for (const k of KEPT) v[k] = from.seq.voices[i][k]; });
+    this.master = from.master;
+    this.seq.setMaster(this.master);
+  }
 }
