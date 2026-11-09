@@ -159,6 +159,17 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     assert.deepEqual(curves("fm2"), [":phase 64 :wait", ":phase 192", ":phase 64 :wait"], "MDX LFO under an MD: waited at a key-on, on through a slur");
     clean(source, "MDX LFO");
   }
+  // `k` on a tie: the note the tie continues is not keyed again, so its delay
+  // moves only its pitch — the pair stays one tied sound, no gap between.
+  {
+    const A9 = [0xfd, 1, 0xf0, 1, 0xf7, ...N(60, 2), ...N(60, 22), ...N(62, 24), ...END];
+    const mdx9 = parseMdx(buildMdx({ title: "k tie", tracks: [A9, END, END, END, END, END, END, END, END], voices }));
+    const { source } = mdxToMmlisp(mdx9, { structure: false, fileName: "ktie.mdx" }, analyzeMdx(mdx9));
+    const body = source.slice(source.indexOf("(fm1 "));
+    has(body, /c\S* ~ c/, "MDX k on a tie: one tied sound");
+    assert.ok(!/c\S* _\S* c/.test(body), "MDX k on a tie: no rest inside the tie");
+    clean(source, "MDX k tie");
+  }
   // MH's sync (its wave byte's bit 6): the track's key-ons start the OPM's
   // LFO over, :lfo-sync on; a track whose MH has none says nothing of it.
   {

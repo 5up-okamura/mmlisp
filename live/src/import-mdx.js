@@ -24,7 +24,8 @@
 //   p                  :pan (p0 mutes the track's notes)
 //   q / @q, &, k       q as :gate* n/8, @q as :gate- n clocks, the note its
 //                      full length; & legato (a tie, or a slur to another
-//                      note), k a key-on n clocks late
+//                      note), k a key-on n clocks late (on a note a tie
+//                      or slur continues, its pitch: it is not keyed)
 //   D, _               :pitch (1/64 semitone a step); a portamento that
 //                      lands on a note as that note glided to (`c_e` as
 //                      (glide c T) e), else a :pitch+ line over the note
@@ -559,6 +560,14 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       // MD's delay runs from the key-on: a note played legato is into it.
       const at = tick(n.clock + delay);
       if (!legato || tr.pcm) keyedAt = n.clock + delay;
+      // A note a tie continues is not keyed again: its `k` delays only its
+      // pitch (MXDRV L000c66 waits out the delay, then skips the key-on), so
+      // the note before sounds on up to it — not cut a delay short, which
+      // would key the pair as two notes.
+      if (legato && !tr.pcm && notes.length) {
+        const before = notes[notes.length - 1];
+        if (before.tick + before.len < at) before.len = at - before.tick;
+      }
       // An LFO at this note: under an MD it runs from MD clocks past the
       // key-on (MXDRV restarts it there; a slur does not), with none from
       // where MP / MA set it — waited for, or this far into its shape.
