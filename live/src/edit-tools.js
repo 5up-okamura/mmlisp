@@ -1062,6 +1062,22 @@ export function importFxChain(score, imports, file, { fileName = "" } = {}) {
 }
 
 /**
+ * What a score's own sample can lean on — its imports, defs, samples and
+ * def-vals, not its tracks, voices, waves or def-score: the stand-in score the
+ * voice picker auditions it in, compiled under the score's name, so a `:file`
+ * resolves against its folder and a def extending a base finds it. (The
+ * stand-in is the Mega Drive's: a voice or wave of another machine's would
+ * not compile there.)
+ */
+export function scoreDefsText(text) {
+  const starts = lineStarts(text);
+  return parse(text)
+    .filter((n) => n?.kind === "list" && /^(import|def|def-pcm|def-val)$/.test(n.items?.[0]?.value ?? ""))
+    .map((n) => { const { from, to } = nodeSpan(n, starts); return text.slice(from, to); })
+    .join("\n");
+}
+
+/**
  * The text of the def `node` of `text`, the file at `path`, as the score named
  * `fileName` can hold it. A sample's `:file` is that file's relative path, so it
  * is written from the score; `fx`, the imports' chain (importFxChain), goes

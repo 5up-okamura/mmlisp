@@ -2897,7 +2897,8 @@ writing `@12 c` by hand still works: the space closes the list and types on.
 The list never takes typing — letters go into the score and narrow it; Space,
 `(` and the like close it and are typed. Only `↑` / `↓`, `Enter` and `Esc`
 belong to it. Moving the selection with `↑` / `↓` auditions the highlighted
-voice or sample (as Library's ▶ does), after a short pause so running
+voice or sample (as Library's ▶ does) — the score's own too, a sample's
+`:file` read from the score's folder — after a short pause so running
 down the list does not sound every row; during playback a sample sounds on
 the player beside the song (§19). Imported names are read when the score
 compiles, so a set of your own imported by hand joins the list after the next

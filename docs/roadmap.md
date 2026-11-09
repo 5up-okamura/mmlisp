@@ -94,8 +94,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 ## MMLisp Live
 
-- A score's own `def-pcm` is not auditioned from the voice picker: its `:file`
-  is relative to the score's folder, which the picker's stand-in score lacks.
 - **Drawing on a stage vector** in the panel's vector editor: a macro's
   stages are shown, not drawn (edit-tools.js `vectorAt`).
 - **The panel's editors follow playback.** What is heard and what is shown

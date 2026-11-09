@@ -1165,7 +1165,7 @@
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
     import { formatMMLisp } from './src/mmlisp-formatter.js';
     import { portSnippet, portMode, fmVoiceNames } from './src/snippet-port.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from './src/edit-tools.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from './src/edit-tools.js';
     import { VectorEditor } from './src/vector-editor.js';
     import { PcmEditor } from './src/pcm-editor.js';
     import { ABSnapshots } from './src/ab-snapshots.js';
@@ -10687,7 +10687,7 @@
         const name = nameNode.value;
         if (isFmVoiceDefNode(node)) {
           defs.push({ name, kind: 'fm', regs: parseFmDefRegs(node, fmDefIn(roots)), node });
-        } else if (sampleFileOfDefNode(node)) {
+        } else if (head.value === 'def-pcm') {
           defs.push({ name, kind: 'pcm', node });
         } else if (head.value === 'def-wave') {
           defs.push({ name, kind: 'wave', node });
@@ -10705,16 +10705,6 @@
     // parsed `roots`.
     function fmDefIn(roots) {
       return (name) => roots.find((n) => isFmVoiceDefNode(n) && n.items[1]?.value === name) ?? null;
-    }
-
-    // The `:file` of a `(def-pcm name …)`, or null when the node is not a
-    // sample def (or extends one without a file of its own).
-    function sampleFileOfDefNode(node) {
-      if (node.items[0]?.value !== 'def-pcm') return null;
-      const items = node.items;
-      for (let i = 2; i + 1 < items.length; i++)
-        if (items[i].value === ':file' && items[i + 1].kind === 'string') return items[i + 1].value;
-      return null;
     }
 
     // A SNIPPET IS WRITTEN AS IF IT SAT AT THE SITE ROOT, next to a new score:
@@ -10864,13 +10854,20 @@
       try {
         if (d.set) set = await loadLibrarySet(d.set);
         else if (d.path) set = librarySetFromText(d.path, _importSources.get(d.path) ?? '');
-        else set = librarySetFromText(null, editorView.state.doc.toString());
+        else set = ownSet();
       } catch { return; }
       const def = set.defs.find((x) => x.name === d.name);
-      // A score's own sample resolves its :file against the score's folder,
-      // which the preview's stand-in score does not have.
-      if (!def || (def.kind === 'pcm' && !set.path)) return;
-      previewLibraryDef(set, def);
+      if (def) previewLibraryDef(set, def);
+    }
+
+    // The score's own defs, from its text as it stands — mid-edit, with the
+    // form the list is open in (`(pcm1 @`) closed.
+    function ownSet() {
+      const text = editorView.state.doc.toString();
+      for (let close = 0; ; close++) {
+        try { return librarySetFromText(null, text + ')'.repeat(close)); }
+        catch (e) { if (close >= 16 || !/^Unclosed \(/.test(e.message)) throw e; }
+      }
     }
 
     // Cancel whatever the panel has in flight. The FM run is a JS timer; the
@@ -10914,15 +10911,16 @@
     // the score that plays it once at c4 — its own rate — and hand the worklet
     // that bank: the export's own bake. The score's bank is displaced until the
     // next Play or Build re-syncs it, which is why this waits for playback to
-    // stop.
+    // stop. A score's own sample (no set path) plays among the score's defs
+    // and imports, under the score's name: its :file is the score folder's.
     async function previewLibraryPcm(set, def) {
       if (!(await initAudio())) return;
       stopLibraryPreview();
       try {
-        const source = `(import "${set.path}")\n(pcm1 :oct 4 :len 4 ${def.name} c)\n`;
-        const { ir, diagnostics } = compileMMLisp(source, 'library-preview.mmlisp', {
-          imports: new Map([[set.path, set.text]]),
-        });
+        const track = `(pcm1 :oct 4 :len 4 ${def.name} c)`;
+        const { ir, diagnostics } = set.path
+          ? compileMMLisp(`(import "${set.path}")\n${track}\n`, 'library-preview.mmlisp', { imports: new Map([[set.path, set.text]]) })
+          : compileMMLisp(`${scoreDefsText(set.text)}\n${track}\n`, _lastFileName, { imports: _importSources });
         const errors = diagnostics.filter((d) => d.severity === 'error');
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
         const samples = await pcmSampleBlobsForMmb(ir);

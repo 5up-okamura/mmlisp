@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/targets.js';
 import { IRPlayer } from '../../live/src/ir-player.js';
 import { macroFrames } from '../../live/src/ir-utils.js';
-import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText } from '../../live/src/edit-tools.js';
+import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from '../../live/src/edit-tools.js';
 
 let count = 0;
 const check = (name, run) => { run(); count++; console.log(`ok ${name}`); };
@@ -456,6 +456,18 @@ check('a def with nothing tied to its file is copied as it stands', () => {
   const [fm, wave] = parse(text).filter((n) => n.kind === 'list');
   assert.equal(ownDefText(text, fm, 'x/y.mmlisp'), '(def-fm lead init-fm\n  :alg 4 ; bright\n  :fb 3)');
   assert.equal(ownDefText(text, wave, 'x/y.mmlisp'), '(def-wave saw :wave [1 2])');
+});
+
+check("a score's own sample auditioned among its defs, under its name", () => {
+  const imports = new Map([['kit/kit.mmlisp', '(def-pcm base :file "snare.wav" :rate 8000)']]);
+  const score = '(def-score :target pc88 :tempo 90)\n(import "kit/kit.mmlisp")\n(def-pcm kick :file "smp/kick.wav")\n(def-pcm hit base :fx [(gain 2)])\n(def-val v 3)\n(def-wave w :wave [1 2 3 4])\n(def-fm lead :alg 4)\n(fm1 c d)\n(rhythm1 bd)';
+  const defs = scoreDefsText(score);
+  assert.equal(defs, '(import "kit/kit.mmlisp")\n(def-pcm kick :file "smp/kick.wav")\n(def-pcm hit base :fx [(gain 2)])\n(def-val v 3)');
+  const { ir, diagnostics } = compileMMLisp(`${defs}\n(pcm1 :oct 4 :len 4 hit c)\n(pcm2 :len 4 kick c)\n`, 'songs/a.mmlisp', { imports });
+  assert.deepEqual(diagnostics.filter((d) => d.severity === 'error'), []);
+  const files = Object.fromEntries(ir.metadata.samples.map((s) => [s.name, s.resolvedFile]));
+  assert.equal(files.kick, 'songs/smp/kick.wav', "the score's :file, against its folder");
+  assert.equal(files.hit, 'kit/snare.wav', "a base's, against its import's");
 });
 
 // What a machine offers: the names the lists show are the compiler's.
