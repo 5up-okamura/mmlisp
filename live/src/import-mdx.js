@@ -29,9 +29,11 @@
 //                      lands on a note as that note glided to (`c_e` as
 //                      (glide c T) e), else a :pitch+ line over the note
 //   MP / MA, MD        the software LFOs as :pitch+ / :vel+ curves (saw,
-//                      square, triangle), MD their delay — restarted at each
-//                      note, where MXDRV restarts them only with an MD; a
-//                      curve written twice or more a def (vib- bend- trem-)
+//                      square, triangle) in MXDRV's phase: under an MD
+//                      restarted at a key-on, MD clocks late (a slur goes on
+//                      through); with none, free-running from MP / MA, each
+//                      note's curve at its :phase; a curve written twice or
+//                      more a def (vib- bend- trem-)
 //   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
 //   w                  the noise (on track H, NE): fm8's :mode noise — the
 //                      voice whole, its fourth operator the noise — at
@@ -286,8 +288,8 @@ function playTrack(mdx, track, skipped, recv = null, until = Infinity) {
           break;
         }
         case 0xed: if (track.index >= 8) st.pcmRate = a1; else st.noise = a1; break;
-        case 0xec: lfoCmd(u8, p, st, "plfo"); break;
-        case 0xeb: lfoCmd(u8, p, st, "alfo"); break;
+        case 0xec: lfoCmd(u8, p, st, "plfo", clock); break;
+        case 0xeb: lfoCmd(u8, p, st, "alfo", clock); break;
         case 0xea:
           if (a1 === 0x80 || a1 === 0x81) st.hlfoOn = a1 === 0x81;
           else {
@@ -327,13 +329,18 @@ function loopEnd(u8, p) {
   return p;
 }
 
-function lfoCmd(u8, p, st, key) {
+// MP / MA: their shape set, or turned off or on (MPON); either way the LFO
+// starts over here (`at`, the clock).
+function lfoCmd(u8, p, st, key, clock) {
   const a1 = u8[p + 1];
-  if (a1 === 0x80 || a1 === 0x81) { st[`${key}On`] = a1 === 0x81 && st[key] != null; return; }
-  const clock = be16(u8, p + 2);
+  if (a1 === 0x80 || a1 === 0x81) {
+    st[`${key}On`] = a1 === 0x81 && st[key] != null;
+    if (st[`${key}On`]) st[key] = { ...st[key], at: clock };
+    return;
+  }
   let depth = s16(u8, p + 4);
   if (key === "plfo" && a1 >= 4) depth *= 256;
-  st[key] = { form: a1 & 3, clock: Math.max(1, clock), depth };
+  st[key] = { form: a1 & 3, clock: Math.max(1, be16(u8, p + 2)), depth, at: clock };
   st[`${key}On`] = true;
 }
 
@@ -423,21 +430,30 @@ const cents = (kf) => Math.round((kf * 100) / 64);
 // depth/256 in 1/64 semitone) bipolar — a saw rising from 0 over its period,
 // a square ±depth, a triangle a period of 2P rising first — as a :pitch+
 // curve; the volume LFO (MA; depth/256 TL a clock) only ever quieter, from 0,
-// as a :vel+ one. Its random shape (3) is left out.
-function pitchLfoCurve({ form, clock: P, depth }, tick) {
+// as a :vel+ one. Its random shape (3) is left out. `ran` is how many clocks
+// the LFO has run at the note: its :phase, past the shape's own — to a
+// sixteenth of the cycle, so notes along a slow LFO share a few curves, not
+// one each (off by 1/32 of the cycle at most: a few cents, a fraction of a
+// :vel step).
+const LFO_PHASES = 16;
+const lfoPhase = (base, ran, period) => {
+  const ph = (base + Math.round((LFO_PHASES * (ran % period)) / period) * (256 / LFO_PHASES)) % 256;
+  return ph ? ` :phase ${ph}` : "";
+};
+function pitchLfoCurve({ form, clock: P, depth }, tick, ran = 0) {
   const t2 = (n) => `${tick(n)}t`;
   const u = (x) => Math.round((x * 100) / 64 / 256); // cents
-  if (form === 0) { const a = u((depth * P) / 2); return a ? `(saw ${-a}..${a} :len ${t2(P)} :phase 128)` : null; }
-  if (form === 1) { const a = u(depth); return a ? `(square ${a}..${-a} :len ${t2(P * 2)})` : null; }
-  if (form === 2) { const a = u((depth * P) / 2); return a ? `(triangle ${-a}..${a} :len ${t2(P * 2)} :phase 64)` : null; }
+  if (form === 0) { const a = u((depth * P) / 2); return a ? `(saw ${-a}..${a} :len ${t2(P)}${lfoPhase(128, ran, P)})` : null; }
+  if (form === 1) { const a = u(depth); return a ? `(square ${a}..${-a} :len ${t2(P * 2)}${lfoPhase(0, ran, P * 2)})` : null; }
+  if (form === 2) { const a = u((depth * P) / 2); return a ? `(triangle ${-a}..${a} :len ${t2(P * 2)}${lfoPhase(64, ran, P * 2)})` : null; }
   return null;
 }
-function volLfoCurve({ form, clock: P, depth }, tick) {
+function volLfoCurve({ form, clock: P, depth }, tick, ran = 0) {
   const t2 = (n) => `${tick(n)}t`;
   const v = (tl) => -Math.round(((Math.abs(tl) / 256) * TL_DB * 100) / VEL_DB) / 100; // :vel steps, quieter
-  if (form === 0) { const a = v(depth * P); return a ? `(saw 0..${a} :len ${t2(P)})` : null; }
-  if (form === 1) { const a = v(depth); return a ? `(square 0..${a} :len ${t2(P * 2)})` : null; }
-  if (form === 2) { const a = v(depth * P); return a ? `(triangle 0..${a} :len ${t2(P * 2)})` : null; }
+  if (form === 0) { const a = v(depth * P); return a ? `(saw 0..${a} :len ${t2(P)}${lfoPhase(0, ran, P)})` : null; }
+  if (form === 1) { const a = v(depth); return a ? `(square 0..${a} :len ${t2(P * 2)}${lfoPhase(0, ran, P * 2)})` : null; }
+  if (form === 2) { const a = v(depth * P); return a ? `(triangle 0..${a} :len ${t2(P * 2)}${lfoPhase(0, ran, P * 2)})` : null; }
   return null;
 }
 
@@ -516,7 +532,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     let prev = null; // the note before, as played
     let detuned = false; // a D seen: from then on every note states its :pitch, 0 too
     let head = null; // the note a tie continues: the one keyed, or slurred to
-    let keyedAt = 0; // the tick of the last key-on
+    let keyedAt = 0; // the clock of the last key-on
     let gated = false; // a q or @q seen: from then on every note states its gate
     let gateInForce = ":gate* 1";
     tr.notes.forEach((n) => {
@@ -540,9 +556,16 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       prev = n;
       // MD's delay runs from the key-on: a note played legato is into it.
       const at = tick(n.clock + delay);
-      if (!legato || tr.pcm) keyedAt = at;
-      const lfoWait = Math.max(0, tick(st.lfoDelay) - (at - keyedAt));
-      const waited = (c) => (lfoWait ? c.replace(/\)$/, ` :wait ${lfoWait}t)`) : c);
+      if (!legato || tr.pcm) keyedAt = n.clock + delay;
+      // An LFO at this note: under an MD it runs from MD clocks past the
+      // key-on (MXDRV restarts it there; a slur does not), with none from
+      // where MP / MA set it — waited for, or this far into its shape.
+      const lfoAt = (lfo, curve) => {
+        const from = st.lfoDelay ? keyedAt + st.lfoDelay : lfo.at;
+        const c = curve(lfo, tick, Math.max(0, n.clock + delay - from));
+        const wait = Math.max(0, tick(from) - at);
+        return c && wait ? c.replace(/\)$/, ` :wait ${wait}t)`) : c;
+      };
       const state = [];
       let midi = n.midi + NOTE_MIDI;
       let vel = velOf(st.atten);
@@ -588,16 +611,16 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
           } else if (total) pitch.push(`(linear 0..${total} :len ${tick(n.count)}t)`);
         }
         if (st.plfo) {
-          const c = pitchLfoCurve(st.plfo, tick);
-          if (c) pitch.push(waited(c));
+          const c = lfoAt(st.plfo, pitchLfoCurve);
+          if (c) pitch.push(c);
         }
       }
       if (pitch.length > 1) skip("a portamento under the pitch LFO (the LFO is dropped for that note)");
       state.push(pitch.length ? `(macro :pitch+ ${pitch[0]})` : "(macro :pitch none)");
       if (glide) state.push(glide);
       if (!tr.pcm && st.alfo) {
-        const c = volLfoCurve(st.alfo, tick);
-        state.push(c ? `(macro :vel+ ${waited(c)})` : "(macro :vel none)");
+        const c = lfoAt(st.alfo, volLfoCurve);
+        state.push(c ? `(macro :vel+ ${c})` : "(macro :vel none)");
       } else if (!tr.pcm) state.push("(macro :vel none)");
       // A note keyed on into the next (&) sounds its whole slot whatever its
       // gate: it keeps the one in force, so none is written for it. One held

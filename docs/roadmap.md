@@ -64,8 +64,8 @@ Its current limits are `driver.md` §11 — keep the two in step.
 - **Famicom: ppmck's MML**, if a composer's files call for it.
 - **MGS**: an envelope's wave changes as it runs (a note keeps the first),
   `#psg_tune` / `#opll_tune`, `@\` on FM.
-- **MDX**: the OPM LFO's sync, MP / MA's random shape, and their phase: MXDRV restarts
-  them at a note only under an MD, where the import restarts them always.
+- **MDX**: the OPM LFO's sync (`MH`'s, reset at each key-on: no word for it
+  yet), and MP / MA's random shape.
 - **MIDI timed by its notes**: a pickup in a song with no GM kick and
   snare, and a change of meter or tempo within a song (bestBars and one
   estimated grid serve the whole file).

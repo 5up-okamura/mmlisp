@@ -62,18 +62,23 @@ export function frameVector(values, sus) {
 
 // A curve macro's def name, read off its curve: a pitch line a bend (up or
 // down to where it goes), any other pitch curve a vibrato, a :vel curve a tremolo
-// (to its widest), then its length and wait.
+// (to its widest), then its length, its phase where it does not start as the
+// shape's vibrato does (a triangle from the middle rising, a saw from its
+// middle; a triangle falling is `-down`, as import-song names one) and its wait.
 const SHAPE = { triangle: "tri", saw: "saw", square: "sq", sin: "sin" };
-const CURVE = /^\(macro :(pitch|vel)\+? \((linear|triangle|saw|square|sin) (-?[\d.]+)\.\.(-?[\d.]+) :len (\S+?)(?: :phase \d+)?(?: :wait (\S+?))?\)\)$/;
+const CURVE = /^\(macro :(pitch|vel)\+? \((linear|triangle|saw|square|sin) (-?[\d.]+)\.\.(-?[\d.]+) :len (\S+?)(?: :phase (\d+))?(?: :wait (\S+?))?\)\)$/;
+const OWN_PHASE = { pitch: { triangle: 64, saw: 128 } };
 function macroName(x) {
   const m = CURVE.exec(x);
   if (!m) return null;
-  const [, target, curve, a, b, len, wait] = m;
+  const [, target, curve, a, b, len, phase = "0", wait] = m;
+  const own = OWN_PHASE[target]?.[curve] ?? 0;
+  const p = Number(phase) === own ? "" : curve === "triangle" && target === "pitch" && phase === "192" ? "-down" : `-p${phase}`;
   const w = wait ? `-w${wait}` : "";
   const cents = (v) => `${v < 0 ? "down" : "up"}${Math.abs(v)}`;
   if (target === "pitch" && curve === "linear") return `bend-${Number(a) ? `${cents(a)}-` : ""}${cents(b)}-${len}${w}`;
   const amp = Math.max(Math.abs(a), Math.abs(b));
-  return `${target === "pitch" ? "vib" : "trem"}-${SHAPE[curve] ?? curve}-${amp}-${len}${w}`;
+  return `${target === "pitch" ? "vib" : "trem"}-${SHAPE[curve] ?? curve}-${amp}-${len}${p}${w}`;
 }
 
 /**

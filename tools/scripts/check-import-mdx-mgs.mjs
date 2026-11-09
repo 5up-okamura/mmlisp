@@ -138,6 +138,27 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     assert.deepEqual(a6.tracks[1].notes.map((n) => n.clock), [48, 144], "MDX sync: B on A's two ef 1");
     clean(mdxToMmlisp(mdx6, { fileName: "sync.mdx" }, a6).source, "MDX sync");
   }
+  // The software LFO's phase, as MXDRV runs it: with no MD free from the MP
+  // (each note into its triangle by the clocks since: 0, 24, 48 of a 32-clock
+  // cycle); under an MD restarted at a key-on, MD clocks late, and a slur
+  // into the next note goes on through it.
+  {
+    const MP = [0xec, 2, ...be16(16), ...be16(64 * 256)];
+    const A7 = [0xfd, 1, ...MP, ...N(60, 24), ...N(62, 24), ...N(64, 24), ...END];
+    const B7 = [0xfd, 1, ...MP, 0xe9, 8, 0xf7, ...N(60, 24), ...N(62, 24), ...N(64, 24), ...END];
+    const mdx7 = parseMdx(buildMdx({ title: "LFO", tracks: [A7, B7, END, END, END, END, END, END, END], voices }));
+    const { source } = mdxToMmlisp(mdx7, { structure: false, fileName: "lfo.mdx" }, analyzeMdx(mdx7));
+    // Each note's curve, a def's read through its name: the words after :len.
+    const defs = new Map([...source.matchAll(/^\(def (\S+) \(macro :pitch\+ (\(triangle [^)]*\))\)\)$/gm)].map((m) => [m[1], m[2]]));
+    const curves = (head) => {
+      const form = source.slice(source.indexOf(`(${head} `)).split(/\n(?=\()/)[0];
+      return [...form.matchAll(/\(macro :pitch\+ (\(triangle [^)]*\))\)|\b(vib-\S+)/g)]
+        .map((m) => (m[1] ?? defs.get(m[2])).replace(/^\(triangle \S+ :len \S+ ?/, "").replace(/ ?:wait \d+t/, " :wait").replace(/\)$/, "").trim());
+    };
+    assert.deepEqual(curves("fm1"), [":phase 64", "", ":phase 192"], "MDX LFO free from its MP");
+    assert.deepEqual(curves("fm2"), [":phase 64 :wait", ":phase 192", ":phase 64 :wait"], "MDX LFO under an MD: waited at a key-on, on through a slur");
+    clean(source, "MDX LFO");
+  }
   // A song on its composer's own grid: 22-clock 8ths, 176-clock bars. Its
   // quarter is 44 clocks, the tempo 48/44 faster, the notes plain 8ths.
   {
