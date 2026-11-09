@@ -368,6 +368,14 @@ const port = (src, to, rows) => {
   assert.deepEqual(b.rows.map((r) => r.to), ["sqr1", "sqr2", "wave", "drop"]);
 }
 {
+  // Notes counted as they play: a short loop repeats under the longest
+  // part (an MDX's one-bar drum loop under a melody of many bars), so its
+  // few written notes are many.
+  const r = portRows("(fm1 :oct 4 :len 4 #top c d e f g a b > c < c d e f g a b > c < (go top))\n(fm2 :oct 4 :len 16 #top c c c c c (go top))\n(fm3 :oct 4 :len 8 #top c d e f g a b > c < c d e f (go top))\n(fm4 :oct 4 :len 2 #top c d e f g a b > c < (go top))", "gb");
+  assert.deepEqual(r.rows.map((x) => x.notes), [16, 64, 32, 8]);
+  assert.equal(r.rows.find((x) => x.head === "fm4").to, "drop");
+}
+{
   // On the triangle (one level) a :vel goes, an echo's :vel+ stays: it is
   // what the echo's taps are.
   const r = port("(def-score :target pc88)\n(fm1 :len 8 :vel 12 c (echo 1 :vel+ -4 :back 2) d)", "fc", { fm1: "tri" });
@@ -840,7 +848,7 @@ const port = (src, to, rows) => {
   assert.match(phrase.text, /\(sqr1 :len 8 ph-sqr1 e\)/);
   // A track's notes in its phrases are its own: short of channels, the
   // part playing them keeps its channel before one of rests.
-  const busy = portRows("(def-score :target pc88)\n(def a c d e f g a b)\n(fm1 :len 8 a a)\n(fm2 :len 8 a)\n(sqr1 :len 1 _)\n(sqr2 :len 1 _)\n(sqr3 :len 1 _)", "gb");
+  const busy = portRows("(def-score :target pc88)\n(def run c d e f g a b)\n(fm1 :len 8 run run)\n(fm2 :len 8 run)\n(sqr1 :len 1 _)\n(sqr2 :len 1 _)\n(sqr3 :len 1 _)", "gb");
   assert.ok(["fm1", "fm2"].every((h) => busy.rows.find((r) => r.head === h).to !== "drop"), "the parts playing notes keep the Game Boy's channels");
   assert.equal(busy.rows.find((r) => r.head === "fm1").notes, 14);
 }

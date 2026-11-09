@@ -209,6 +209,40 @@ function survey(text, from, imports) {
   return { roots, forms, heads, voices, samples, ownSamples, kit, waves: waveNames, fdsMod, waveMacros, snippets };
 }
 
+// Each channel's notes as the song plays them (head → notes; its :prio
+// layers together, a def-se's not): what stands before its endless loop
+// once, the loop's body as many times as it plays over the song — the
+// longest track once through, each other loop repeating in that time (a
+// bar of drums under a long melody).
+function playedNotes(ir) {
+  const out = new Map();
+  const tracks = [];
+  for (const t of ir?.tracks ?? []) {
+    if (t.se) continue;
+    const evs = t.events.some((e) => e.cmd === "LOOP_BEGIN") ? expandLoops(t.events) : t.events;
+    const marks = new Map(evs.filter((e) => e.cmd === "MARKER" && e.args?.id).map((e) => [e.args.id, e.tick]));
+    // The backward JUMP that goes furthest back is the track's loop.
+    let from = null, to = null;
+    for (const e of evs) {
+      const m = e.cmd === "JUMP" ? marks.get(e.args?.to) : undefined;
+      if (m != null && m <= e.tick && (from == null || m < from)) [from, to] = [m, e.tick];
+    }
+    const notes = evs.filter((e) => e.cmd === "NOTE_ON" && (to == null || e.tick < to));
+    const end = to ?? notes.reduce((m, e) => Math.max(m, e.tick + (Number(e.args?.length) || 0)), 0);
+    tracks.push({ head: t.scoreChannel ?? t.channel, notes, from, to, end });
+  }
+  const span = Math.max(1, ...tracks.map((t) => t.end));
+  for (const t of tracks) {
+    let n = t.notes.length;
+    if (t.from != null && t.to > t.from) {
+      const body = t.notes.filter((e) => e.tick >= t.from).length;
+      n += body * Math.max(0, (span - t.to) / (t.to - t.from));
+    }
+    out.set(t.head, (out.get(t.head) ?? 0) + n);
+  }
+  return out;
+}
+
 // The score's own snippets: a def of a body (words, notes, a macro), not a
 // section of channel forms — name → its node.
 function snippetDefs(roots, from) {
@@ -470,12 +504,17 @@ function planRows(s, from, to, loopOf = () => null) {
   for (const h of kitTakes) takenBy.set(to.voiceKey(h), "kit");
   const dest = {};
   // A split track's halves count their own notes: a part all noise has no
-  // tone half to give a channel.
+  // tone half to give a channel. Counted as they play (playedNotes): a
+  // head's written notes, its halves alike, scaled to the notes its track
+  // sounds — as written where its track sounds none (a sample not found),
+  // and a half that has notes never down to none.
+  const played = playedNotes(s.compiled());
   const notesOf = (k) => {
     const h = s.heads.get(splitHead(k));
     if (!h) return 0;
-    if (isSplit(k)) return h.noiseNotes;
-    return keys.includes(splitKey(k)) ? h.notes - h.noiseNotes : h.notes;
+    const n = isSplit(k) ? h.noiseNotes : keys.includes(splitKey(k)) ? h.notes - h.noiseNotes : h.notes;
+    const p = played.get(splitHead(k));
+    return p > 0 && n > 0 ? Math.max(1, Math.round((n * p) / h.notes)) : n;
   };
   for (const k of keys) if (notesOf(k) === 0 && keys.includes(splitKey(k))) dest[k] = "drop";
   // Rows that are one channel on both machines (fm3 and fm3-1…fm3-4, as

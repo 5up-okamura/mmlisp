@@ -2609,8 +2609,9 @@ machine's channels or dropped:
 - A machine short of channels keeps the parts of a sound it has first —
   FM onto FM, a wave onto a wave, a sample onto a sample, as many as it has
   channels of that kind (less the one its bass line takes) — then the parts
-  with the most notes, counted as they play, a loop's body as many times as
-  it repeats. A square is a square on every machine, so onto a machine of
+  with the most notes, counted as they play: a loop's body as many times as
+  it repeats, and an endless loop as often as it comes round while the
+  longest part plays once (a bar of drums under a melody of many bars). A square is a square on every machine, so onto a machine of
   squares (the Famicom, the Game Boy) a song's squares and its FM parts
   count their notes alike. The song's bass — the part whose
   notes sit a fifth or more under every other's (a line doubled at the
