@@ -12740,7 +12740,7 @@
     // A key meant for an FM channel the score's chip lacks (none on the MSX)
     // plays sqr1 instead.
     function previewChannelOf(slot) {
-      if (isToneSlot(slot) || slot.ch < (player?._fmEnc.channels ?? 0)) return slot;
+      if (isToneSlot(slot) || slot.ch < (player?._fmEnc?.channels ?? 0)) return slot;
       return TONE_SLOTS[0];
     }
 
@@ -12767,6 +12767,8 @@
     function previewNoteOff(slot) {
       if (!workletNode) return;
       if (slot === PCM_PREVIEW_CH) { previewPcmNoteOff(); return; }
+      // The MMLispDRV backend took no note on (claimPreviewPlayer): nothing to release.
+      if (player instanceof DrvPlayer) return;
       slot = previewChannelOf(slot);
 
       if (isToneSlot(slot)) {
