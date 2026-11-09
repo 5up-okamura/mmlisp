@@ -1654,9 +1654,10 @@ A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
 `File > Export > Imported…`); a VGM's DAC or PCM-chip samples arrive the
-same way (below). A song that uses both part J and the drums (K or G) arrives with its
-`fm6` lines commented out — on the Mega Drive fm6 is the DAC the drums play
-through; move them to a free channel to hear them. NTSC and PAL drum
+same way (below). Onto `md`, where the drums (K or G) play through fm6's DAC,
+part J moves to a free FM channel — or, where every FM part plays, keeps
+`fm6` and takes it from the drums in turn (a kick on FM6 under an ADPCM
+snare stays an FM kick; where the two meet, the later note sounds). NTSC and PAL drum
 libraries with up to three PCM voices can expand to multiple sample banks
 automatically. If an individual baked sample is still too large, the
 importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` or
@@ -2155,7 +2156,7 @@ them: a key-on starts a note, a key-off ends it.
   than the IL reaches (23 dB down) plays at that floor. On md the sounds are
   the RX5 kit's on `pcm1`, as a mucom88 import plays part G: one `:prio`
   layer a sound, a hit dropped while a higher one rings, levels against the
-  loudest hit — and fm6 gives way to the PCM. Either way the score imports
+  loudest hit — and fm6 shares the DAC with the PCM in turn. Either way the score imports
   `presets/rx5`, which on pc88 stands in for a rhythm ROM not loaded.
 - A wavetable chip's channels — the SCC's (an MSX file, `:target msx`) and
   the HuC6280's (a **PC Engine** file, `:target pce`, the default when it

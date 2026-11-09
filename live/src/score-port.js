@@ -485,8 +485,16 @@ function planRows(s, from, to, loopOf = () => null) {
   const takenBy = new Map();
   const taken = new Set();
   const sampleRows = keys.some((k) => kindOf(from, k) === "sample" && s.heads.get(k)?.notes);
-  // The Mega Drive's PCM owns fm6 (its DAC).
-  if (to.name === "md" && sampleRows) takenBy.set(to.voiceKey("fm6"), "dac");
+  // The Mega Drive's PCM plays on fm6's DAC: fm6 is kept from the rows, and
+  // a source's fm6 row goes to a free FM channel — but where fm1-fm5 are
+  // all the source's, its own fm6 row keeps fm6, the two taking it in turn
+  // (language.md §16: the later note takes it; the user, 2026-11-10 — a
+  // mucom88 kick on FM6 under its ADPCM snare stays an FM kick).
+  // (Counted as the source's FM voices: fm3-1…fm3-4 are one.)
+  const fmRows = keys.filter((k) => kindOf(from, k) === "fm" && s.heads.get(k)?.notes > 0);
+  const fmVoices = new Set(fmRows.map((k) => from.voiceKey(k) ?? k)).size;
+  const ownFm6 = fmRows.includes("fm6") && fmVoices > channelsOf(to, "fm").length - 1;
+  if (to.name === "md" && sampleRows && !ownFm6) takenBy.set(to.voiceKey("fm6"), "dac");
   const srcKey = (k) => srcKeyOf(from, k);
   const free = (k, h) => {
     if (taken.has(h)) return false;
@@ -525,7 +533,8 @@ function planRows(s, from, to, loopOf = () => null) {
   const groupOf = (k) => (!isSplit(k) && to.partOf(k)?.kind === kindOf(from, k) && keys.some((o) => o !== k && !isSplit(o) && from.voiceKey(o) === from.voiceKey(k)) ? from.voiceKey(k) : k);
   // A machine short of channels keeps the parts that play the most notes
   // (the user, 2026-11-08): past its melodic channels — FM and squares, less
-  // a square its noise is and fm6 under the Mega Drive's PCM — and past its
+  // a square its noise is and fm6 under the Mega Drive's PCM (but for a
+  // source's own fm6 row) — and past its
   // noises, the parts with fewer notes are dropped before anything is placed.
   const melodic = (k) => MELODIC_KINDS.includes(kindOf(from, k)) && k !== "fm3-csm-rate";
   // The score's bass: the melodic part whose notes sit lowest, a fifth or
@@ -841,8 +850,6 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
       return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
   }
-  if (to.name === "md" && Object.values(map).some((h) => /^pcm/.test(h)) && Object.values(map).includes("fm6"))
-    return { error: "fm6 is the Mega Drive's DAC while the score plays PCM: send that row to another channel" };
   return new Porter(text, from, to, map, imports, names, plan.s).run(header);
 }
 

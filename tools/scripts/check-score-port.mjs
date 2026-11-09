@@ -1007,6 +1007,13 @@ const port = (src, to, rows, options) => {
   const jOwn = importMucom(muc).source;
   const j = portScore(jOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), jOwn) });
   assert.match(j.text, /\(fm2 :oct 3 \(x 4 :len 8 c d e f\)/, "part J kept on a free FM channel");
+  // With every FM part playing (Actraiser's kick on FM6 under the ADPCM
+  // snare), part J keeps fm6, taking it from the PCM in turn (§16).
+  const full = new TextEncoder().encode("#title f\n\nA t120 o4 l8 cdef\nB o4 l8 cdef\nC o4 l8 cdef\nH o4 l8 cdef\nI o4 l8 cdef\nJ o2 l8 c r c r\nG l8 v15 r @8c r @8c\n");
+  const fOwn = importMucom(full).source;
+  const f = portScore(fOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), fOwn) });
+  assert.match(f.text, /\(fm6 [^)]*c _ c _/, "part J keeps fm6 beside the PCM when fm1-fm5 are taken");
+  assert.match(f.text, /\(pcm\d/, "the drums still on the PCM");
   assert.deepEqual(compile(j.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
 }
 
