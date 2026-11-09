@@ -199,7 +199,7 @@ function diffRuns(label, a, b, tol, maxFrame, out) {
  * logs. Returns { ok, mismatches, stats } — `ok` when no mismatch survived
  * the acceptance bands.
  */
-export function abCompare(source, { maxSec = 30, filename = "ab.mmlisp" } = {}) {
+export function abCompare(source, { maxSec = 30, filename = "ab.mmlisp", samples = null } = {}) {
   const { ir, diagnostics } = compileMMLisp(source, filename);
   const compileErrors = diagnostics.filter((d) => d.severity === "error");
   if (compileErrors.length) {
@@ -222,9 +222,12 @@ export function abCompare(source, { maxSec = 30, filename = "ab.mmlisp" } = {}) 
   );
 
   // B: MMB → DrvPlayer frame-stepped capture over the same horizon.
-  const { bytes, diagnostics: exportDiags } = encodeMmb(ir);
+  // `samples(ir)` gives the score's samples (encodeMmb's `opts.samples`), so
+  // the driver plays its PCM notes as the preview does — and the writes they
+  // make ($2B where PCM shares fm6) are compared too.
+  const { bytes, sampleBank, diagnostics: exportDiags } = encodeMmb(ir, samples && (ir.metadata?.samples ?? []).length ? { samples: samples(ir) } : {});
   const drv = new DrvPlayer();
-  drv.loadMMB(bytes);
+  drv.loadMMB(bytes, sampleBank);
   const capB = drv.captureRegisterLog({ maxFrames: endFrame + FRAME_SKEW + 1 });
 
   const A = normalize(framesA.filter((w) => w.frame <= endFrame));

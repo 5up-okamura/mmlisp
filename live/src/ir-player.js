@@ -1266,6 +1266,29 @@ export class IRPlayer {
     this._scheduleCapTime = boundaryTime;
   }
 
+  // The channels the score's parts take from each other in turn
+  // (language.md §16, §19 msx), as the loaded IR has them — at a run's
+  // start, and again at a swap. An FM chip whose rhythm shares its channels
+  // (the OPLL's): whether the score plays it. A sample part that takes an
+  // FM channel while its notes sound (the Mega Drive's PCM, fm6's DAC) in a
+  // score that plays that channel too: each PCM note turns the DAC on
+  // ($2B), each note of the channel turns it off (_fmKey), at their times —
+  // the worklet and the VGM follow the writes. A swap to a score without
+  // the PCM turns the DAC off where a PCM note left it on.
+  _sharedChannels(when = null) {
+    const heads = (this._ir?.tracks ?? []).map((t) => this._target.channels[t.scoreChannel ?? t.channel]);
+    this._fmEnc.rhythmTracks?.(heads.some((c) => c?.part.sharesTaken && c.part.kit));
+    const dac = this._target.parts.find((p) => p.claims && p.sharesTaken);
+    const pcm = !!dac && heads.some((c) => c?.part === dac);
+    this._dacClaim = pcm;
+    this._dacShareCh = pcm && heads.some((c) => c?.part.kind === dac.claims.kind && c.voice === dac.claims.voice)
+      ? dac.claims.voice : null;
+    if (when != null && !pcm && this._dacOn) {
+      this._dacOn = false;
+      this._write(0, 0x2b, 0x00, when);
+    }
+  }
+
   // Commit a pending swap: load the incoming IR and anchor its tracks so that
   // tick=boundaryTick lands exactly on boundaryTime, continuing the global
   // position. Called from _scheduleLoop once the boundary is within the horizon.
@@ -1276,6 +1299,7 @@ export class IRPlayer {
 
     // Load new IR (does not touch callbacks, _playing, or _audioContext).
     this.loadJSON(irObj);
+    this._sharedChannels(boundaryTime);
 
     const secsPerTick = this._secsPerTick;
     const newTick0 = boundaryTime - boundaryTick * secsPerTick;
@@ -3660,8 +3684,12 @@ export class IRPlayer {
     const firstVol = volMacro && !macroLeadsWithHold(volMacro)
       ? levels.find((x) => x.kind === "vol")?.value ?? null
       : null;
-    // fm6 played beside the PCM: the note takes the DAC back.
-    if (this._dacShareCh != null) this._write(0, 0x2b, 0x80, when);
+    // A PCM note takes fm6 as the DAC: $2B on where it is off (its first
+    // note, or after an fm6 note took it: _fmKey) — as the driver does.
+    if (this._dacClaim && !this._dacOn) {
+      this._dacOn = true;
+      this._write(0, 0x2b, 0x80, when);
+    }
     this._pcmEv(when, {
       kind: "on",
       voice,
@@ -6543,7 +6571,10 @@ export class IRPlayer {
     const rising = mask & ~(this._fmKeyMask[ch] ?? 0) & 0xf0;
     this._fmKeyMask[ch] = mask;
     // The channel the DAC shares (fm6): its key-on takes it back from PCM.
-    if (rising && ch === this._dacShareCh && when != null) this._write(0, 0x2b, 0, when - KEY_ORDER_EPS_SECS);
+    if (rising && ch === this._dacShareCh && this._dacOn && when != null) {
+      this._dacOn = false;
+      this._write(0, 0x2b, 0, when - KEY_ORDER_EPS_SECS);
+    }
     if (rising && this._chRegs[ch]?.lfoSync && when != null) {
       const writes = this._fmEnc.lfoReset?.(this._lfoRate) ?? [];
       writes.forEach(([p, a, d], i) => this._write(p, a, d, when - (writes.length - i) * LFO_RESET_GAP));
@@ -6566,17 +6597,7 @@ export class IRPlayer {
     for (const chip of Object.values(this._target.chips))
       if (!chip.optional) for (const [p, a, d] of chip.init ?? []) this._write(p, a, d);
     this._fmEnc.reset?.(); // an encoder that keeps the chip's state starts over
-    // An FM chip whose rhythm shares its channels (the OPLL's): whether the
-    // score plays it.
-    this._fmEnc.rhythmTracks?.((this._ir?.tracks ?? []).some((t) => this._target.partOf(t.scoreChannel ?? t.channel)?.sharesTaken && this._target.partOf(t.scoreChannel ?? t.channel)?.kit));
-    // A sample part that takes an FM channel while its notes sound (the Mega
-    // Drive's PCM, fm6's DAC) in a score that plays that channel too: each
-    // PCM note turns the DAC on ($2B), each note of the channel turns it off
-    // (_fmKey), at their times — the worklet and the VGM follow the writes.
-    const dac = this._target.parts.find((p) => p.claims && p.sharesTaken);
-    const heads = (this._ir?.tracks ?? []).map((t) => this._target.channels[t.scoreChannel ?? t.channel]);
-    this._dacShareCh = dac && heads.some((c) => c?.part === dac) && heads.some((c) => c?.part.kind === dac.claims.kind && c.voice === dac.claims.voice)
-      ? dac.claims.voice : null;
+    this._sharedChannels();
     for (const enc of this._queuedEncoders()) enc.reset?.();
     this._waveLfo = {}; // a wave chip's LFO words as last written (a sweep with no :from starts there)
     // Every channel starts on `init-fm`, the part's sine (chips/fm-words.js
@@ -6610,7 +6631,8 @@ export class IRPlayer {
     if (this._fmEnc.csm) this._fmWrites(this._fmEnc.mode(0)); // CH3 normal mode, timers off
     if (this._target.hasPart("dac")) {
       this._write(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
-      this._write(0, 0x2b, 0); // DAC off
+      this._write(0, 0x2b, 0); // DAC off: fm6 is FM until a PCM note claims it
+      this._dacOn = false;
     }
   }
 }

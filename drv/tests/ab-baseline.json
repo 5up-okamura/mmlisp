@@ -192,10 +192,10 @@
     "digest": "811c9dc5"
   },
   "m3-pcm-fm6.mmlisp": {
-    "ok": false,
-    "mismatches": 4,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "087b5a4d"
+    "digest": "811c9dc5"
   },
   "m3-pcm-master.mmlisp": {
     "ok": true,

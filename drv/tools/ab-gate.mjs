@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { abCompare } from "../../live/src/ab-compare.js";
+import { loadSamplesForIr } from "./wav.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const baselinePath = join(here, "..", "tests", "ab-baseline.json");
@@ -57,7 +58,7 @@ function digestMismatches(mismatches) {
 
 function signature(file) {
   const src = readFileSync(file, "utf8");
-  const r = abCompare(src, { filename: basename(file) });
+  const r = abCompare(src, { filename: file, samples: (ir) => loadSamplesForIr(ir) });
   const compileErrors = (r.stats.compileErrors ?? []).length;
   return {
     result: r,
