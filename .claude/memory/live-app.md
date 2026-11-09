@@ -1,147 +1,34 @@
-# The live app — decisions not to redo, and lessons
+# The live app — decided against, and lessons
 
-What the app does is `docs/guide.md` (§22–§28); why the code is shaped the
-way it is lives in its comments; what is ahead is `docs/roadmap.md`. Kept
-here: what was decided against (so it is not proposed again), and working
-lessons.
+What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
 
 ## Decided against — do not re-propose
 
-- **Editor:** no `@codemirror/lint` and no `bracketMatching()` (a mark
-  decoration moves the soft-wrap point; under `StreamLanguage` the fallback
-  scan does not skip strings and comments — bracket marks are a `layer`). No
-  `rectangularSelection()` / `crosshairCursor()` (Alt-drag is the value
-  scrub). No full paredit (editing here is step-vector churn). No rainbow
-  parens (accent only on call heads and `:params`). No touch symbol bar
-  (unstable on the user's iPad; not without a way to test there).
-- **Library and keys:** the keys play no macro (user: not now, not later),
-  but for a wave's role macro (2026-11-03): held still, a wave is not its
-  sound. No ⌘⇧K (CodeMirror's delete-line, Firefox's console). No Tools >
-  Snippets (user: "the most half-done thing"). No Library state kept across
-  launches (it confused the user).
-- **Piano roll:** two colours only, no per-channel colours; no bars or bar
-  numbers; no channel chips, no Follow/Fixed switch; zoom is a scale, not a
-  window in beats; `MMLisp > View` is a submenu, not a View menu; no edge
-  markers for notes outside the focus's range; no transport and no note
-  editing in the pane.
-- **Translation:** only what explains or asks is translated — the reference,
-  the snippets' descriptions, the Guide and the confirm dialogs
-  (`ui-texts.js`). Menus, the log and diagnostics stay English; no runtime
-  machine translation (offline, fixed glossary terms).
-- **Playback in the worklet** (2026-10-16): not now. iOS plays on behind
-  another app while an `<audio>` element plays. If ever needed: both players
-  already run off a manual clock in `captureRegisterLog`, the page reaches
-  the player at ~30 sites in index.html that would read a posted mirror, and
-  the hazards are seek/hot-swap/GC stalls on the audio thread.
-- **The lock screen's item** opening another home-screen web app (the
-  user's iPhone, 2026-10-16): taken as the device's, left alone.
-- **The scope while playing** (2026-10-16): `correlateValid` is ~9 % of a
-  4×-throttled thread plus its polyline, and cutting more changes how the
-  trace locks — not worth it. (Headless canvas is CPU-drawn, so draw costs
-  read high there.)
-- **Archives** (2026-10-28): ZIP and LZH only, both first-party
-  (`src/archive.js`). No RAR / 7z for now — no small decoder of our own;
-  libarchive built to WASM, loaded on demand, if a need shows up.
-- **No Import > Song…** (2026-11-08): Open… takes a song with its banks
-  (guide.md §23); Import keeps only what goes in at the cursor.
-- **Share links' files** (2026-11-06): not base64 inside the score's text
-  (it buries the score, the diff and an AI's context) — a ZIP beside the
-  short link (`share-files.js`). No per-file opt-out in the Share dialog: it
-  lists what goes, and a file left out would only come back as a missing
-  one. A long link (no server) carries no files. The 256 KB cap stays
-  (user, 2026-11-06), though a PC-8801 VGM import's bank nears it (The
-  Scheme's largest track: ~232 KB zipped) — not to be re-proposed.
-- **Restructuring VGM / NSF imports stays human-guided** (Edit > Tap Tempo):
-  not automatic beat detection, not an import-time conversion with no
-  preview.
-- **The ja / es translations** stay as machine-written from the glossary
-  (user, 2026-10-16: having one helps more than none; a wrong line is fixed
-  when found). A fix goes through `i18n-sync.mjs --apply`, never a hand edit
-  of the pack.
+- **Editor:** no `@codemirror/lint`, no `bracketMatching()` (it moves the
+  soft-wrap point), no rectangular selection (Alt-drag is the scrub), no
+  full paredit, no rainbow parens, no touch symbol bar.
+- **Library and keys:** the keys play no macro, except a wave's role macro;
+  no ⌘⇧K; no Tools > Snippets; no Library state kept across launches.
+- **Piano roll:** two colours, no bars, no channel chips, no Follow/Fixed
+  switch, zoom is a scale, `MMLisp > View` a submenu, no edge markers, no
+  transport or note editing in it.
+- **Translation:** only what explains or asks; menus, log and diagnostics
+  stay English; ja / es stay machine-written from the glossary, fixed via
+  `i18n-sync.mjs --apply`, never by hand.
+- Playback in the worklet: not now. The scope's cost while playing: left.
+- **Archives:** ZIP and LZH only.
+- No Import > Song… (Open takes a song).
+- **Share links:** files as a ZIP beside the short link, not base64 in the
+  score; no per-file opt-out; the 256 KB cap stays.
+- Restructuring VGM / NSF imports stays human-guided (Tap Tempo).
 
 ## Lessons
 
-- **One word, two reference entries.** `noise` heads the PSG channel and the
-  random curve, so reference.js entries carry `ctx` ('track' / 'value') and
-  the hover and completion read the position (`referenceCtxAt`); check:reference
-  holds it. Still first-wins, because neither reading has come up as wrong:
-  `<` `>` (comparison vs octave), `ticks` `frames` (arithmetic vs length
-  suffix), `midi`, `repeat`, `:rate`. Give those a `ctx` when one does.
-- **Make sure a change is deployed before asking for a device test** — a run
-  of failed deploys once meant four fixes never reached the device. A push to
-  `main` deploys mmlisp.com through Cloudflare Workers Builds; its result is
-  the commit's check run
-  (`api.github.com/repos/5up-okamura/mmlisp/commits/<sha>/check-runs`).
-- **Suspect the instrument first.** An on-screen probe that rewrote itself
-  every 300ms made the iPad lay the app out at portrait size in landscape; it
-  was blamed on the offline change and the vendored font first. Prefer a
-  probe that writes only on demand.
-- **WebKit reproduces iPhone issues headless**: playwright-core's WebKit
-  (`npx playwright-core install webkit`, cached in ~/Library/Caches) with
-  `devices['iPhone 13']` — no folder picker, touch, the iOS paths.
-
-## Small tools still to specify
-
-- **Time-unit converter:** the user wants a small panel tool. Decide its
-  inputs and conversions between score lengths, ticks, frames and milliseconds
-  before building it. This is not a request to add Hz to MMLisp's LFO rate.
-- **MMB/driver resource information:** MD only. Define which concrete
-  production question it answers before choosing statistics or controls.
-- **A second temporary tool on mobile:** decide how to switch small windows
-  without stacking them over the source; do not infer a multi-window design.
-- **Excluded from the small-tool list:** a separate length calculator (the
-  existing `| ... |` calculation is enough), and diagnostics (normal app
-  feedback, not an independent tool).
-
-## Deferred editing ideas
-
-- **Hiding source by kind** (user's idea, 2026-11-06; still being thought
-  over — do not build until the user decides): e.g. hide every `:vel` so a
-  dense score (VGM / NSF imports) reads easily. A view setting only: Save,
-  Copy, Share and Format see the text unchanged. Discussed so far:
-  - Unit: a keyword with its value (`:vel 90`, `:vel (linear …)`), and
-    comments; form kinds (`(macro …)`) only if needed.
-  - Fully hidden reads fine but breaks editing at a hidden range's edge:
-    `:vel` applies from where it is written, so typing between `c` and `d`
-    in `c :vel 90 d` shown as `c d` changes the sound depending on the side
-    it lands; a selection or Backspace removes what is not seen. A marker
-    (`c · d`) adds noise as dense as the notes. Proposed: hide fully, but
-    show the cursor's lines in full (search hits, diagnostic links and the
-    Logical Editor then reveal by moving the cursor). Alternatives: dim in
-    `--sub` instead of hiding; read-only while hiding.
-  - UI: proposed a strip at the editor's top (`Hide: :vel :pan ▾`, a
-    checklist with counts), absent when nothing is hidden — the panel can be
-    closed (phones), and the hiding must stay visible. Not in a lesson's
-    working copy (its text is the leading comment).
-  - Open: per user or per score; hide vs dim (or both).
-- **A form's value at the cursor** (user's idea, 2026-11-06, in place of a
-  `(print …)` form — no language change): with the cursor right after a
-  compile-time `)`, or right after a bound name (`for`'s `i`, a `let`
-  name), a small tooltip above it (`--sub`, the text never shifts) shows
-  what it evaluated to; one evaluated many times shows `67, 74, 81, … (16
-  values)`. Agreed so far: bound names too; an on/off switch (proposed: View
-  > Show Values, a check like Follow Playback, on by default, remembered).
-  Rejected: showing every value on the cursor's line (too much); a hover
-  card (no hover on phones). Design notes (reviewed 2026-11-06): the hooks
-  go in mmlisp-eval.js `evalNode` — its list branch (every nested `( … )`,
-  not only the value position `evalValue` sees) and its atom branch where
-  `envLookup` resolves a bound name — recording span → values when
-  compileMMLisp is asked to (Live only; MCP, snapshots and MMB unchanged;
-  first 16 values and a count per span, plain data for the worker; spans in
-  imported files dropped). Live compiles only on Build / Play / a drag, so
-  the values are refreshed by a silent compile run when the cursor lands
-  on a candidate position and the record is older than the document — not
-  on every edit — and it must not log its diagnostics again (every cursor
-  move would repeat them) nor replace the built IR; nothing stale is shown
-  meanwhile. Literals and `$slot`s show nothing in v1; forms that make
-  notes, not a value (channel forms, sections, `(note …)`) show nothing.
-  A curve's value (2026-11-06): a small static line (fg, ~120 px) of the
-  values the evaluator sampled — after the arithmetic around it, a seeded
-  random as drawn — with its range and length (`−40 … 40 · 4f`); one with
-  no `:len` is drawn at the length it was used at, or not at all; one
-  evaluated many times shows the first and a count. Before the parameter's
-  rounding (the panel shows the rounded steps). A `$slot` curve is v2. The
-  line does not move: a playing macro's position belongs to the panel
-  (roadmap, "The panel's editors follow playback"). Later: `$slot`
-  expressions in symbolic form, the record through
-  mmlisp_check for AI; a Guide Tools step to make it known.
+- `noise` and other words have two reference entries by `ctx`; still
+  first-wins for `<` `>`, `ticks` `frames`, `midi`, `repeat`, `:rate`.
+- Check a change is deployed before a device test: a push to `main` deploys
+  mmlisp.com; its result is the commit's check run.
+- Suspect the instrument first (a self-rewriting probe broke the iPad
+  layout).
+- playwright-core's WebKit with `devices['iPhone 13']` reproduces iPhone
+  issues headless.

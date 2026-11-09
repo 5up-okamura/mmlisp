@@ -85,7 +85,10 @@ Its current limits are `driver.md` §11 — keep the two in step.
   the PC Engine: the LFO and DDA effects, a duty macro switching noise and
   wave under a note (its first step serves), and the phase a wave loads at
   (Furnace's anti-click carries the running phase over; a load here starts
-  the wave from its first step).
+  the wave from its first step). The shuffle: songs that rewrite 0Fxx
+  every few rows restate `:shuffle` per change on every track; `.fur` 70–95
+  never reads `brokenSpeedSel`; a few songs drift against Furnace's VGM
+  apart from the shuffle (the_serenity_of_lonliness, ChocolateFactory).
 - **MIDI**: per-note pan (a channel's first pan serves the song), and CC7/CC11
   moving during a note (they are read at each note-on).
 - **Game Boy**: a `.gbs` import (an LR35902 run, as NSF's 6502); a tracker's
@@ -110,6 +113,22 @@ Its current limits are `driver.md` §11 — keep the two in step.
   streams a frame's writes; the panel draws a mark over the subject it
   shows. Where one def plays on several tracks, the newest note's position
   is shown.
+- **Small tools, still to specify:** a time-unit converter (score lengths,
+  ticks, frames, ms — not Hz for the LFO); MMB / driver resource
+  information on md (decide the question it answers first); how a second
+  tool window switches on a phone without covering the source.
+- **Hiding source by kind** (the user's idea, undecided): e.g. every `:vel`
+  hidden so a dense import reads easily, a view setting only (Save, Copy,
+  Share, Format see the text). Proposed: hidden fully except on the
+  cursor's lines, a strip at the editor's top (`Hide: :vel :pan ▾`). Open:
+  per user or per score; hide or dim.
+- **A form's value at the cursor** (in place of a `(print …)` form): right
+  after a compile-time `)` or a bound name, a small tooltip shows what it
+  evaluated to (`67, 74, 81, … (16 values)`; a curve as a small line),
+  View > Show Values. Hooks in mmlisp-eval.js `evalNode`, recorded only
+  when Live asks, refreshed by a silent compile when the cursor lands.
+- **Wave presets**: a 4-bit wave set under the same names
+  (`presets/wavetable-4bit`?), and sounds past the fifteen roles (`bell`).
 
 ## Outputs
 

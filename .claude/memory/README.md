@@ -29,23 +29,11 @@ Rules:
 
 ## Index
 
-- [driver-decisions.md](driver-decisions.md) — **why MMLispDRV is shaped as it
-  is**: the measurement that moved the sequencer off the Z80, the reversed
-  decisions, the competitor survey, the bugs no gate could see and how the
-  gates fail, the 68000's share and the figures to reopen it with, onset
-  jitter under write bursts, SE and several songs, and the user's rulings on
-  how to work here. The design itself is `docs/driver.md`.
-- [pcm.md](pcm.md) — **PCM: the user's decisions with their reasons, the
-  multi-bank measurements, and what is open.** Read before touching PCM in any
-  layer.
-- [language-open.md](language-open.md) — **the language and IR**: the rulings
-  not to re-propose, why the value machine has its shape, one known A/B divergence, and **§4 the grid-warp `:shuffle`'s
-  open ends** (built 2026-10-28).
-- [live-app.md](live-app.md) — **the live app**: what was decided against
-  (not to be proposed again), working lessons, small tools still to specify
-  and deferred ideas.
-- [targets.md](targets.md) — **machines beyond the Mega Drive**: the rulings
-  and open items per machine (pc88 … the PC Engine, the Famicom and its six
-  expansion chips, the Game Boy: the reasons and sources the docs do not
-  give, and what is not yet heard), and the rulings of `:target midi` and
-  of the machine conversion.
+- [driver-decisions.md](driver-decisions.md) — why MMLispDRV is shaped as it
+  is, the figures to reopen a question with, and the user's rulings.
+- [pcm.md](pcm.md) — PCM rulings and what is open. Read before touching PCM.
+- [language-open.md](language-open.md) — the language's rulings not to
+  re-propose.
+- [live-app.md](live-app.md) — the live app: decided against, and lessons.
+- [targets.md](targets.md) — machines beyond the Mega Drive, `:target midi`
+  and the machine conversion: rulings, traps, what is open.
