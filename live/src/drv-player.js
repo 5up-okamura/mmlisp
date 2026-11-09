@@ -831,6 +831,12 @@ export class DrvPlayer {
     }
     regs.keyed = true;
     if (regs.lfoSync) this._lfoReset();
+    // fm6 keyed while the DAC has it takes it back (the C's key_on): $2B off;
+    // the PCM voices play on unheard until a PCM note turns it on again.
+    if (ch === 5 && this._pcmDacOn) {
+      this._pcmDacOn = false;
+      this._ym(0, 0x2b, 0x00);
+    }
     this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
   }
   _keyOff(ch) {
@@ -2469,8 +2475,8 @@ export class DrvPlayer {
     this._restoreLevelBase(channelId, TARGET_ID.VOL);
     v.started = false;
     this._pcm.composeShift(vi, this._master);
-    // A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on. $2B is
-    // an ordinary register write, sent once; nothing ever turns it off again.
+    // A PCM note takes fm6 as the DAC: $2B on where it is off (its first note,
+    // or after an fm6 note took it: _keyOn).
     if (!this._pcmDacOn) {
       this._pcmDacOn = true;
       this._ym(0, 0x2b, 0x80);

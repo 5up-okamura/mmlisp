@@ -347,6 +347,16 @@ async function main() {
       expected: [],
     },
     {
+      label: "fm6 and the PCM taking turns on fm6: nothing to say",
+      src: '(def-pcm k :file "/k.wav")\n(pcm1 :len 4 k c _ c _)\n(fm6 piano :len 4 _ e _ g)',
+      expected: [],
+    },
+    {
+      label: "fm6 over a PCM note: said where they meet",
+      src: '(def-pcm k :file "/k.wav")\n(pcm1 :len 2 k c)\n(fm6 piano :len 4 _ e)',
+      expected: ["W_TARGET"],
+    },
+    {
       label: "a ROM voice name plays everywhere",
       src: '(fm1 violin c)\n(def-score :target x68k)',
       expected: [],

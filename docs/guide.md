@@ -33,7 +33,7 @@ Default state:
 
 | Name                      | Hardware                                              |
 | ------------------------- | ----------------------------------------------------- |
-| `fm1`-`fm6`               | YM2612 FM channels (a score that uses PCM gives up `fm6` — it is the DAC) |
+| `fm1`-`fm6`               | YM2612 FM channels (`fm6` and the PCM take turns on it: a PCM note the DAC, an `fm6` note FM) |
 | `fm3-1`-`fm3-4`           | FM3 independent-operator mode (one track per OP)      |
 | `fm3-csm`, `fm3-csm-rate` | FM3 CSM mode (§17)                                    |
 | `sqr1`-`sqr3`             | SN76489 square tone channels                          |

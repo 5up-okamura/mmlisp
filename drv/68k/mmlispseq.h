@@ -405,7 +405,7 @@ typedef struct {
    * operator's TL (driver.md §13.4). */
   uint8_t fm3_op_vel[4], fm3_op_vel_base[4], fm3_op_vol[4], fm3_op_vol_base[4];
   MMLPcmVoice pcm[MML_PCM_VOICES];
-  uint8_t pcm_dac_on;  /* $2B sent: the score's first PCM note claims fm6 for good */
+  uint8_t pcm_dac_on;  /* $2B on: a PCM note took fm6 as the DAC, and no fm6 note has taken it back */
   MMLGlobalSweep tempo_sweep;
   MMLGlobalSweep csm_sweep;
   int16_t val[16]; /* VAL_TABLE seed; slot 0xFF is $time, never stored here */

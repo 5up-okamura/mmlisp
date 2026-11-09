@@ -152,24 +152,28 @@ const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
 // but not as written (language.md §5.1, §8). Judged on the written timeline:
 // a loop's passes are its first.
 // A part that takes another's channels while its notes sound (the FM-PAC's
-// rhythm, fm7-9: chips/ym2413.js `takes`, `sharesTaken`): both play, and
-// where a note of one sounds over a note of the other the later takes the
-// channels — said once a score, at the first place (W_TARGET). Judged on
-// the written timeline, a note its length: a loop's passes are its first.
+// rhythm, fm7-9: chips/ym2413.js `takes`; the Mega Drive's PCM, fm6's DAC:
+// chips/dac-mix.js `claims`), `sharesTaken`: both play, and where a note of
+// one sounds over a note of the other the later takes the channels — said
+// once a score, at the first place (W_TARGET). Judged on the written
+// timeline, a note its length: a loop's passes are its first.
 function warnSharedChannels(tracks, target, diagnostics) {
   for (const part of target.parts.filter((p) => p.sharesTaken)) {
+    const taken = (c) => part.takes?.(c) || (!!part.claims && c?.part.kind === part.claims.kind && c.voice === part.claims.voice);
     const spans = (keep) => tracks.filter((t) => keep(t.scoreChannel ?? t.channel)).flatMap((t) =>
       t.events.filter((e) => (e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON") && e.args?.length > 0)
         .map((e) => ({ head: t.scoreChannel ?? t.channel, from: e.tick, to: e.tick + e.args.length })));
     const hits = spans((h) => target.partOf(h) === part);
-    const fm = spans((h) => part.takes(target.channels[h]));
+    const fm = spans((h) => taken(target.channels[h]));
+    const names = target.channelNames.filter((h) => taken(target.channels[h]));
+    const shared = names.length > 1 ? `${names[0]}–${names[names.length - 1]}'s channels` : names[0];
     let first = null;
     for (const a of hits) for (const b of fm)
       if (a.from < b.to && b.from < a.to && (!first || Math.max(a.from, b.from) < first.at))
         first = { at: Math.max(a.from, b.from), hit: a.head, fm: b.head };
     if (first)
       pushDiag(diagnostics, "warning", "W_TARGET",
-        `${first.fm} and ${first.hit} meet at bar ${Math.floor(first.at / WHOLE_TICKS) + 1} (tick ${first.at}): they share the ${part.label}'s channels, and the later note takes them`,
+        `${first.fm} and ${first.hit} meet at bar ${Math.floor(first.at / WHOLE_TICKS) + 1} (tick ${first.at}): the ${part.label} plays on ${shared}, and the later note takes it`,
         null, "global");
   }
 }

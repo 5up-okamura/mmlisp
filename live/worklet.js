@@ -118,6 +118,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmByte = 0x80;
     this._pcmTaps = new Int8Array(SCOPE_PCM_CHANNELS); // each voice's term of _pcmByte (the PCM scope taps)
     this._pcmClaimsDac = false; // the first note claims fm6, as on the driver
+    this._dacByWrites = false; // a score turning the DAC on and off itself ($2B: fm6 beside the PCM)
     this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
     // Whether our own engine claimed the DAC, so we only release what we took —
     // a backend streaming 0x2a/0x2b (MMLispDRV) owns it on its own terms. As on
@@ -359,6 +360,13 @@ class YM2612Processor extends AudioWorkletProcessor {
     const p = port ?? 0;
     const a = addr & 0xff;
     const d = data & 0xff;
+    // A score that plays fm6 beside its PCM turns the DAC on and off as its
+    // notes take it ($2B, ir-player.js): from its first $2B on, the writes
+    // say whose fm6 is, not the PCM's notes (a run's start writes it off).
+    if (p === 0 && a === 0x2b && !preview) {
+      if (d & 0x80) this._dacByWrites = true;
+      if (this._dacByWrites) this._pcmClaimsDac = (d & 0x80) !== 0;
+    }
     // A register that is not the chip's own (the Mega Drive's DAC pair).
     if (this._synth.takeWrite?.(p, a, d)) return;
     if (!preview) {
@@ -442,6 +450,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmByte = 0x80;
     this._pcmTaps.fill(0);
     this._pcmClaimsDac = false;
+    this._dacByWrites = false;
     if (!this._pcmBank) {
       this._pcmLive = null;
       this._pcmSeq = null;
@@ -467,9 +476,10 @@ class YM2612Processor extends AudioWorkletProcessor {
   _applyPcmEvent(ev) {
     if (!this._pcmSeq) return;
     if (this._pcmSeq.apply(ev)) {
-      // A note started: it claims the DAC for good, and its voice now answers
-      // to that track's fader.
-      this._pcmClaimsDac = true;
+      // A note started: it claims the DAC — for good, unless the score turns
+      // it on and off itself (fm6 beside the PCM: _applyYmWrite) — and its
+      // voice now answers to that track's fader.
+      if (!this._dacByWrites) this._pcmClaimsDac = true;
       this._pcmApplyUiGain();
     }
   }

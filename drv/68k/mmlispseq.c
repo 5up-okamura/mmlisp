@@ -660,6 +660,13 @@ static void key_on(MMLSeq *s, int ch) {
   }
   c->keyed = 1;
   if (c->lfo_sync) lfo_reset(s);
+  /* fm6 keyed while the DAC has it takes it back (language.md §16): $2B off,
+   * which the converter sends ahead of the frame's FM; the PCM voices play on
+   * unheard until a PCM note turns it on again. */
+  if (ch == 5 && s->pcm_dac_on) {
+    s->pcm_dac_on = 0;
+    ym(s, 0, 0x2b, 0x00);
+  }
   ym_key(s, (uint8_t)(0xf0 | chkey));
 }
 static void key_off(MMLSeq *s, int ch) {
@@ -1785,8 +1792,8 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   restore_level_base(s, channel_id, T_VOL, -1);
   v->started = 0;
   pcm_compose_shift(s, vi);
-  /* A SCORE THAT PLAYS PCM OWNS fm6 AS THE DAC from its first note on: $2B is an
-   * ordinary register write, sent once and never turned off again. */
+  /* A PCM note takes fm6 as the DAC: $2B on, an ordinary register write, where
+   * it is off (its first note, or after an fm6 note took it: key_on). */
   if (!s->pcm_dac_on) {
     s->pcm_dac_on = 1;
     ym(s, 0, 0x2b, 0x80);

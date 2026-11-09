@@ -131,7 +131,7 @@ export const REFERENCE = [
   {
     name: '(fm1 …)', aliases: ['fm2', 'fm3', 'fm4', 'fm5', 'fm6', 'fm7', 'fm8', 'fm9'], cat: 'channels', section: '§2', tracks: FM,
     syntax: '(fm1 …)',
-    summary: 'The YM2612\'s six FM channels. A score that plays PCM owns fm6 as the DAC, so there an fm6 track is an error. On x68k the YM2151 has eight, fm1–fm8; on msx the FM-PAC\'s YM2413 nine 2-op ones, fm1–fm9.',
+    summary: 'The YM2612\'s six FM channels. fm6 shares the PCM\'s DAC in turn: a PCM note takes it, an fm6 note gives it back to FM. On x68k the YM2151 has eight, fm1–fm8; on msx the FM-PAC\'s YM2413 nine 2-op ones, fm1–fm9.',
     insert: '(fm1 :len 8 c d e f)',
     example: '(fm1 :len 8 c d e f g a b > c)',
   },

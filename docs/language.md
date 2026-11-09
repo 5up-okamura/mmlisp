@@ -121,7 +121,7 @@ are in §19.
 | Name            | Hardware                | Notes                                             |
 | --------------- | ----------------------- | ------------------------------------------------- |
 | `fm1`–`fm5`     | YM2612 FM channels      |                                                   |
-| `fm6`           | YM2612 FM               | FM only; PCM is `pcm1`–`pcm3`. A score that plays PCM owns fm6 as the DAC, so an `fm6` track in it is `E_FM6_DAC` (§16) |
+| `fm6`           | YM2612 FM               | FM; PCM is `pcm1`–`pcm3`, on fm6's DAC. In a score that plays both they take fm6 in turn (§16) |
 | `fm3`           | YM2612 FM3, normal mode | Note-less `(fm3 voice)` declares the shared patch for independent-OP mode |
 | `fm3-1`–`fm3-4` | FM3 independent-OP mode | One track per operator F-number; presence enables the mode (`FM3_MODE op`) |
 | `fm3-csm`       | FM3 CSM mode            | Tonal center; standard note syntax. Note-less `(fm3-csm voice)` beside `fm3-1`–`fm3-4`: the shared patch of CSM with formant tracks (§15) |
@@ -2063,11 +2063,15 @@ bytes, so importing a whole set is free until you write the note.
 The voices are summed and **hard-clipped**: loud simultaneous hits distort by
 design, and headroom is the composer's to manage with `:vel` / `:vol`.
 
-A score that uses PCM owns fm6 as the DAC for the whole song — the driver
-enables it once and never gives the channel back. An `fm6` track in such a
-score is `E_FM6_DAC`; move the part to `fm1`–`fm5`, or drop the PCM. With
-`pcm-voices 0` (or no PCM at all) `fm6` is an ordinary FM channel and the DAC
-is never touched.
+The PCM plays through fm6's DAC, and a score may play `fm6` beside it: the
+two take fm6 in turn. A PCM note turns the DAC on and an `fm6` note turns it
+off, so fm6 is the DAC from a PCM note until the next `fm6` note and FM from
+there until the next PCM note — every PCM voice is silent while it is FM,
+and one still playing (a held loop) is heard again when a PCM note takes the
+DAC back. Where a PCM note and an `fm6` note meet, the later takes fm6, and
+the compiler says so once, where they first meet (`W_TARGET`). A score with
+no `fm6` notes keeps the DAC from its first PCM note on, and one with no PCM
+never touches it.
 
 ### Sample def keys
 

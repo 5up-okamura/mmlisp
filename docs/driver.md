@@ -1629,9 +1629,14 @@ shot; its `PCM_NOTE_CUT` becomes a `PCM_RETARGET` with END at the window's
 start (`$8000`, which every pointer is past) and WRAP at silence, so the voice
 parks at its next block edge (`pcm_cut`).
 
-**fm6.** A score's first PCM note sends `$2B = $80`, and nothing turns the DAC
-off again: a score that plays PCM owns fm6 as the DAC from then on. A score
-without PCM never writes it, and fm6 is FM.
+**fm6.** A PCM note sends `$2B = $80` where the DAC is off (its first, or the
+first after an fm6 note), and an fm6 key-on sends `$2B = $00` where it is on
+(`key_on`), both through the PCM lane, ahead of the frame's FM pairs (§6.6):
+fm6 is the DAC from a PCM note to the next fm6 note and FM after it. The
+engine is told nothing — its voices play on and it writes `$2A` as ever,
+unheard while the DAC is off, and heard again when a PCM note turns it on. A
+score without fm6 notes keeps the DAC from its first PCM note; one without
+PCM never writes it.
 
 **The four points** start as the sample's — the range `:pcm-start` /
 `:pcm-end` / `:pcm-len` (the whole sample when the def sets none) and the loop

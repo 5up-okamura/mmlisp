@@ -41,7 +41,7 @@ then jumps back to `#top`. `;` starts a comment.
 
 | Channel | Chip | |
 | --- | --- | --- |
-| `fm1`–`fm6` | YM2612 FM | `fm6` is taken by the DAC in a score that plays PCM |
+| `fm1`–`fm6` | YM2612 FM | `fm6` and the PCM take fm6 in turn: a PCM note the DAC, an `fm6` note FM |
 | `sqr1`–`sqr3` | PSG square | |
 | `noise` | PSG noise | `:mode white0`–`white3` / `periodic0`–`periodic3` |
 | `pcm1`–`pcm3` | samples on the fm6 DAC | `(def-score :pcm-voices N)`: 1 = 14.4 kHz, 2 = 10.1, 3 = 6.7 |
@@ -230,7 +230,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - `:prio` goes right after the channel name, nowhere else.
 - A macro target that does not exist — a typo like `(macro :vell [15 9])` —
   is `E_MACRO_TARGET`; the targets are listed under Macros above.
-- In a PCM score an `fm6` track is an error — move it to `fm1`–`fm5`.
+- In a PCM score `fm6` plays between the PCM's notes: a PCM note takes the DAC,
+  an `fm6` note gives it back to FM (where they meet the later wins, `W_TARGET`).
 - A channel takes its own chip's words: FM operator keys and `:pan` on a
   `sqr`/`noise`/`pcm` track, or `:mode white0` on an FM track, are
   `E_UNSUPPORTED_TARGET`.

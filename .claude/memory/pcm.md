@@ -17,7 +17,10 @@
 - **Loop points are times**, changeable per note and by curves; `:mode` is
   sticky. The four points' names are the user's (`:pcm-start` …; `:span`
   rejected). A baked reverse rejected.
-- A score with PCM owns fm6 as the DAC all song.
+- **fm6 and the PCM take fm6 in turn** (the user, 2026-11-10; it was the DAC
+  all song): a PCM note turns `$2B` on, an fm6 key-on off; the engine is told
+  nothing and its voices play on unheard. Not a voice cut, not an engine
+  change.
 - **The browser sounds like the driver.**
 - `:fx` is an ordered chain; a kit's chain runs before the def's. PCM
   audition is the FM one.

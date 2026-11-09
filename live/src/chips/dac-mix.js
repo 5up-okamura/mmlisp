@@ -13,12 +13,13 @@ export const dacMix = {
   settings: [":pcm-voices"],
   bank: "mmb",
   // The FM channel its voices sound on (fm6's DAC): busy while one plays.
+  // fm6 plays beside them in turn: a PCM note takes the DAC, an fm6 note
+  // gives the channel back to FM (mmlisp2ir warnSharedChannels).
   claims: { kind: "fm", voice: 5 },
-  checkScore({ pcmUsed, pcmVoices, allHeads, push }) {
+  sharesTaken: true,
+  checkScore({ pcmUsed, pcmVoices, push }) {
     if (pcmUsed > pcmVoices)
       push("error", "E_PCM_VOICES",
         `pcm${pcmUsed} needs (def-score :pcm-voices ${pcmUsed}); this score declares ${pcmVoices}`);
-    if (pcmVoices > 0 && allHeads.has("fm6"))
-      push("error", "E_FM6_DAC", "fm6 is the DAC while the score uses PCM; move the part to fm1-fm5");
   },
 };
