@@ -40,6 +40,12 @@ export default {
     // playing any sound; the sounds are scope lanes 11-16.
     ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [`rhythm${n}`, on(rhythmRom, 0, 11)])),
   },
+  // The machine as a conversion fills it (score-port.js): without the
+  // board, the PC-8801's own OPN — three FM channels and the SSG (the score
+  // still the YM2608's, those channels its).
+  options: [
+    { key: "sb2", label: "Sound Board II", heads: ["fm4", "fm5", "fm6", "pcm1", "rhythm1", "rhythm2", "rhythm3", "rhythm4", "rhythm5", "rhythm6"], on: true },
+  ],
   readsAs: { modes: { "ssg-noise": NOISE_MODES } },
   hints: { NOISE_MODE: "the noise is :noise-rate 1-31, song-wide" },
 };

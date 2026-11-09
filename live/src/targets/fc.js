@@ -54,6 +54,17 @@ export default {
     // The N163's eight, wave1 its channel 8, on the scope's lanes after the 5B's.
     ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].map((v) => [`n163-wave${v + 1}`, { chip: "n163", part: n163Wave, voice: v, scope: 20 + v, label: `W${v + 1}` }])),
   },
+  // The machine as a conversion fills it (score-port.js, the dialog's
+  // checkboxes): the cartridges it has — none but the Famicom's own unless
+  // asked, as a song names its cartridge's channels.
+  options: [
+    { key: "vrc6", label: "VRC6", chip: "vrc6", on: false },
+    { key: "fds", label: "FDS", chip: "fds", on: false },
+    { key: "mmc5", label: "MMC5", chip: "mmc5", on: false },
+    { key: "5b", label: "Sunsoft 5B", chip: "5b", on: false },
+    { key: "vrc7", label: "VRC7", chip: "vrc7", on: false },
+    { key: "n163", label: "N163", chip: "n163", on: false },
+  ],
   readsAs: { modes: { "fc-noise": NOISE_MODES } },
   hints: {
     NOISE_RATE: "the 2A03 noise's rate is its note's pitch, c2 the slowest",

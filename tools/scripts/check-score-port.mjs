@@ -168,9 +168,9 @@ for (const file of files) {
 }
 
 // ── The rules ──
-const port = (src, to, rows) => {
+const port = (src, to, rows, options) => {
   const file = join(repo, "tools/tests/t.mmlisp");
-  const r = portScore(src, to, { rows, imports: readImportSources(file, src) });
+  const r = portScore(src, to, { rows, options, imports: readImportSources(file, src) });
   assert.ok(!r.error, r.error);
   assert.deepEqual(compile(r.text, join(repo, "tools/tests/t.mmlisp")).bad, [], `compiles clean:\n${r.text}`);
   return r;
@@ -374,6 +374,28 @@ const port = (src, to, rows) => {
   const r = portRows("(fm1 :oct 4 :len 4 #top c d e f g a b > c < c d e f g a b > c < (go top))\n(fm2 :oct 4 :len 16 #top c c c c c (go top))\n(fm3 :oct 4 :len 8 #top c d e f g a b > c < c d e f (go top))\n(fm4 :oct 4 :len 2 #top c d e f g a b > c < (go top))", "gb");
   assert.deepEqual(r.rows.map((x) => x.notes), [16, 64, 32, 8]);
   assert.equal(r.rows.find((x) => x.head === "fm4").to, "drop");
+}
+{
+  // The machine as it is had (targets/*.js `options`): its rows' choices and
+  // defaults are the channels it has. The Famicom's own unless a cartridge
+  // is on, then the cartridge's filled too.
+  const song = "(fm1 :len 8 c d e f g a b c)\n(fm2 :len 8 c d e f g a b c)\n(fm3 :len 8 c d e f g a b c)\n(fm4 :len 8 c d e f g a b c)\n(fm5 :len 8 c d e f g a b c)\n(fm6 :len 8 c d e f g a b c)\n(sqr1 :len 8 c d e f)\n(sqr2 :len 8 c d e f)\n(sqr3 :len 8 c d e f)\n(noise :len 8 c c)";
+  const to = (t, options) => Object.fromEntries(portRows(song, t, { options }).rows.map((r) => [r.key, r]));
+  assert.ok(!to("fc").fm1.choices.includes("vrc6-sqr1"), "no VRC6 unless it is on");
+  assert.deepEqual(["fm4", "fm5", "fm6"].map((k) => to("fc", { vrc6: true })[k].to), ["vrc6-sqr1", "vrc6-sqr2", "vrc6-saw"]);
+  // The MSX's cartridges: without the FM-PAC its FM goes onto the SCC.
+  assert.equal(to("msx").fm1.to, "fm1");
+  assert.equal(to("msx", { fmpac: false }).fm1.to, "wave1");
+  assert.ok(!to("msx", { scc: false, fmpac: false }).fm1.choices.some((h) => /^(wave|fm)/.test(h)), "the PSG alone");
+  // The PC-8801 without its board: three FM channels and the SSG.
+  const opn = to("pc88", { sb2: false });
+  assert.deepEqual(["fm1", "fm2", "fm3", "fm4"].map((k) => opn[k].to), ["fm1", "fm2", "fm3", "drop"]);
+  assert.ok(!opn.fm1.choices.includes("fm4"));
+  // ... its drums then on the SSG's noise, as the Game Boy's; the X68000
+  // without PCM8 one ADPCM voice, the drums :prio layers on it.
+  const drums = "(def-score :target x68k)\n(def-pcm kick :file \"a.wav\")\n(def-pcm snare :file \"b.wav\")\n(def-pcm hat :file \"c.wav\")\n(fm1 :len 4 c e g c)\n(pcm1 kick :len 4 c _ c _)\n(pcm2 snare :len 4 _ c _ c)\n(pcm3 hat :len 8 c c c c c c c c)";
+  assert.match(port(drums, "pc88", {}, { sb2: false }).text, /\(noise :prio 1 noise-kick [^\n]*\n\(noise :prio 2 noise-snare /);
+  assert.deepEqual(portRows(drums.replace("x68k", "md"), "x68k", { options: { pcm8: false } }).rows.filter((r) => r.kind === "sample").map((r) => r.to), ["pcm1", "pcm1", "pcm1"]);
 }
 {
   // On the triangle (one level) a :vel goes, an echo's :vel+ stays: it is
@@ -771,7 +793,7 @@ const port = (src, to, rows) => {
   assert.match(fds.text, /\(wave2 fds-lfo :lfo-freq \d+ :vol 0 :oct \d [a-g]\+?0\)/);
   assert.match(fds.text, /\(wave1 tri :lfo-freq \d+ .*:fms \d/);
   // …and the PC Engine's LFO the FDS's: wave2's triangle a table summing to it.
-  const pce = port("(def-score :target pce)\n(def-wave tri :wave (triangle -128..127))\n(def-wave lead :wave (saw -128..127))\n(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)\n(wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)", "fc", { wave1: "fds-wave" });
+  const pce = port("(def-score :target pce)\n(def-wave tri :wave (triangle -128..127))\n(def-wave lead :wave (saw -128..127))\n(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)\n(wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)", "fc", { wave1: "fds-wave" }, { fds: true });
   assert.match(pce.text, /\(fds-wave :lfo-wave \[(2 ){8}(-2 ){16}(2 ){7}2\] lead :lfo-freq \d+ :lfo-pmd \d+ /);
   // The FDS's 64 steps onto a 32-step chip: written at the 32 it plays.
   const w64 = port(readFileSync(join(repo, "tools/tests/fc/fds.mmlisp"), "utf8"), "msx", { "fds-wave": "wave1" });

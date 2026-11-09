@@ -1881,6 +1881,12 @@
     .import-fields, .import-rows { display: flex; flex-direction: column; gap: 0.4rem; }
     .import-rows { overflow-y: auto; margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--mid); min-height: 0; }
     .import-rows[hidden] { display: none; }
+    .import-fields[hidden] { display: none; }
+    /* The machine's options (a Famicom's cartridges …): a box and its name a
+       cell, as many a line as fit. */
+    .import-fields.import-machine { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); gap: 0.4rem 0.75rem; }
+    .import-fields.import-machine[hidden] { display: none; }
+    .import-machine .import-field { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
     /* The select's column is as wide as its longest choice where there is
        room, and no wider than the dialog where there is not (a phone): the
        select then shows its choice cut short. */

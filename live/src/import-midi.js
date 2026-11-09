@@ -413,9 +413,12 @@ function detectGrid(analysis) {
   return { grid: 12, fits: false };
 }
 
-/** The channels a `target` score offers a file's lanes: melodic ones, a drum lane's. */
-export function midiDests(targetName = DEFAULT_TARGET) {
-  const tp = targetProfile(targetName);
+/**
+ * The channels a `target` score offers a file's lanes: melodic ones, a drum
+ * lane's. `machine`: the machine as it is had (targets.js configuredTarget).
+ */
+export function midiDests(targetName = DEFAULT_TARGET, machine = null) {
+  const tp = targetProfile(targetName, machine);
   const d = destsFor(tp);
   return { melodic: [...d.fm, ...d.psg, ...d.wave, ...d.midi], drums: [...d.pcm, ...d.noises] };
 }
@@ -446,10 +449,12 @@ const takenBy = (tp, h) => {
 // is its chips': the dialog opens on it.
 export const MIDI_DEFAULT_TARGET = "midi";
 
-export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET) {
-  const tp = targetProfile(target);
+export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET, machine = null) {
+  const tp = targetProfile(target, machine);
   const d = destsFor(tp);
-  const board = onBoard(tp);
+  // The machine as it is had holds only what it has: a cartridge turned on
+  // is filled as the rest; without it, the machine's own board.
+  const board = machine ? () => true : onBoard(tp);
   const melodic = analysis.lanes.filter((l) => !l.drums)
     .sort((a, b) => a.lane - b.lane || b.notes - a.notes);
   const drums = analysis.lanes.filter((l) => l.drums).sort((a, b) => a.lane - b.lane);
@@ -495,13 +500,14 @@ export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET) {
  *                 timing: "file" (the file's ticks and tempo map, quantized
  *                 to `grid`; `bpm` scales the map) | "beats" (the beat
  *                 estimated from the notes' times; `bpm` replaces it),
- *                 loop: bool, target?, fileName?, from? (what the header
+ *                 loop: bool, target?, machine? (its options, as
+ *                 midiDests), fileName?, from? (what the header
  *                 says it was: "MIDI" unless a chip's import came this way)}
  */
 export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
   const warnings = [];
-  const tp = targetProfile(options.target);
-  const { melodic: melodicDests, drums: drumDests } = midiDests(tp.name);
+  const tp = targetProfile(options.target, options.machine);
+  const { melodic: melodicDests, drums: drumDests } = midiDests(tp.name, options.machine);
   const k = PPQN / analysis.division;
   const beats = options.timing === "beats";
   // q: a file tick → a score tick. Either way the song starts at the first

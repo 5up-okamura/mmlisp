@@ -3469,7 +3469,8 @@
       const def = defaultMidiOptions(a);
       // Picking another target rebuilds the rows at its defaults.
       const rowsFor = (target) => {
-        const d = defaultMidiOptions(a, target), { melodic, drums } = midiDests(target);
+        const machine = machineOptionsOf(target);
+        const d = defaultMidiOptions(a, target, machine), { melodic, drums } = midiDests(target, machine);
         return a.lanes.map((l) => ({ key: l.key, label: l.label, value: d.dest[l.key], choices: ['drop', ...(l.drums ? drums : melodic)] }));
       };
       const round = (x) => (Math.abs(x - Math.round(x)) < 0.1 ? Math.round(x) : +x.toFixed(2));
@@ -3479,7 +3480,7 @@
       const machines = Object.values(TARGETS).filter((t) => !as?.not?.includes(t.name));
       const target = machines.some((t) => t.name === def.target) ? def.target : machines[0].name;
       const fields = [
-        { key: 'target', label: 'Target', type: 'select', value: target, rebuildsRows: true,
+        { key: 'target', label: 'Target', type: 'select', value: target, rebuildsRows: true, machine: true,
           choices: machines.map((t) => [t.name, `${t.system} (:target ${t.name})`]),
           hint: 'a program plays its gm voice on 4-op FM, its nearest ROM voice or wave elsewhere, its family’s envelope on a square; drums play samples, the ROM rhythm or the noise' },
         { key: 'timing', label: 'Timing', type: 'select', value: def.timing,
@@ -3512,6 +3513,7 @@
       const untouched = bpm === fileBpm || bpm === beatBpm || !(bpm > 0);
       return midiToMmlisp(parsed, {
         target: got.fields.target,
+        machine: machineOptionsOf(got.fields.target),
         dest: got.rows,
         grid: Number(got.fields.grid),
         timing,
@@ -3555,7 +3557,7 @@
       };
       const rowsFor = await songRowsFor(trackerToMmlisp(t, { ...def, fileName }, a), fileName, a.target, ownRows);
       const fields = [];
-      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true, machine: true, own: a.target,
         choices: withMidi(a.targets, a.target),
         hint: 'the module’s own machine keeps its chips — wavetables, the SSG’s mixer and envelope, the FM-PAC’s voices, the rhythm; another machine takes it as Edit ▸ Convert to Machine… would (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument (by its instrument’s name, else its sound) and its drums kit roles' });
       fields.push(
@@ -3597,7 +3599,7 @@
       const rowsFor = await songRowsFor(vgmToMmlisp(parsed, { ...def, fileName }, a), fileName, a.target, () => vgmRows(a, a.target));
       const fields = [];
       // A file of one machine's chip can be that machine's score, the Mega Drive's, or General MIDI's.
-      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true, machine: true, own: a.target,
         choices: withMidi(a.targets, a.target),
         hint: 'the chip’s own machine keeps what it has (x68k: the YM2151’s eight channels and DT2; pc88 and msx: the SSG’s mixer and hardware envelope); another machine takes it as Edit ▸ Convert to Machine… would (the rows say what it keeps); General MIDI reads it as its own machine, then gives each channel a GM instrument and the noise and samples kit roles' });
       fields.push(
@@ -3657,7 +3659,7 @@
     // whose name says nothing — which keeps a channel when they are short.
     async function portImported(res, target, { fileName, rows = undefined, names = undefined, header = false }) {
       const imports = await readImportSources(res.source, mmlispName(fileName));
-      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), peaks: samplePeaks(res.pcm) });
+      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), peaks: samplePeaks(res.pcm), options: machineOptionsOf(target) });
       if (out.error) throw new Error(out.error);
       return out;
     }
@@ -3692,7 +3694,7 @@
       const got = await showImportDialog({
         title: `Import ${fileName}`,
         summary,
-        fields: [{ key: 'target', label: 'Target', type: 'select', value: own, rebuildsRows: true,
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: own, rebuildsRows: true, machine: true, own,
           choices: withMidi(targets, own), hint }],
         rows: [],
         rowsFor,
@@ -3709,7 +3711,7 @@
     // portRows): a row per channel, named by `name`, with its notes.
     function conversionRows(text, target, { imports = null, heard = null, name = (h) => h } = {}) {
       if (!PORT_TARGETS.includes(target)) return [];
-      const plan = portRows(text, target, { imports, heard });
+      const plan = portRows(text, target, { imports, heard, options: machineOptionsOf(target) });
       if (plan.error) return [];
       // (A note-less form is a patch: fm3's beside its operator tracks.)
       return plan.rows.map((r) => ({
@@ -3771,7 +3773,7 @@
       const a = analyzeVgm(parsed);
       const def = defaultVgmOptions(a);
       const fields = [];
-      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true,
+      fields.push({ key: 'target', label: 'Target', type: 'select', value: a.target, rebuildsRows: true, machine: true, own: a.target,
         choices: withMidi(a.targets, a.target),
         hint: 'fc keeps the Famicom’s chips; another machine takes it as Edit ▸ Convert to Machine… would; General MIDI reads it as the Famicom’s, then gives each channel a GM instrument and the noise and DPCM kit roles' });
       fields.push(
@@ -4172,6 +4174,25 @@
       };
       const inputs = {};
       const targetFields = [];
+      let machineBox = null, machineOf = null, machineOwn = null;
+      function renderMachine(t) {
+        if (!machineBox) return;
+        machineBox.replaceChildren();
+        const chosen = machineOptionsOf(t);
+        for (const o of t === machineOwn ? [] : TARGETS[t]?.options ?? []) {
+          const label = document.createElement('label');
+          label.className = 'import-field';
+          const span = document.createElement('span');
+          span.textContent = o.label;
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = chosen[o.key] ?? o.on;
+          box.addEventListener('change', () => { setMachineOption(t, o.key, box.checked); if (rowsFor) renderRows(rowsFor(t)); });
+          label.append(box, span);
+          machineBox.append(label);
+        }
+        machineBox.hidden = !machineBox.childElementCount;
+      }
       const showFor = (t) => { for (const [label, f] of targetFields) label.hidden = !f.onlyFor(t); };
       for (const f of fields) {
         const label = document.createElement('label');
@@ -4190,6 +4211,7 @@
         }
         inputs[f.key] = el;
         if (f.rebuildsRows && rowsFor) el.addEventListener('change', () => { renderRows(rowsFor(el.value)); showFor(el.value); });
+        if (f.machine) el.addEventListener('change', () => renderMachine(el.value));
         label.append(span, el);
         if (f.hint) {
           const h = document.createElement('small');
@@ -4197,6 +4219,17 @@
           label.append(h);
         }
         fieldBox.append(label);
+        // `machine`: a target select whose machine is as it is had, under
+        // it a box an option (fc's cartridges, msx's, pc88's board, x68k's
+        // PCM8), kept for the next song (machineOptionsOf), the rows rebuilt
+        // on it — not on `own`, the song's own machine, read as it is.
+        if (f.machine) {
+          machineBox = document.createElement('div');
+          machineBox.className = 'import-fields import-machine';
+          fieldBox.append(machineBox);
+          machineOf = () => el.value;
+          machineOwn = f.own ?? null;
+        }
       }
       const rowInputs = {};
       function renderRows(list) {
@@ -4216,6 +4249,7 @@
       }
       renderRows(rows);
       showFor(target);
+      if (machineOf) renderMachine(machineOf());
       modal.hidden = false;
       // The first field takes the keys (Enter, Escape, the arrows) — not on a
       // touch screen, where a focused select opens its picker by itself.
@@ -4266,7 +4300,7 @@
         title: `Import ${file.name}`,
         summary: 'A MUCOM88 song, written for the YM2608. ' +
           (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
-        fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0],
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0], machine: true, own: 'pc88',
           choices: withMidi(MUCOM_TARGETS, 'pc88'),
           hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive (the SSG’s envelope a level macro, the PCM fitted to the driver’s bank); any other machine takes the pc88 score as Edit > Convert to Machine… does; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
       });
@@ -4490,7 +4524,7 @@
       const got = await showImportDialog({
         title: 'Convert to Machine',
         summary: `The score is the ${sys(from)}’s (:target ${from}).`,
-        fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, choices,
+        fields: [{ key: 'target', label: 'Machine', type: 'select', value: choices[0][0], rebuildsRows: true, machine: true, own: from, choices,
           hint: 'the machine takes what was written — voices, loops, gates, curves: a channel the machine has stays, the rest go to channels left free (and a machine short of channels keeps the parts with the most notes); a voice or wave named for an instrument plays that machine’s, any other the nearest plain shape; what the machine has not is read in its words or dropped, and the log says each. General MIDI reads the score as it plays, then gives each channel a GM instrument and its drums kit roles' }],
         rows: rowsFor(choices[0][0]),
         rowsFor,
@@ -4508,7 +4542,7 @@
           out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
           said = res.warnings;
         } else {
-          const res = portScore(text, to, { rows: got.rows, imports, heard, peaks });
+          const res = portScore(text, to, { rows: got.rows, imports, heard, peaks, options: machineOptionsOf(to) });
           if (res.error) throw new Error(res.error);
           out = res.text;
           said = res.said;
@@ -9262,6 +9296,16 @@
       const p = readPrefs();
       p[key] = value;
       try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (_) {}
+    }
+
+    // The machines as they are had (targets.js `options`: fc's cartridges,
+    // msx's, pc88's board, x68k's PCM8) — what a conversion and a song
+    // import onto one fill, set in their dialog and kept for the next song.
+    function machineOptionsOf(name) { return loadPref('machine', {})?.[name] ?? {}; }
+    function setMachineOption(name, key, on) {
+      const all = loadPref('machine', {}) ?? {};
+      all[name] = { ...(all[name] ?? {}), [key]: on };
+      savePref('machine', all);
     }
 
     const ANALOG_LPF_CUTOFF = 3000;

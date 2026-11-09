@@ -2584,6 +2584,21 @@ A General MIDI score goes onto any machine through its own MIDI, in the
 dialog File ▸ Import ▸ MIDI shows — the rows, the timing, the loop (ticked
 when the score loops).
 
+Under the machine, its boxes say which of it you have — the machine the
+conversion fills, and the channels the rows offer:
+
+| Machine | Boxes | Off |
+| ------- | ----- | --- |
+| `fc` | VRC6, FDS, MMC5, Sunsoft 5B, VRC7, N163 (all off) | the 2A03 alone |
+| `msx` | SCC, FM-PAC (both on) | the PSG, and the SCC or the FM-PAC left |
+| `pc88` | Sound Board II (on) | `fm1`–`fm3` and the SSG: drums onto its noise |
+| `x68k` | PCM8 (on) | one ADPCM voice, `pcm1`: samples its `:prio` layers |
+
+They are kept for the next score or song (each machine its own), and every
+song import's Target reads them too. Off, the score is still the machine's
+(`:target pc88` writes the YM2608 as ever); only the channels it fills are
+fewer.
+
 The dialog has a row per channel the score writes, each going to one of the
 machine's channels or dropped:
 
@@ -2601,8 +2616,8 @@ machine's channels or dropped:
 - A sample track that plays only kit roles (`kick`, `snare` …) goes to a
   machine's ROM rhythm (the PC-8801's, the FM-PAC's), and a ROM rhythm goes
   to sample channels playing `presets/rx5` under the same names.
-- On the Famicom the defaults are its own chips; a cartridge's channels
-  (the VRC6, the VRC7 …) are there to pick.
+- On the Famicom a cartridge (the VRC6, the VRC7 …) is filled when its box
+  is ticked, as the machine's own channels are.
 - The converted score keeps only what it plays: a def — a macro, a voice,
   a wave, a sample — that nothing names any more goes, as does one the score
   only kept (the log lists them). A mucom88 import does the same.

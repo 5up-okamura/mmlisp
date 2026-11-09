@@ -66,6 +66,9 @@ function profile(def) {
       const c = def.channels[head];
       return c ? `${c.chip}:${c.part.unit ?? c.part.name}:${c.voice}` : null;
     },
+    // What a conversion may fill on it (targets/*.js `options`: a
+    // cartridge, a board, a driver's voices), each with the channels it adds.
+    options: (def.options ?? []).map((o) => ({ ...o, heads: o.heads ?? heads.filter((h) => def.channels[h].chip === o.chip) })),
     hasWord: (word) => parts.some((p) => p.words(word) || p.songWords?.(word)),
     /**
      * The oscilloscope lane `head` sounds on, in the synths' layout
@@ -92,8 +95,29 @@ function profile(def) {
   };
 }
 
-export const TARGETS = { md: profile(md), pc88: profile(pc88), x68k: profile(x68k), msx: profile(msx), pce: profile(pce), fc: profile(fc), gb: profile(gb), midi: profile(midi) };
+const DEFS = { md, pc88, x68k, msx, pce, fc, gb, midi };
+export const TARGETS = Object.fromEntries(Object.entries(DEFS).map(([k, d]) => [k, profile(d)]));
 export const DEFAULT_TARGET = "md";
+
+/**
+ * `name`'s machine as a conversion fills it: its channels less those of the
+ * options turned off (`chosen`: key → on; an option not given its `on`) —
+ * a profile of its own, every channel left one a conversion may place a
+ * part on. The machine itself when nothing is off.
+ */
+const configuredCache = new Map();
+export function configuredTarget(name, chosen = {}) {
+  const t = TARGETS[name];
+  if (!t) return null;
+  const off = new Set(t.options.filter((o) => !(chosen[o.key] ?? o.on)).flatMap((o) => o.heads));
+  if (!off.size) return t;
+  const key = `${name}:${[...off].join(",")}`;
+  if (!configuredCache.has(key)) {
+    const def = DEFS[name];
+    configuredCache.set(key, profile({ ...def, channels: Object.fromEntries(Object.entries(def.channels).filter(([h]) => !off.has(h))) }));
+  }
+  return configuredCache.get(key);
+}
 
 /** Why `target` cannot `play` or `encode` yet, or null when it can. */
 export function notYet(target, what) {
@@ -118,9 +142,14 @@ export function toneLaneOf(c) {
   return base == null ? null : c.part.kind === "noise" ? base : base + c.voice;
 }
 
-/** The profile for `name` (a score's `:target`), or the Mega Drive's. */
-export function targetProfile(name) {
-  return TARGETS[name ?? DEFAULT_TARGET] ?? TARGETS[DEFAULT_TARGET];
+/**
+ * The profile for `name` (a score's `:target`), or the Mega Drive's; with
+ * `machine` (its `options`, key → on), as a conversion or an import fills
+ * it (configuredTarget).
+ */
+export function targetProfile(name, machine = null) {
+  const t = TARGETS[name ?? DEFAULT_TARGET] ?? TARGETS[DEFAULT_TARGET];
+  return machine ? configuredTarget(t.name, machine) : t;
 }
 
 // What a machine offers, for whatever lists names (the completion, the Library,

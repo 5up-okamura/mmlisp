@@ -44,6 +44,11 @@ export default {
     // any of them playing any sound, on fm7-fm9's scope lanes.
     ...Object.fromEntries([1, 2, 3, 4, 5].map((n) => [`rhythm${n}`, { chip: "opll", part: opllRhythm, voice: 0, scope: 15 }])),
   },
+  // The machine as a conversion fills it (score-port.js): its cartridges.
+  options: [
+    { key: "scc", label: "SCC", chip: "scc", on: true },
+    { key: "fmpac", label: "FM-PAC", chip: "opll", on: true },
+  ],
   readsAs: { modes: { "ssg-noise": NOISE_MODES } },
   hints: {
     NOISE_MODE: "the noise is :noise-rate 1-31, song-wide",

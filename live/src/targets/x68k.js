@@ -26,5 +26,10 @@ export default {
     pcm1: pcm(0), pcm2: pcm(1), pcm3: pcm(2), pcm4: pcm(3),
     pcm5: pcm(4), pcm6: pcm(5), pcm7: pcm(6), pcm8: pcm(7),
   },
+  // The machine as a conversion fills it (score-port.js): without PCM8,
+  // the MSM6258's one ADPCM voice.
+  options: [
+    { key: "pcm8", label: "PCM8", heads: ["pcm2", "pcm3", "pcm4", "pcm5", "pcm6", "pcm7", "pcm8"], on: true },
+  ],
   hints: { NOISE_MODE: "fm8's :mode noise / tone is written inline, with no macro form; the noise's period is :noise-rate 1-31, song-wide" },
 };

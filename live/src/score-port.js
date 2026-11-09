@@ -31,7 +31,7 @@
 // ---------------------------------------------------------------------------
 
 import { parse } from "./mmlisp-parser.js";
-import { TARGETS, partsWithWord } from "./targets.js";
+import { TARGETS, partsWithWord, configuredTarget } from "./targets.js";
 import { canonicalTarget } from "./mmlisp2ir.js";
 import { loudDefs } from "./import-song.js";
 import { OPN_LFO_HZ, lfoHz } from "./chips/ym2151.js";
@@ -369,14 +369,13 @@ function heardBeat(heard, text) {
 // ── The rows ─────────────────────────────────────────────────────────────
 
 // A machine's channels of one kind a track can be written on: not another
-// way of playing one (fm3-1 …), and a kit's only where asked. `board`: only
-// the machine's own, not a cartridge's it lists (fc's expansions: the rows
-// offer them, the defaults do not, as a song import's).
-function channelsOf(target, kind, { kit = false, board = false } = {}) {
+// way of playing one (fm3-1 …), and a kit's only where asked. The machine as
+// the conversion has it (configuredTarget: the cartridges, the board, the
+// driver's voices turned on).
+function channelsOf(target, kind, { kit = false } = {}) {
   return target.channelNames.filter((h, i) => {
     const p = target.partOf(h);
     if (p.kind !== kind || !!p.kit !== kit) return false;
-    if (board && target.listsExpansions && target.chipOf(h).optional) return false;
     return p.kit || !target.channelNames.slice(0, i).some((o) => target.voiceKey(o) === target.voiceKey(h) && target.partOf(o) === p);
   });
 }
@@ -391,7 +390,7 @@ function splits(from, to, head) {
   if (from.name === "x68k") return head === "fm8" && to.name !== "x68k";
   const p = from.partOf(head);
   if (p?.kind !== "tone" || !Object.hasOwn(p.modes ?? {}, "noise")) return false;
-  return !channelsOf(to, "tone", { board: true }).some((h) => Object.hasOwn(to.partOf(h).modes ?? {}, "noise"));
+  return !channelsOf(to, "tone").some((h) => Object.hasOwn(to.partOf(h).modes ?? {}, "noise"));
 }
 
 // FM3's patch: `(fm3 voice)` or `(fm3-csm voice)` with no notes, beside
@@ -410,18 +409,22 @@ const KIT_OF_HEARD = { kick: "kick", snare: "snare", tom: "tom4", tom3: "tom4", 
  * The rows of `text` onto `toName`: each channel the score writes, where it
  * goes by default, and where else it could. { from, to, rows: [{ key, head,
  * kind, notes, to, choices }] } or { error }. `to` is a channel or 'drop'.
+ * `options`: the machine as it is had (targets/*.js `options`, key → on —
+ * fc's cartridges, msx's, pc88's board, x68k's PCM8), its channels the
+ * rows' choices.
  */
-export function portRows(text, toName, { imports = null, heard = null } = {}) {
-  const { s, ...plan } = planFor(text, toName, imports, heard);
+export function portRows(text, toName, { imports = null, heard = null, options = {} } = {}) {
+  const { s, target, ...plan } = planFor(text, toName, imports, heard, options);
   return plan;
 }
 
 // The rows, with the survey they were read from (the Porter reads it too).
 // `heard`: the score's samples' roles as heard (a Map, name → role), for a
 // drum whose name says nothing.
-function planFor(text, toName, imports, heard = null) {
+// `options`: the machine's (targets/*.js `options`, key → on), what it has.
+function planFor(text, toName, imports, heard = null, options = {}) {
   const from = TARGETS[scoreTargetOf(text)];
-  const to = TARGETS[toName];
+  const to = configuredTarget(toName, options);
   if (!to || !PORT_TARGETS.includes(toName)) return { error: `no conversion onto ${toName}` };
   if (!PORT_TARGETS.includes(from.name)) return { error: `the ${from.system} is not converted at the words' level` };
   let s;
@@ -451,7 +454,7 @@ function planFor(text, toName, imports, heard = null) {
     }
     return loops.get(head) ?? null;
   };
-  return { from: from.name, to: to.name, rows: planRows(s, from, to, loopOf), s };
+  return { from: from.name, to: to.name, target: to, rows: planRows(s, from, to, loopOf), s };
 }
 
 function planRows(s, from, to, loopOf = () => null) {
@@ -470,7 +473,7 @@ function planRows(s, from, to, loopOf = () => null) {
   // a sample whose name is no role is the kit's role it sounds as (an
   // MDX's pdx-000 heard as the kick), so its row plays on the kit.
   s.byEar = new Map();
-  if (roleKit && !channelsOf(to, "sample", { board: true }).length)
+  if (roleKit && !channelsOf(to, "sample").length)
     for (const [n, r] of s.heard ?? []) {
       const role = KIT_OF_HEARD[r];
       if (!toKit.has(n) && role && toKit.has(role)) s.byEar.set(n, role);
@@ -609,39 +612,39 @@ function planRows(s, from, to, loopOf = () => null) {
     if (bin(top) > bin(next) || top.mid - next.mid >= MELODY_ABOVE) s.melody = k;
     return s.melody || null;
   };
-  const bassChannel = to.channelNames.find((h) => to.partOf(h)?.bass && !(to.listsExpansions && to.chipOf(h).optional));
+  const bassChannel = to.channelNames.find((h) => to.partOf(h)?.bass);
   const isKitRow = (k) => kindOf(from, k) === "sample" && rolesHere(s.heads.get(k));
   // The channels the conversion keeps for a machine's own use: the PC
   // Engine's wave2, its LFO, when an FDS track's modulation becomes it.
   const reserved = to.name === "pce" && s.fdsMod ? ["wave2"] : [];
   for (const h of reserved) takenBy.set(to.voiceKey(h), "lfo");
-  const melodicRoom = MELODIC_KINDS.reduce((n, kind) => n + channelsOf(to, kind, { board: true }).length, 0);
+  const melodicRoom = MELODIC_KINDS.reduce((n, kind) => n + channelsOf(to, kind).length, 0);
   // A machine whose kinds share its voices (the PC Engine: wave5, noise5 and
   // pcm5 are channel 5) has one room for them all: its voices.
-  const boardKeys = (kinds) => new Set(kinds.flatMap((kind) => channelsOf(to, kind, { board: true })).map((h) => to.voiceKey(h)));
-  const shared = boardKeys(["fm", "tone", "wave", "noise", "sample"]).size
-    < MELODIC_KINDS.reduce((n, kind) => n + boardKeys([kind]).size, 0) + boardKeys(["noise"]).size + boardKeys(["sample"]).size;
+  const voiceKeysOf = (kinds) => new Set(kinds.flatMap((kind) => channelsOf(to, kind)).map((h) => to.voiceKey(h)));
+  const shared = voiceKeysOf(["fm", "tone", "wave", "noise", "sample"]).size
+    < MELODIC_KINDS.reduce((n, kind) => n + voiceKeysOf([kind]).size, 0) + voiceKeysOf(["noise"]).size + voiceKeysOf(["sample"]).size;
   const pools = [
     [melodic, melodicRoom
-      - (keys.some((k) => kindOf(from, k) === "noise") && channelsOf(to, "noise", { board: true }).some((n) => to.channelNames.some((h) => h !== n && to.voiceKey(h) === to.voiceKey(n))) ? 1 : 0)
+      - (keys.some((k) => kindOf(from, k) === "noise") && channelsOf(to, "noise").some((n) => to.channelNames.some((h) => h !== n && to.voiceKey(h) === to.voiceKey(n))) ? 1 : 0)
       - (to.name === "md" && sampleRows ? 1 : 0)
-      - kitTakes.filter((h) => channelsOf(to, "fm", { board: true }).includes(h)).length
+      - kitTakes.filter((h) => channelsOf(to, "fm").includes(h)).length
       - reserved.length],
-    [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise", { board: true }).length],
+    [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise").length],
     // A kit's tracks are many to its one voice; the rest are a channel each.
     // A machine whose drivers stream samples on fewer channels than it has
     // (the PC Engine's DDA: one) gives them that many.
     [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)),
-      Math.min(channelsOf(to, "sample", { board: true }).length, ...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams))],
+      Math.min(channelsOf(to, "sample").length, ...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams))],
   ];
-  if (shared) pools.push([(k) => !isKitRow(k) && k !== "fm3-csm-rate", boardKeys(["fm", "tone", "wave", "noise", "sample"]).size - reserved.length]);
+  if (shared) pools.push([(k) => !isKitRow(k) && k !== "fm3-csm-rate", voiceKeysOf(["fm", "tone", "wave", "noise", "sample"]).size - reserved.length]);
   // A sample row's place among the drums (drumRank: the kick and snare
   // first, the hats last), for which keeps a channel of its own.
   const isSampleRow = (k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k));
   const rankOf = (g) => Math.min(...g.map((k) => drumRank(s.heads.get(k), s.heard)));
   // A machine with no sample channel plays its drums on its noise
   // (NOISE_DRUMS): a row of any drum goes there; one that plays none drops.
-  const drumNoise = !channelsOf(to, "sample", { board: true }).length && !roleKit && channelsOf(to, "noise", { board: true })[0];
+  const drumNoise = !channelsOf(to, "sample").length && !roleKit && channelsOf(to, "noise")[0];
   const noiseDrums = drumNoise ? keys.filter((k) => isSampleRow(k) && notesOf(k) && [...(s.heads.get(k)?.samples ?? [])].some((n) => knownRank(n, s.heard) != null)) : [];
   for (const k of noiseDrums) dest[k] = "noise-drum";
   // The bass and the melody read before the pools' order asks for them.
@@ -676,7 +679,7 @@ function planRows(s, from, to, loopOf = () => null) {
       // Less a channel the bass takes (the Game Boy's wave), and the
       // channels the drivers stream samples on.
       const streams = kind === "sample" ? to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams) : [];
-      const room = Math.min(...streams, channelsOf(to, kind, { board: true }).filter((h) => !takenBy.has(to.voiceKey(h)) && !(h === bassChannel && bassRow() && kindOf(from, bassRow()) !== kind)).length);
+      const room = Math.min(...streams, channelsOf(to, kind).filter((h) => !takenBy.has(to.voiceKey(h)) && !(h === bassChannel && bassRow() && kindOf(from, bassRow()) !== kind)).length);
       const ofKind = [...groups.values()].filter((g) => g.some((k) => kindOf(from, k) === kind)).sort((a, b) => (isBass(b) || isMelody(b)) - (isBass(a) || isMelody(a)) || notes(b) - notes(a));
       for (const g of ofKind.slice(0, room)) ownRows.add(g);
     }
@@ -739,17 +742,17 @@ function planRows(s, from, to, loopOf = () => null) {
   // Engine's 5 and 6) is its: channels past the source's count first
   // (x68k's fm7 and fm8), FM3's own tracks onto fm3 first. A melodic track
   // goes to its own kind first, then FM, the waves, the squares.
-  const fmBoard = channelsOf(to, "fm", { board: true });
+  const fmBoard = channelsOf(to, "fm");
   const fmBeyond = fmBoard.filter((h) => !from.channelNames.includes(h));
   const fmOrder = [...fmBeyond, ...fmBoard.filter((h) => !fmBeyond.includes(h))];
   const fm3Order = fmOrder.includes("fm3") ? ["fm3", ...fmOrder.filter((h) => h !== "fm3")] : fmOrder;
   const fmFirst = (k) => (/^fm3/.test(k) ? fm3Order : fmOrder);
-  const tones = channelsOf(to, "tone", { board: true });
+  const tones = channelsOf(to, "tone");
   // A wave channel whose memory an earlier one has (the SCC's wave5, wave4's)
   // plays whichever wave was written last: it is taken last, after FM and
   // the squares.
   const ramOf = (h) => to.partOf(h).waveRam?.(to.channels[h].voice);
-  const allWaves = channelsOf(to, "wave", { board: true });
+  const allWaves = channelsOf(to, "wave");
   const sharesRam = (h) => ramOf(h) != null && allWaves.some((o) => o !== h && allWaves.indexOf(o) < allWaves.indexOf(h) && ramOf(o) === ramOf(h));
   const waves = allWaves.filter((h) => !sharesRam(h));
   const lastWaves = allWaves.filter(sharesRam);
@@ -761,8 +764,8 @@ function planRows(s, from, to, loopOf = () => null) {
     else if (kind === "fm") cands = [...fmFirst(k), ...waves, ...tones, ...lastWaves];
     else if (kind === "tone") cands = [...tones, ...waves, ...fmFirst(k), ...lastWaves];
     else if (kind === "wave") cands = [...waves, ...fmFirst(k), ...tones, ...lastWaves];
-    else if (kind === "noise") cands = channelsOf(to, "noise", { board: true });
-    else if (kind === "sample") cands = rolesHere(s.heads.get(k)) ? [...channelsOf(to, "sample", { kit: true }), ...channelsOf(to, "sample", { board: true })] : channelsOf(to, "sample", { board: true });
+    else if (kind === "noise") cands = channelsOf(to, "noise");
+    else if (kind === "sample") cands = rolesHere(s.heads.get(k)) ? [...channelsOf(to, "sample", { kit: true }), ...channelsOf(to, "sample")] : channelsOf(to, "sample");
     const h = cands.find((c) => free(k, c));
     dest[k] = h ? claim(k, h) : "drop";
   }
@@ -800,23 +803,24 @@ function planRows(s, from, to, loopOf = () => null) {
 // ── The conversion ───────────────────────────────────────────────────────
 
 /**
- * `text` (a score on md, pc88 or x68k) on `toName`.
+ * `text` (a score on any machine PORT_TARGETS has) on `toName`.
  * @param {string} text
  * @param {string} toName
  * @param {{rows?: Record<string,string>, imports?: Map<string,string>, header?: boolean}} [opts]
  *   rows: a row's key → its channel or 'drop', over the defaults (portRows);
  *   imports: the score's imports' texts, path → text (its voices and samples);
  *   header: the `; Converted from` line at the top (default true);
- *   names: a channel → the name the log calls it by (an MDX's parts)
+ *   names: a channel → the name the log calls it by (an MDX's parts);
+ *   options: the machine as it is had (portRows)
  * @returns {{text: string, map: Record<string,string>, said: string[]} | {error: string}}
  */
-export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null, peaks = null } = {}) {
-  const plan = planFor(text, toName, imports, heard);
+export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null, peaks = null, options = {} } = {}) {
+  const plan = planFor(text, toName, imports, heard, options);
   if (plan.s) plan.s.peaks = peaks ?? new Map();
   if (plan.error) return { error: plan.error };
   const from = TARGETS[plan.from];
-  const to = TARGETS[toName];
-  if (from === to) return { text, map: {}, said: [] };
+  const to = plan.target;
+  if (from.name === to.name) return { text, map: {}, said: [] };
   const map = Object.fromEntries(plan.rows.map((r) => [r.key, rows[r.key] ?? r.to]));
   for (const r of plan.rows)
     if (map[r.key] !== "drop" && !r.choices.includes(map[r.key])) return { error: `${r.head} cannot go to ${map[r.key]} on the ${to.system}` };
@@ -866,7 +870,7 @@ class Porter {
     // The parts the converted score has: the machine's own, and a cartridge's
     // a row goes to (fc's 5B has a noise rate, its 2A03 none).
     const used = new Set(Object.values(map));
-    this.toParts = new Set(to.channelNames.filter((h) => !(to.listsExpansions && to.chipOf(h).optional) || used.has(h)).map((h) => to.partOf(h)));
+    this.toParts = new Set(to.channelNames.filter((h) => !to.chipOf(h).optional || used.has(h)).map((h) => to.partOf(h)));
     this.replaced = new Set(); // def-fm names a conversion leaves unplayed
     this.shadowing = new Set(); // def-fm names that would hide the OPLL's ROM voice of that name
     this.replacedWaves = new Set(); // def-wave names a conversion leaves unplayed
