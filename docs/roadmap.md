@@ -88,9 +88,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
   every few rows restate `:shuffle` per change on every track; `.fur` 70–95
   never reads `brokenSpeedSel`; a few songs drift against Furnace's VGM
   apart from the shuffle (the_serenity_of_lonliness, ChocolateFactory).
-- **Game Boy**: a `.gbs` import (an LR35902 run, as NSF's 6502); a tracker's
-  13xy / 14xx sweep (left out); a wave rewritten under a note, a VGM's CPU
-  PCM through the wave memory, and NR50 (not followed).
+- **Game Boy**: a tracker's 13xy / 14xx sweep (left out); a wave rewritten
+  under a note, a VGM's CPU PCM through the wave memory, and NR50 (not
+  followed).
 
 ## MMLisp Live
 
