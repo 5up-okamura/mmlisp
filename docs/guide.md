@@ -1521,7 +1521,8 @@ from the start, so they line up in a DAW beside the MIDI), **Video…** (§26),
 for MMLispDRV (`docs/mmb.md`). The Mega Drive's other items are **MMLisp ▸ Analog LPF**,
 the Model 1's ~3 kHz output filter on the preview, and **Tools ▸ MMLispDRV
 Backend** (plays the preview through the driver's reference, which cannot
-seek: Pause stops, and the time bar is off while it plays) and **Tools ▸ Release
+seek: Pause stops, the time bar is off while it plays, and a **Build** applies
+at the next Play rather than at the next bar) and **Tools ▸ Release
 Holds** (keys off what `:gate 0` / `:len 0` holds). On another machine they
 are not in the menus. **MMLisp ▸ Theme** picks the app's colors.
 

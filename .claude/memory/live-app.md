@@ -28,6 +28,9 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
   first-wins for `<` `>`, `ticks` `frames`, `midi`, `repeat`, `:rate`.
 - Check a change is deployed before a device test: a push to `main` deploys
   mmlisp.com; its result is the commit's check run.
+- **Ask which backend played a report first**: under Tools > MMLispDRV
+  Backend a Build does not swap in, so "fm6 still sounds after I commented
+  it out" (2026-11-10) was the backend, not the IR player.
 - Suspect the instrument first (a self-rewriting probe broke the iPad
   layout).
 - playwright-core's WebKit with `devices['iPhone 13']` reproduces iPhone
