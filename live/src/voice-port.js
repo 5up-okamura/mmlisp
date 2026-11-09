@@ -131,11 +131,36 @@ const full4op = (words) => new Map([...fmInitVoice(null), ...words]);
  * square plays the written note: it is written that many octaves up.
  */
 export function carrierOctave(words) {
-  const ml = carrierMultiple(words);
-  if (ml === 0) return -1;
-  const k = Math.log2(ml);
-  return Number.isInteger(k) ? k : 0;
+  return mlOctave(carrierMultiple(words));
 }
+const mlOctave = (ml) => (ml === 0 ? -1 : Number.isInteger(Math.log2(ml)) ? Math.log2(ml) : 0);
+/**
+ * How a 4-op voice sounds against its written note: `pitch`, the semitones
+ * above it — its main carrier's octave (operator `op`'s, for a track that
+ * plays one operator) and its `:key` − 60 — and `key`, the `:key` that
+ * moves the written note (60: none). A stand-in that plays the written note
+ * (a wave, a square) is { 0, 60 }; a role's voice of presets/fm-roles,
+ * FM_ROLE_SOUND's.
+ */
+export function soundOf(words, op = null) {
+  const key = words.get("KEY") ?? 60;
+  const ml = op ? full4op(words).get(`FM_ML${op}`) ?? 1 : carrierMultiple(words);
+  return { pitch: 12 * mlOctave(ml) + key - 60, key, ml };
+}
+/**
+ * presets/fm-roles' voices that sound off their written note or move it
+ * (soundOf), the rest { 0, 60 } — the conversion's stand-ins for the OPLL's
+ * ROM voices on 4-op, whose texts it does not hold (gen-fm-roles.mjs
+ * --check holds it to the set).
+ */
+export const FM_ROLE_SOUND = {
+  harpsichord: { pitch: 0, key: 72 }, guitar: { pitch: 0, key: 72 }, "acoustic-bass": { pitch: 12, key: 72 },
+  "synth-bass": { pitch: 12, key: 48 }, violin: { pitch: 12, key: 60 }, trumpet: { pitch: 0, key: 48 },
+  oboe: { pitch: 24, key: 60 }, synth: { pitch: 12, key: 60 },
+};
+/** A voice's `:key` as written in a def it is rewritten to. */
+const keyOf = (words) => (words.has("KEY") ? ` :key ${words.get("KEY")}` : "");
+
 /** A 4-op voice's main carrier's multiple (:ml, the loudest carrier's). */
 export function carrierMultiple(words) {
   const w = full4op(words);
@@ -190,7 +215,7 @@ export function opnAs2op(name, words) {
   // On init-fm: the words the 4-op voice has no say in (:ws, :ksl, :vib) set
   // too, so a channel coming from a ROM voice keeps none of its registers —
   // the one user voice is then the same on every channel (W_TARGET).
-  return { text: `(def-fm ${name} init-fm :fb ${fb} ${modLine}\n  ${op(car, false)})`, without };
+  return { text: `(def-fm ${name} init-fm${keyOf(words)} :fb ${fb} ${modLine}\n  ${op(car, false)})`, without };
 }
 function carrierMainOf(w) {
   const carriers = CARRIERS_OF[w.get("FM_ALG") ?? 7];
@@ -258,5 +283,5 @@ export function opllDefAs4op(name, words) {
   const opw = (n) => ["ar", "dr", "sr", "rr", "sl", "tl", "ks", "ml", "am"]
     .map((k) => `:${k}${n} ${w.get(`FM_${k === "am" ? "AMEN" : k.toUpperCase()}${n}`) ?? 0}`).join(" ");
   const lfo = fms || ams ? ` :ams ${ams} :fms ${fms}` : "";
-  return { text: `(def-fm ${name} :alg ${w.get("FM_ALG")} :fb ${w.get("FM_FB") ?? 0}${lfo}\n  ${[1, 2, 3, 4].map(opw).join("\n  ")})`, without, lfo: !!(fms || ams) };
+  return { text: `(def-fm ${name}${keyOf(words)} :alg ${w.get("FM_ALG")} :fb ${w.get("FM_FB") ?? 0}${lfo}\n  ${[1, 2, 3, 4].map(opw).join("\n  ")})`, without, lfo: !!(fms || ams) };
 }

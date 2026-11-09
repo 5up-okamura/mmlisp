@@ -133,6 +133,7 @@ function voiceAs4op(b) {
 /** An OPLL voice's words (FM_AR1 …, the chip's ranges) in the 4-op reading above: a Map of the OPN's words. */
 export function opllWordsAs4op(w) {
   const out = new Map([["FM_ALG", 4], ["FM_FB", w.get("FM_FB")], ["FM_AMS", 0], ["FM_FMS", 0]]);
+  if (w.has("KEY")) out.set("KEY", w.get("KEY")); // the voice's pitch, not a register's
   for (const n of [1, 2]) {
     const g = (k) => w.get(`${k}${n}`);
     const set = (k, v) => out.set(`${k}${n}`, v);

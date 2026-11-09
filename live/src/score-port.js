@@ -43,7 +43,7 @@ import { compileMMLisp } from "./mmlisp2ir.js";
 import { PART_LEVELS } from "./part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi, expandLoops, VEL_DB_PER_STEP } from "./ir-utils.js";
-import { waveformOf, carrierOctave, carrierMultiple, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
+import { waveformOf, carrierOctave, carrierMultiple, soundOf, FM_ROLE_SOUND, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
 import { opllWordsAs4op } from "./chips/ym2413.js";
 import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
@@ -1557,6 +1557,19 @@ class Porter {
       this.noiseState.set(layer, ctx.noise);
       ctx.noise.last = null;
     }
+    // An operator track's form starts under the patch's voice: the patch
+    // form's (first form), or one another operator track's n-th form sets —
+    // unless it names one before its first note. On a 4-op channel a
+    // one-operator voice of the patch; on the OPLL the patch voice's role or
+    // waveform; on a wave its wave; on a square none. Read before the body,
+    // whose `:oct` writes the voice's octave moves.
+    const first = !this.started?.has(ctx.head);
+    let opLead = null;
+    if (ctx.opN && !this.voiceFirst(n.items, at + 1)) {
+      const v = this.opFormVoice?.get(this.formIndex(n, ctx.head)) ?? (first ? this.patchCarry?.voice : null);
+      if (v && ctx.destPart?.kind === "fm") opLead = twoOp(ctx.destPart) ? this.voiceRule(v, ctx) ?? v : this.opVoice(v, ctx.opN);
+      if (v && ctx.destPart?.kind === "wave") opLead = this.voiceOnWave(v, ctx);
+    }
     const { outs, after } = this.body(n.items, at + 1, ctx);
     outs[0] = ctx.dest;
     const layerKey = `${ctx.head}|${at ? String(n.items[2]?.value) : ""}`;
@@ -1574,19 +1587,9 @@ class Porter {
     const lead = [];
     // The first form of the head carries what the conversion adds: the
     // patch's tempo and voice on an operator track, a stand-in voice.
-    const first = !this.started?.has(ctx.head);
     (this.started ??= new Set()).add(ctx.head);
     if (first && ctx.opN && this.patchCarry?.tempo && !this.tempoCarried) { lead.push(`:tempo ${this.patchCarry.tempo}`); this.tempoCarried = true; }
-    // An operator track's form starts under the patch's voice: the patch
-    // form's (first form), or one another operator track's n-th form sets.
-    // On a 4-op channel a one-operator voice of the patch; on the OPLL the
-    // patch voice's role or waveform; on a wave its wave; on a square none.
-    if (ctx.opN && !ctx.hasVoiceFirst) {
-      const j = this.formIndex(n, ctx.head);
-      const v = this.opFormVoice?.get(j) ?? (first ? this.patchCarry?.voice : null);
-      if (v && ctx.destPart?.kind === "fm") lead.push(twoOp(ctx.destPart) ? this.voiceRule(v, ctx) ?? v : this.opVoice(v, ctx.opN));
-      if (v && ctx.destPart?.kind === "wave") lead.push(this.voiceOnWave(v, ctx));
-    }
+    if (opLead) lead.push(opLead);
     // An FM track that names no voice plays init-fm, a sine; a wave channel
     // starts on a square.
     if (first && ctx.srcPart.kind === "fm" && ctx.destPart.kind === "wave" && !this.s.heads.get(ctx.head)?.voices.length && !(ctx.opN && this.patchCarry?.voice)) {
@@ -1623,12 +1626,21 @@ class Porter {
     return this.renderList(n, outs, after);
   }
 
+  // Whether a form's items name a voice before its first note (or list).
+  voiceFirst(items, start) {
+    for (let i = start; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind !== "atom" || isNote(it.value)) return false;
+      if (this.s.voices.has(it.value)) return true;
+    }
+    return false;
+  }
+
   // A body's items from `start`: each keyword's word read for the
   // destination, the voices, the notes of a split track.
   body(items, start, ctx) {
     const outs = [];
     const after = new Map();
-    let sawNote = false;
     for (let i = start; i < items.length; i++) {
       const it = items[i];
       if (it.kind === "atom") {
@@ -1658,7 +1670,6 @@ class Porter {
           continue;
         }
         if (ctx.noise && isNote(v)) {
-          sawNote = true;
           outs[i] = ctx.split && ctx.state.mode !== ctx.split ? restOf(v) : this.noiseNote(v, ctx);
           continue;
         }
@@ -1707,7 +1718,6 @@ class Porter {
           continue;
         }
         if ((ctx.head || ctx.snippet) && this.s.voices.has(v)) {
-          if (!sawNote && ctx.opN) ctx.hasVoiceFirst = true;
           const r = this.voiceRule(v, ctx);
           if (r !== undefined) outs[i] = r;
           continue;
@@ -1731,19 +1741,16 @@ class Porter {
           }
           if (v === ">" || v === "<" || /^o[+-]\d*$/.test(v)) { outs[i] = null; continue; }
           if (isNote(v)) {
-            sawNote = true;
             outs[i] = ctx.drumNoise.role ? `${NOISE_DRUMS[ctx.drumNoise.role].note}${NOTE.exec(v)[2]}` : restOf(v);
             continue;
           }
         }
         if (ctx.flatPitch && (v === ">" || v === "<" || /^o[+-]\d*$/.test(v))) { outs[i] = null; continue; }
         if (ctx.flatPitch && isNote(v)) {
-          sawNote = true;
           outs[i] = `c${NOTE.exec(v)[2]}`;
           continue;
         }
         if (isNote(v)) {
-          sawNote = true;
           if (ctx.split && ctx.state.mode !== ctx.split) outs[i] = restOf(v);
           continue;
         }
@@ -2088,28 +2095,50 @@ class Porter {
     return this.spans.get(head);
   }
 
-  // A voice's sounding octave (its main carrier's multiple) against its
-  // stand-in's: `onto` the stand-in's 4-op words (an OPLL's ROM voice), none
-  // on a channel that plays the written note. The track moves up that far —
-  // `:oct+` at the switch, its `:oct` writes and glides after it raised
-  // (body). A role's stand-in is the role's: it moves none.
-  octaveFor(v, ctx, onto = null) {
+  // A voice's 4-op words: its def's (an OPLL's read as 4-op), else the
+  // source's ROM voice of that name read so, else init-fm's.
+  wordsOf(v, ctx) {
     const def = this.voices.get(v);
-    const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
-    const want = roleOf(v) ? 0 : carrierOctave(words) - (onto ? carrierOctave(onto) : 0);
-    // As far as the track's notes stay within MIDI 0..127: a high part under
-    // a high multiple sounds past the range on FM, and is written only up to it.
+    if (def) return twoOp(ctx.srcPart) ? opllWordsAs4op(def.words) : def.words;
+    return (twoOp(ctx.srcPart) ? romVoicesAs4op(ctx.srcPart) : opllRomVoices(ctx.srcPart)).get(v) ?? new Map();
+  }
+
+  // A voice sounds off its written note by its carrier's octave (an
+  // operator track's, its operator's) and its `:key` (soundOf); its stand-in
+  // voice by `onto`'s (none: a wave or a square, which play the written
+  // note). The track moves by the octaves between them — `:oct+` at the
+  // switch, its `:oct` writes and glides after it moved (body) — and what is
+  // left of a key past the octaves is said.
+  octaveFor(v, ctx, onto = null) {
+    const words = this.wordsOf(v, ctx);
+    const own = soundOf(words, ctx.opN);
+    const d = own.pitch - (onto?.pitch ?? 0);
+    const want = Math.round(d / 12) || 0;
+    // As far as the notes stay within MIDI 0..127 as the destination moves
+    // them: written as the source has them (its key taken off what sounds),
+    // the octaves added, the stand-in's key on top.
+    const by0 = (onto?.key ?? 60) - own.key;
     const { lo, hi } = this.noteSpan(ctx.head);
-    const k = Math.max(Math.ceil(-lo / 12), Math.min(Math.floor((127 - hi) / 12), want));
+    const k = Math.max(Math.ceil(-(lo + by0) / 12), Math.min(Math.floor((127 - hi - by0) / 12), want));
     const was = this.octShift.get(ctx.head) ?? 0;
     this.octShift.set(ctx.head, k);
-    if (want !== 0 && !this.saidOct?.has(v)) {
+    if ((d !== 0 || k !== want) && !this.saidOct?.has(v)) {
       (this.saidOct ??= new Set()).add(v);
       const by = (n) => `${Math.abs(n)} octave${Math.abs(n) === 1 ? "" : "s"} ${n > 0 ? "up" : "down"}`;
-      const as = onto ? `${by(want)} from its stand-in (carriers :ml ${carrierMultiple(words)} and ${carrierMultiple(onto)})` : `${by(want)} on FM (its carrier's :ml ${carrierMultiple(words)})`;
-      this.say(`'${v}' sounds ${as}; on ${ctx.dest} its notes are written ${k === want ? "so" : k ? by(k) + ", as far as MIDI 0..127 reaches" : "as they are: MIDI 0..127 has no room"}`);
+      const sign = (n) => `${n > 0 ? "+" : ""}${n}`;
+      const why = `${ctx.opN ? `operator ${ctx.opN}'s` : "its carrier's"} :ml ${own.ml}${own.key !== 60 ? `, :key ${own.key}` : ""}: ${sign(own.pitch)}${onto ? `; its stand-in ${sign(onto.pitch)}` : ""}`;
+      const left = d - 12 * want;
+      const rest = left ? `; the ${Math.abs(left)} semitone${Math.abs(left) === 1 ? "" : "s"} past the octaves are not kept` : "";
+      this.say(`'${v}' sounds ${sign(d)} semitones off ${onto ? "its stand-in" : "the written note"} (${why}); on ${ctx.dest} its notes are written ${k === want ? (want ? by(want) : "as they are") : k ? by(k) + ", to stay within MIDI 0..127" : "as they are: MIDI 0..127 has no room"}${rest}`);
     }
     return k === was ? "" : ` :oct+ ${k - was}`;
+  }
+
+  // A voice onto a stand-in `name` that sounds as `onto` (soundOf): the
+  // name and the octaves between them, undefined where neither changes.
+  standInAt(v, name, ctx, onto) {
+    const oct = this.octaveFor(v, ctx, onto);
+    return name === v && !oct ? undefined : `${name}${oct}`;
   }
 
   // An FM voice onto a wave channel: a role's wave and its macro (the
@@ -2127,8 +2156,7 @@ class Porter {
       this.say(`'${v}' on ${this.nameOf(ctx.head)} plays presets/wavetable's ${role} (wave-${role}: its wave and level over a note)`);
       return `wave-${role}${this.octaveFor(v, ctx)}`;
     }
-    const def = this.voices.get(v);
-    const words = twoOp(ctx.srcPart) ? opllWordsAs4op(def?.words ?? new Map()) : def?.words ?? new Map();
+    const words = this.wordsOf(v, ctx);
     const wave = waveformOf(words).slice(5);
     const env = `${v}-env`;
     // Its rates as the key scaling makes them at the track's middle note.
@@ -2152,33 +2180,30 @@ class Porter {
     if (ctx.family && !twoOp(ctx.srcPart)) {
       // A role's voice is the ROM's; the one user voice (pickUserVoice)
       // stays itself, read as two operators (defFm); the rest the ROM's.
-      // A ROM voice sounds at its own carrier's multiple: the track moves
-      // by the octaves between the voice's and its stand-in's.
-      if (v === this.userVoice) {
-        const oct = this.octaveFor(v, ctx, def?.words);
-        return oct ? `${v}${oct}` : undefined;
-      }
+      // Every stand-in keeps the pitch the voice sounds at (standInAt); the
+      // user voice keeps its multiples and its :key, and moves none.
+      if (v === this.userVoice) return this.standInAt(v, v, ctx, soundOf(this.wordsOf(v, ctx)));
       const r = onOpll(v, def?.words ?? new Map(), ctx.destPart);
       if (r.why) this.say(r.why);
       if (r.name !== v) this.replaced.add(v);
       // A 4-op def named as the ROM's voice would hide it: the def goes.
       else if (def && !def.imported) { this.shadowing.add(v); this.say(`'${v}' plays the ${ctx.destPart.label}'s ${v} (its role); its 4-op def is taken out`); }
-      const oct = this.octaveFor(v, ctx, romVoicesAs4op(ctx.destPart).get(r.name));
-      return r.name === v && !oct ? undefined : `${r.name}${oct}`;
+      return this.standInAt(v, r.name, ctx, soundOf(romVoicesAs4op(ctx.destPart).get(r.name)));
     }
     // The OPLL onto 4-op: a ROM voice its role's, presets/fm-roles'; a user
     // voice goes as itself, its def read as 4-op (defFm).
-    if (ctx.family && !def) {
+    if (ctx.family) {
+      if (def) return this.standInAt(v, v, ctx, soundOf(this.wordsOf(v, ctx)));
       const role = romOn4op(v);
       this.needsRoles = true;
       if (role !== v) this.say(`'${v}' (the ${ctx.srcPart.label}'s ROM) plays presets/fm-roles' ${role}`);
-      return role === v ? undefined : role;
+      return this.standInAt(v, role, ctx, FM_ROLE_SOUND[role] ?? { pitch: 0, key: 60 });
     }
-    // One ROM onto another: the voice of its role.
-    if (ctx.romSwap && !def && !ctx.destPart.romNames.includes(v)) {
-      const rom = romForRole(ctx.destPart, roleOf(v) ?? "synth");
-      this.say(`'${v}' plays the ${ctx.destPart.label}'s ${rom} (its role)`);
-      return rom;
+    // One ROM onto another: the voice of that name, else of its role.
+    if (ctx.romSwap && !def) {
+      const rom = ctx.destPart.romNames.includes(v) ? v : romForRole(ctx.destPart, roleOf(v) ?? "synth");
+      if (rom !== v) this.say(`'${v}' plays the ${ctx.destPart.label}'s ${rom} (its role)`);
+      return this.standInAt(v, rom, ctx, soundOf(romVoicesAs4op(ctx.destPart).get(rom)));
     }
     return undefined;
   }

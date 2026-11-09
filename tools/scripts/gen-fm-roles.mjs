@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { formatMMLisp } from "../../live/src/mmlisp-formatter.js";
 import { parse } from "../../live/src/mmlisp-parser.js";
+import { voiceTable, soundOf, FM_ROLE_SOUND } from "../../live/src/voice-port.js";
 
 const ROLES = {
   piano: "gm-piano",
@@ -49,6 +50,16 @@ const head = `; The melodic roles as FM voices, for the machines with 4-op FM: w
 const text = formatMMLisp([head, ...Object.entries(ROLES).map(voice)].join("\n"), parse);
 
 const path = new URL("../../presets/fm-roles/set.mmlisp", import.meta.url);
+// voice-port.js's FM_ROLE_SOUND: how each role sounds off its written note
+// and the :key that moves it, which a conversion onto 4-op reads without the
+// set's text.
+const sounds = new Map([...voiceTable(text, null, null)].map(([n, d]) => [n, soundOf(d.words)]));
+const off = [...sounds].filter(([, x]) => x.pitch || x.key !== 60);
+const same = (a, b) => a?.pitch === b?.pitch && a?.key === b?.key;
+if (off.length !== Object.keys(FM_ROLE_SOUND).length || off.some(([n, x]) => !same(x, FM_ROLE_SOUND[n]))) {
+  console.error(`voice-port.js's FM_ROLE_SOUND is not the set's: ${JSON.stringify(Object.fromEntries(off))}`);
+  process.exit(1);
+}
 if (process.argv.includes("--check")) {
   if (readFileSync(path, "utf8") !== text) {
     console.error("presets/fm-roles/set.mmlisp is not what gen-fm-roles.mjs writes");
