@@ -77,7 +77,7 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
-  assignBends, PITCH_NONE, gcd, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
+  assignBends, PITCH_NONE, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { TARGETS, targetProfile } from "./targets.js";
 import { PORT_TARGETS } from "./score-port.js";
 import { envCycle } from "./chips/ssg.js";
@@ -87,6 +87,7 @@ import { Apu as GbApu } from "./synth-gb.js";
 import { rhythmRom } from "./chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "./chips/msm6258.js";
 import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
+import { assignEnvelopes, shapeOf } from "./import-shapes.js";
 import { beatClock, shuffleTokens, timingLine } from "./import-timing.js";
 import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";
 import { encodeWav } from "./export-wav.js";
@@ -2058,7 +2059,6 @@ const TICK = (60 * RATE) / (BPM * PPQN);
 const MAX_ENV = 256; // frames an envelope follows; a level held after it is held on
 const ENV_NONE = "(macro :vel none)";
 const WAVE_NONE = "(macro :wave none)";
-const ENV_KEY = 4; // frames assignEnvelopes indexes its shapes by
 
 /** A note's level frame by frame (sampled mid-frame), from `start`. */
 function levelFrames(n, start, endT) {
@@ -2072,110 +2072,6 @@ function levelFrames(n, start, endT) {
     out.push(v);
   }
   return out;
-}
-
-/**
- * The notes' envelopes (`env`: :vel+ offsets a frame) → shared defs. A
- * driver's envelope is a way in, a level it holds, and a way out once the
- * note is let go: a run held four frames or more is that level (`#sus`),
- * and on the PSG what comes after it is the release (`#rel`) — the note is
- * keyed off where it starts, so notes of any length share the shape. A note
- * cut short plays the start of a longer one's, so it names that: the most
- * used shape it is the start of. Sets `envName` (and `relFrame`, where the
- * note is let go) on the notes that move; returns the defs.
- */
-function assignEnvelopes(notes) {
-  const moving = notes.filter((n) => n.env?.some((v) => v !== 0));
-  for (const n of moving) n.shape = shapeOf(n.env, n.canRelease);
-  const fits = (n, c) => {
-    if (n.shape.rel) return !!c.rel && same(n.shape.head, c.head) && n.shape.sus === c.sus && same(n.shape.rel, c.rel);
-    // A note that stops dead (its level to 0, then a rest) takes no shape
-    // with a release: that would sound on after it.
-    if (c.rel && n.silentAfter) return false;
-    return n.env.every((v, f) => v === (f < c.head.length ? c.head[f] : c.sus));
-  };
-  // A fit plays the shape's first ENV_KEY frames exactly, so a note that
-  // long is tried only on the shapes that start so; a shorter one, on all.
-  const keyOf = (env) => env.join(",");
-  const startOf = (c) => {
-    const a = [];
-    for (let f = 0; f < ENV_KEY; f++) a.push(f < c.head.length ? c.head[f] : c.sus);
-    return keyOf(a);
-  };
-  const noteKey = (n) => (n.shape.rel ? startOf(n.shape) : n.env.length >= ENV_KEY ? keyOf(n.env.slice(0, ENV_KEY)) : null);
-  const indexed = (list) => {
-    const by = new Map();
-    for (const c of list) {
-      const k = startOf(c);
-      if (!by.has(k)) by.set(k, []);
-      by.get(k).push(c);
-    }
-    return (n) => { const k = noteKey(n); return k == null ? list : by.get(k) ?? []; };
-  };
-  const shapes = [];
-  const by = new Map();
-  // Whole shapes first, longest first: a shorter note may be the start of one.
-  const order = [...moving].sort((x, y) => (y.shape.rel ? 1 : 0) - (x.shape.rel ? 1 : 0) || y.env.length - x.env.length);
-  for (const n of order) {
-    const k = noteKey(n);
-    let c = (k == null ? shapes : by.get(k) ?? []).find((sh) => fits(n, sh));
-    if (!c) {
-      shapes.push((c = { ...n.shape, uses: 0 }));
-      const sk = startOf(c);
-      if (!by.has(sk)) by.set(sk, []);
-      by.get(sk).push(c);
-    }
-    c.uses++;
-  }
-  shapes.sort((x, y) => y.uses - x.uses || x.head.length - y.head.length);
-  const near = indexed(shapes);
-  const named = new Map();
-  for (const n of moving) {
-    const c = near(n).find((sh) => fits(n, sh));
-    if (!named.has(c)) named.set(c, `env-${String(named.size + 1).padStart(2, "0")}`);
-    n.envName = named.get(c);
-    if (n.shape.rel) n.relFrame = n.shape.relAt;
-  }
-  return [...named].map(([c, name]) => envDef(name, c));
-}
-
-const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
-
-/** An envelope's way in, the level it holds, and (`release`) its way out. */
-function shapeOf(env, release) {
-  let best = null;
-  for (let i = 0; i < env.length; ) {
-    let j = i + 1;
-    while (j < env.length && env[j] === env[i]) j++;
-    if (j - i >= 4 && (!best || j - i > best.e - best.s)) best = { s: i, e: j };
-    i = j;
-  }
-  if (best && release && best.e < env.length)
-    return { head: env.slice(0, best.s), sus: env[best.s], rel: env.slice(best.e), relAt: best.e };
-  // Held to the end: the run it ends on is the level.
-  let L = env.length;
-  while (L > 1 && env[L - 2] === env[L - 1]) L--;
-  return { head: env.slice(0, L - 1), sus: env[L - 1], rel: null };
-}
-
-/**
- * `(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`, on a coarser
- * `:step` when every change is.
- */
-function envDef(name, { head, sus, rel }) {
-  const runs = (a) => {
-    const out = [];
-    for (const v of a) {
-      if (out.length && out[out.length - 1][0] === v) out[out.length - 1][1]++;
-      else out.push([v, 1]);
-    }
-    return out;
-  };
-  const parts = [runs(head), runs(rel ?? [])];
-  const step = parts.flat().reduce((g, [, k]) => gcd(g, k), 0) || 1;
-  const vals = (r) => r.flatMap(([v, k]) => new Array(k / step).fill(v));
-  const body = [...vals(parts[0]), "#sus", sus, ...(rel ? ["#rel", ...vals(parts[1])] : [])];
-  return `(def ${name} (macro${step > 1 ? ` :step ${step}f` : ""} :vel+ [${body.join(" ")}]))`;
 }
 
 // ── What is in it ────────────────────────────────────────────────────────

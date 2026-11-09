@@ -95,15 +95,34 @@ assert.deepEqual([noiseNoteOfHz(500), noiseNoteOfHz(1804), noiseNoteOfHz(12000)]
 }
 {
   // CC10 is each note's pan, as it is at the note-on: −1..1, the centre
-  // 64, where the channel pans (an FM channel snaps it to its bits).
+  // 64, where the channel pans (an FM channel snaps it to its bits) — the
+  // export's scale, so 20 comes back 20.
   const panned = new Uint8Array([
     0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 1, Q >> 8, Q & 255,
-    ...track([[0, 0xc0, 80], [0, 0xb0, 10, 0], ...notes(0, [60, 62, 64, 65]), [Q - 1, 0xb0, 10, 127], [2 * Q - 1, 0xb0, 10, 96], [3 * Q - 1, 0xb0, 10, 64]]),
+    ...track([[0, 0xc0, 80], [0, 0xb0, 10, 0], ...notes(0, [60, 62, 64, 65]), [Q - 1, 0xb0, 10, 127], [2 * Q - 1, 0xb0, 10, 20], [3 * Q - 1, 0xb0, 10, 64]]),
   ]);
   const p = parseMidi(panned), pa = analyzeMidi(p);
-  for (const [t, want] of [["midi", /:pan left[^)]*c :pan right d :pan 0\.51 e :pan center f/], ["md", /:pan left[^)]*c :pan right d :pan 0\.51 e :pan center f/]]) {
+  for (const [t, want] of [["midi", /:pan left[^)]*c :pan right d :pan -0\.69 e :pan center f/], ["md", /:pan left[^)]*c :pan right d :pan -0\.69 e :pan center f/]]) {
     const { source } = midiToMmlisp(p, { ...defaultMidiOptions(pa, t), structure: true, fileName: "pan.mid" }, pa);
     assert.match(source, want, `${t}: a pan a note:\n${source}`);
+    const bad = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics.filter((d) => d.severity === "error");
+    assert.deepEqual(bad, [], `${t}: compiles`);
+  }
+}
+{
+  // Expression moving during a note is the note's :vel+ macro, shared as
+  // env-NN; the note after it, with none, clears it — on FM with (macro
+  // :vel none), on a square by naming its envelope again.
+  const fade = Array.from({ length: 16 }, (_, i) => [i * (Q / 8), 0xb0, 11, 127 - i * 6]);
+  const swelled = new Uint8Array([
+    0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, 1, Q >> 8, Q & 255,
+    ...track([[0, 0xc0, 80], [0, 0x90, 60, 100], [2 * Q - 1, 0x80, 60, 0], ...fade, [2 * Q, 0xb0, 11, 127], ...notes(0, [62, 64]).map(([t, ...b]) => [t + 2 * Q, ...b])]),
+  ]);
+  const p = parseMidi(swelled), pa = analyzeMidi(p);
+  for (const [t, after] of [["md", /env-01 [^()]*c2 \(macro :vel none\) d/], ["midi", /env-01 [^()]*c2 \(macro :vel none\) d/], ["gb", /env-01 [^()]*c2 env-[a-z-]+ d/]]) {
+    const { source } = midiToMmlisp(p, { ...defaultMidiOptions(pa, t), dest: { "0:0": t === "gb" ? "sqr1" : t === "md" ? "fm1" : "ch1" }, structure: true, fileName: "swell.mid" }, pa);
+    assert.match(source, /\(def env-01 \(macro (:step \d+f )?:vel\+ \[0 [^\]]*-\d/, `${t}: the fade a :vel+ macro:\n${source}`);
+    assert.match(source, after, `${t}: cleared after it:\n${source}`);
     const bad = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics.filter((d) => d.severity === "error");
     assert.deepEqual(bad, [], `${t}: compiles`);
   }
