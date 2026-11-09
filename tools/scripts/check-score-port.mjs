@@ -80,10 +80,10 @@ function check(file, src, to) {
     const until = Math.min(midiPlan(before.ir).endTick, midiPlan(after.ir).endTick);
     // A voice across the FM families is a role's or a waveform's, whose
     // `:key` sounds it in its own register: the onsets are what is kept.
-    const twoOp = (t, h) => !!TARGETS[t].partOf(h)?.romNames;
-    // (And an FM voice onto a wave or a square is written at its sounding
-    // octave: carrierOctave.)
-    const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && (TARGETS[to].partOf(dest).kind !== "fm" || twoOp(from, row.head) !== twoOp(to, dest)));
+    // (And a voice onto a stand-in — a wave, a square, another family's or
+    // another ROM's voice — is written at its sounding octave: octaveFor.)
+    const rom = (t, h) => TARGETS[t].partOf(h)?.romNames ? TARGETS[t].partOf(h).rom ?? "opll" : null;
+    const keyed = kind !== "noise" && kind !== "sample" && !(kind === "fm" && (TARGETS[to].partOf(dest).kind !== "fm" || rom(from, row.head) !== rom(to, dest)));
     // A note under the destination's lowest (the SN76489's A2) is written up
     // by octaves to it.
     const lowest = TARGETS[to].partOf(dest)?.lowest;
@@ -284,7 +284,34 @@ const port = (src, to, rows, options) => {
 (fm1 lead :len 8 c d e f g a b > c)
 (fm2 high :len 4 c d lead e f)`, "msx");
   assert.match(up.text, /\(fm2 [\w-]+ :oct\+ 1 :len 4 c d lead :oct\+ -1 e f\)/, `the stand-in written up an octave:\n${up.text}`);
-  assert.ok(up.said.some((w) => /'high' sounds 1 octave up from its stand-in/.test(w)), up.said.join("\n"));
+  assert.ok(up.said.some((w) => /'high' sounds \+12 semitones off its stand-in \(its carrier's :ml 2: \+12; its stand-in 0\); on fm2 its notes are written 1 octave up/.test(w)), up.said.join("\n"));
+  // Every stand-in keeps the pitch the voice sounds at: its carrier's octave
+  // and its :key against the stand-in's (soundOf) — a role's too: the
+  // fm-roles synth-bass sounds an octave up, the OPLL's an octave down.
+  const roles = port(`(import "presets/fm-roles/set.mmlisp")\n(fm1 synth-bass :oct 2 :len 4 c g)\n(fm2 piano :len 4 c e)`, "msx");
+  assert.match(roles.text, /\(fm1 synth-bass :oct\+ 2 :oct 4 :len 4 c g\)/, roles.text);
+  assert.match(roles.text, /\(fm2 piano :len 4 c e\)/, "a role that sounds as written moves none");
+  const romBack = port("(def-score :target msx)\n(fm1 oboe :oct 4 :len 4 c d)\n(fm2 synth-bass :oct 2 :len 4 c g)", "md");
+  assert.match(romBack.text, /\(fm1 oboe :oct\+ -1 :oct 3 /, `the ROM's oboe (+1) onto fm-roles' (+2):\n${romBack.text}`);
+  assert.match(romBack.text, /\(fm2 synth-bass :oct\+ -2 :oct 0 /, "the ROM's synth-bass (-1) onto fm-roles' (+1)");
+  // A :key the conversion's def keeps; one past the octaves is said.
+  const keyed = port("(def-fm low init-fm :alg 7 :key 48)\n(def-fm tom init-fm :alg 7 :key 62)\n(fm1 low :len 4 c e)\n(fm2 tom :len 4 c)", "msx");
+  assert.match(keyed.text, /\(def-fm low init-fm :key 48 /, "the user voice keeps its :key");
+  assert.match(keyed.text, /\(fm1 low :len 4 c e\)/);
+  assert.ok(keyed.said.some((w) => /'tom' sounds \+2 semitones off its stand-in .*the 2 semitones past the octaves are not kept/.test(w)), keyed.said.join("\n"));
+  // An operator track sounds at its own operator's multiple; its :oct
+  // writes move with it.
+  const kit = "(def-fm kit :alg 7 :ml1 4 :ml2 1 :ml3 1 :ml4 1 :tl1 0 :tl2 0 :tl3 0 :tl4 0)\n(fm3 :oct 4 kit)";
+  const ops = port(`${kit}\n(fm3-1 :oct 5 :len 4 c e)\n(fm3-2 :len 4 e _ c e)`, "msx");
+  assert.match(ops.text, /\(fm3 flute :oct\+ 2 :oct 7 :len 4 c e\)/, `operator 1 (:ml 4) two up, its :oct with it:\n${ops.text}`);
+  assert.match(ops.text, /\(fm\d flute :len 4 e _ c e\)/, "operator 2 (:ml 1) as written");
+  // The stand-in's own :key counts toward the range: fm-roles' guitar
+  // (:key 72) moves a note at :oct 9 past it, so the track goes down.
+  const high = port("(def-score :target msx)\n(fm1 :oct 9 guitar :len 4 c g)", "md");
+  assert.match(high.text, /\(fm1 :oct 9 guitar :oct\+ -1 /, high.text);
+  assert.ok(high.said.some((w) => /'guitar' .*1 octave down, to stay within MIDI 0\.\.127/.test(w)), high.said.join("\n"));
+  assert.match(port("(def-fm low init-fm :alg 7 :key 48)\n(fm1 low :len 4 c e)", "gb").text, /\(wave sine low-env :oct\+ -1 /, "a :key 48 voice onto a wave: an octave down");
+  assert.match(port("(def-score :target msx)\n(def-fm reed :fb 3 :tl1 30 :ar1 15 :ar2 12 :eg2 1)\n(def-fm deep reed :key 48)\n(fm1 deep :len 4 c)", "md").text, /\(def-fm deep :key 48 /, "an OPLL voice read as 4-op keeps its :key");
   // A channel coming to the user voice from a ROM voice carries none of the
   // ROM's registers: the user voice is one on every channel (no W_TARGET).
   const fromRom = port(`(def-fm lead init-fm :alg 4 :fb 5 :tl1 20 :ml1 2 :tl2 0 :tl3 30 :tl4 0)
@@ -898,6 +925,21 @@ const port = (src, to, rows, options) => {
   // Part G's `p$xy` pans sound y (BD SD TOP HH TOM RIM) as `p x` does a part.
   const panned = importMucom(new TextEncoder().encode("#title pan\n\nG l8 v15 @16c p$14@16c p$24@16c p$34@16c\n")).source;
   assert.match(panned, /\(rhythm5 [^)]*c8 :pan right c8 :pan left c8 :pan center c8\)/, `the tom panned:\n${panned}`);
+  const g = (line) => importMucom(new TextEncoder().encode(`#title g\n\nG l8 v63 ${line}\n`)).source;
+  // A sound panned to neither side is not heard: it rests.
+  assert.match(g("@16 c p$04 c c p$34 c"), /\(rhythm5 [^)]*c _ _ c\)/);
+  // The last pass leaves at `/`: what follows has the state there, the
+  // keys (`@`) and the pan alike.
+  assert.match(g("@16 [c p$24 c / p$14 c]2 c"), /c8 :pan left c8 :pan right c8 c8 :pan left c8 c8\)/);
+  assert.match(g("[@1c8 / @3c8]4 c8"), /\(rhythm2 [^\n]*_8\)/, "the snare keyed after the `/` does not sound after the loop");
+  // A jump back (a loop across lines, `L`) that comes back with the pan its
+  // target left with restates it there; one that does not, plays on.
+  const gl = (lines) => importMucom(new TextEncoder().encode(`#title g\n\n${lines}\n`)).source;
+  assert.match(gl("G l8 v63 @16 [ c p$24 c p$34\nG ]2 c"), /#loop1 :vel 15 :pan center c8 :pan left c8\)\n\(rhythm5 \(go loop1 2\) :pan center c8\)/);
+  assert.match(gl("G l8 v63 @16 c L c p$24 c p$34"), /#loop :pan center c8 :pan left c8 \(go loop\)/);
+  assert.match(gl("G l8 v63 @16 [ c p$24 c\nG ]2 c"), /#loop1 :vel 15 c8 :pan left c8\)\n\(rhythm5 \(go loop1 2\) c8\)/);
+  // A folded loop whose pan moves restates it where a pass starts.
+  assert.match(g("@16 [c c / p$24 c p$34]3 c"), /\(x 3 :vel 15 :pan center c8 c8 \(break\) :pan left c8\) :pan center c8\)/);
   // A VGM of each machine offers every machine: written as its own
   // machine's score, then converted onto each (the one road Live's dialog
   // takes, as Convert to Machine… does), each clean.

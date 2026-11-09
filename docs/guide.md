@@ -1762,7 +1762,8 @@ than approximating:
   `v`'s total and per-sound levels become an absolute `:vel`, which the
   chip's level takes back. The RX5 kit is imported beside it: its sounds
   stand in for the ROM's until you load yours (File ▸ Import ▸ YM2608 Rhythm ROM…).
-  `p$xy` pans sound y (0 BD … 5 RIM) as `p x` does a part: `:pan` on its track.
+  `p$xy` pans sound y (0 BD … 5 RIM) as `p x` does a part: `:pan` on its
+  track; `p$0y`, neither side, rests it.
 - **SSG** `P` is the channel's `:mode tone|noise|both` (`P0` rests the
   notes), `w` the song's `:noise-rate`. SSG reverb rings without its level
   drop.
@@ -1917,7 +1918,10 @@ On `fc` the triangle, which has no level, takes the lowest lane.
   plays the nearest of its sounds; on a noise channel, a rate and an envelope
   by the kind of hit (kick, tom, snare, hat, cymbal).
 - Velocity, volume (CC7) and expression (CC11) become `:vel`, the loudest
-  note at 15, as each note's note-on finds them; pan (CC10) is each note's
+  note at 15, as each note's note-on finds them; where volume and expression
+  move during a note, they are its `:vel+` macro (an `env-NN` def where notes
+  share it, as a VGM's envelopes; on the PSG in place of its family's
+  envelope, which the notes after it take back); pan (CC10) is each note's
   `:pan` (−1..1) where the channel pans; the sustain pedal holds notes.
 - Pitch bend (its range from RPN 0) becomes a `:pitch` macro on the notes it
   moves — a vibrato or a few lines, shared as `vib-…` / `bend-NN` defs as a
@@ -2723,13 +2727,17 @@ Game Boy's `wave`) take FM, squares and one another's waves the same way:
   wave and macro for it (`wave-piano`: the steps of wave and level that make
   the instrument); any other its waveform's wave under an envelope read off
   its main carrier (`pad-env`, a `:vel+` macro). A square plays the
-  wavetable's `square`, its `:duty` the pulse of that width. A voice whose
-  main carrier is at `:ml 2` (4, 8) sounds an octave (two, three) above the
-  written note; on a wave or a square, which play the written note, its
-  track is written that far up (`:oct+ 1`, its `:oct` writes and glides
-  raised), and the log says so. Onto the OPLL, where it plays the ROM voice
-  of its waveform, it is written by the octaves between its carrier and the
-  ROM voice's; a role's voice, which plays the role's own, is not moved.
+  wavetable's `square`, its `:duty` the pulse of that width.
+- A voice played by a stand-in keeps the pitch it sounds at. A voice
+  sounds off its written note by its main carrier's octave (`:ml 2` one
+  up, `:ml 4` two) and its `:key`; a wave or a square plays the written
+  note, and another family's or another ROM's voice sounds at its own
+  (the FM-PAC's `oboe` an octave up, its `synth-bass` an octave down,
+  presets/fm-roles' `synth-bass` an octave up). The track is written by the
+  octaves between them (`:oct+ 1`, its `:oct` writes and glides moved), a
+  role's voice too; what a `:key` leaves past the octaves is not kept. The
+  log says each. A voice that goes as itself, read in the other family's
+  operators, keeps its `:key`.
 - The FDS's modulation and the PC Engine's LFO (wave2 swaying wave1) are one
   another's: the FDS's table summed is wave2's wave, held at `:vol 0`; its
   rate is wave2's pitch with `:lfo-freq`; its depth is wave1's nearest
