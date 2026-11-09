@@ -62,8 +62,9 @@ Its current limits are `driver.md` §11 — keep the two in step.
 ## Importers
 
 - **Famicom: ppmck's MML**, if a composer's files call for it.
-- **MGS**: an envelope's wave changes as it runs (a note keeps the first),
-  `#psg_tune` / `#opll_tune`, `@\` on FM.
+- **MGS**: an envelope's FM voice changing as it runs (a note keeps the
+  first; seven of the 248 songs to hand), `#psg_tune` / `#opll_tune` and
+  `@\` on FM (none of the 248 uses them).
 - **MDX**: MP / MA's random shape.
 - **MIDI timed by its notes**: a pickup in a song with no GM kick and
   snare, and a change of meter or tempo within a song (bestBars and one

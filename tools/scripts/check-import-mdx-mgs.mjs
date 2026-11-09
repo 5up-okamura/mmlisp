@@ -376,4 +376,25 @@ function compressMgs(u8) {
   clean(source, what);
 }
 
+// An @e stepping the SCC's wave (@n under the levels): a :wave macro of
+// its frames, a name a frame; a note after it without one names its wave
+// again (the channel keeps a macro's last wave) and stops the macro.
+{
+  const T = (n, len) => [0x20 | n, len];
+  const sq = Array.from({ length: 32 }, (_, i) => (i < 16 ? 100 : 156));
+  const ramp = Array.from({ length: 32 }, (_, i) => (i * 8) & 255);
+  const defs = [0x03, 0, ...sq, 0x03, 1, ...ramp,
+    0x02, 1, 0x20, 10, 0x10, 0, 0x0f, 0x10, 1, 0x0f, 0x0f, 0x10, 0, 0x0f, // @e1: @0 f, @1 f f, @0 f
+    0x02, 2, 0x20, 3, 0x10, 1, 0x0f, // @e2: @1 f
+    0xff];
+  const scc1 = [0xcf, 0x81, ...T(0, 24), 0x82, ...T(2, 24), 0x81, ...T(4, 24), 0xff];
+  const mgs = parseMgs(buildMgs({ title: "w", tempo: 120, defs, tracks: [null, null, null, scc1] }));
+  const { source, warnings } = mgsToMmlisp(mgs, { fileName: "w.mgs", structure: false });
+  const what = "MGS @e's waves";
+  has(source, /\(def wmac-e1 \(macro :wave \[scc-00 scc-01 scc-01 scc-00\]\)\)/, what);
+  has(source, /\(wave1 [^|]*wmac-e1[^|]* c [^|]*scc-01 \(macro :wave none\)[^|]* d [^|]*wmac-e1[^|]* e/, what);
+  assert.ok(!warnings.some((w) => /changes the/.test(w)), `${what}: read, not left out`);
+  clean(source, what);
+}
+
 console.log("MDX / MGS import checks passed");

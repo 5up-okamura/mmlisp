@@ -29,7 +29,8 @@
 //   @n, @e / @r     a tone's envelope (the @e or @r of its number; @e<n>
 //                   puts another in), a :vol macro frame by frame: `n` a
 //                   level a count, `n:c` held c counts, `n=c` moved to over
-//                   c counts, `[ ]` the sustain loop, `\` pitch steps; @r's
+//                   c counts, `[ ]` the sustain loop, `\` pitch steps, an
+//                   @n step on the SCC a :wave macro (wmac-e); @r's
 //                   RR, or k on the PSG and the SCC, its release
 //   q, &            q as :gate* n/8, the note its full length; & legato
 //   \ / @\          :pitch — on the PSG and the SCC an offset on the
@@ -495,14 +496,15 @@ function expandEnv(env) {
   const levels = [], offsets = [], nfreqs = [], modes = [];
   let level = 15, off = 0, sus = null, i = 0;
   let mode = null, nfreq = null, wave = null, moves = 0;
-  let curN = null, curM = null; // the noise and the mixer as the steps set them (null: the note's)
+  let curN = null, curM = null, curW = null; // the noise, the mixer and the tone as the steps set them (null: the note's)
+  const waves = [];
   const d = env.data;
-  const frame = (n) => { for (let k = 0; k < n && levels.length < ENV_MAX_FRAMES; k++) { levels.push(level); offsets.push(off); nfreqs.push(curN); modes.push(curM); } };
+  const frame = (n) => { for (let k = 0; k < n && levels.length < ENV_MAX_FRAMES; k++) { levels.push(level); offsets.push(off); nfreqs.push(curN); modes.push(curM); waves.push(curW); } };
   while (i < d.length && levels.length < ENV_MAX_FRAMES) {
     const c = d[i++];
     const first = !levels.length;
     if (c < 0x10) { level = c; frame(1); }
-    else if (c === 0x10) { const w = d[i++] & 31; if (first) wave = w; else moves++; }
+    else if (c === 0x10) { const w = d[i++] & 31; if (first) wave = w; else moves++; curW = w; }
     else if (c === 0x11) i += 2;
     else if (c === 0x12) off += s8(d[i++]);
     else if (c >= 0x20 && c <= 0x2f) {
@@ -520,7 +522,7 @@ function expandEnv(env) {
   }
   if (!levels.length) frame(1);
   if (sus != null && sus >= levels.length) sus = null;
-  return { levels, offsets, nfreqs, modes, sus, mode, nfreq, wave, moves };
+  return { levels, offsets, nfreqs, modes, waves, sus, mode, nfreq, wave, moves };
 }
 
 /**
@@ -712,12 +714,24 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     const name = `bend-e${num}-${NOTE_NAMES[midi % 12].replace("+", "s")}${Math.floor(midi / 12) - 1}${kind === "psg" ? "" : `-${kind}`}`;
     return { name, text: `(def ${name} (macro :pitch+ ${frameVector(cents, x.sus)}))` };
   })?.name ?? null;
+  // An @e's @n steps under an SCC note: a :wave macro of the waves, frame
+  // by frame, as its levels (its sustain loop too). Elsewhere (FM's voice,
+  // which no macro moves) its notes keep the first, said once an @e.
+  const waveMac = (num, x, first) => defs.of(`wmac:${num}:${first}`, () => {
+    let w = first;
+    const names = x.waves.map((n) => (w = (n != null && waveName(n)) || w));
+    if (new Set(names).size < 2) return null;
+    // (A name a frame: a :wave macro takes names and #sus, no wait.)
+    const name = `wmac-e${num}`;
+    const steps = names.flatMap((nm, i) => (i === x.sus ? ["#sus", nm] : [nm]));
+    return { name, text: `(def ${name} (macro :wave [${steps.join(" ")}]))` };
+  })?.name ?? null;
+  const keptFirst = new Set();
   const expanded = new Map();
   const envX = (num) => {
     if (!expanded.has(num)) {
       const env = mgs.defs.envs.get(num);
       const x = env?.type === "e" ? expandEnv(env) : env ? { mode: null, nfreq: null, wave: null, moves: 0, offsets: [] } : null;
-      if (x?.moves) warnings.push(`@e${num} changes the wave ${x.moves} time${x.moves > 1 ? "s" : ""} as it runs: its notes keep the first`);
       expanded.set(num, x);
     }
     return expanded.get(num);
@@ -795,6 +809,8 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
     // An @e moving the noise or the mixer on any note: every note says its own.
     const moving = (x) => !!x && [x.nfreqs, x.modes].some((v) => v && new Set(v.filter((n) => n != null)).size + (v.includes(null) ? 1 : 0) > 1);
     const envMoves = isPsg && tr.notes.some((n) => n.st.env != null && moving(envX(n.st.env)));
+    // An @e stepping the SCC's wave on any note: every note says its own.
+    const waveMoves = isScc && tr.notes.some((n) => n.st.env != null && envX(n.st.env)?.moves);
     for (const n of tr.notes) {
       const st = n.st;
       const x = st.env != null ? envX(st.env) : null;
@@ -810,6 +826,14 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         state.push(`:sus ${st.sus}`);
       }
       else if (!isPsg && wave != null) { const w = waveName(wave); if (w) state.push(w); }
+      if (isScc) {
+        const mac = x?.moves && wave != null ? waveMac(st.env, x, waveName(wave)) : null;
+        if (mac) state.push(mac);
+        else if (waveMoves) state.push("(macro :wave none)");
+      } else if (x?.moves && !keptFirst.has(st.env)) {
+        keptFirst.add(st.env);
+        warnings.push(`@e${st.env} changes the ${isFm ? "voice" : "tone"} ${x.moves} time${x.moves > 1 ? "s" : ""} as it runs: its notes keep the first`);
+      }
       if (isPsg) {
         const mix = x ?? { mode: null, nfreq: null };
         const mode = mix.mode ?? st.mode;

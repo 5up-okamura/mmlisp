@@ -2411,7 +2411,9 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   (`n:c` held, `n=c` moved to, `[ ]` the sustain loop); `@r`'s RR, or `k`
   on the PSG and the SCC, is its release after `#rel`, written as its level
   steps, and an `@e`'s `\` steps a `(def bend-… (macro :pitch+ …))` — its
-  noise and mixer steps a note's `(macro :noise-rate …)` and `(macro :mode …)`. The FM-PAC goes to `fm1`–`fm9`
+  noise and mixer steps a note's `(macro :noise-rate …)` and `(macro :mode …)`,
+  and its `@n` steps on the SCC a `(def wmac-e… (macro :wave …))` of its
+  waves (on FM the note keeps its first voice, said). The FM-PAC goes to `fm1`–`fm9`
   (`fm1`–`fm6` beside the rhythm, `#opll_mode 1`): `@0`–`@14` are the ROM's
   voices 1–15 (`violin` …, as `@#` assigns them), a tone on the original
   voice its `@v` as a `def-fm mgs-vNN` on the OPLL's words; `so` / `sf` are
