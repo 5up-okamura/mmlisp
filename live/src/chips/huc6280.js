@@ -63,7 +63,7 @@ export const pceWave = {
   unit: "pce",
   kind: "wave",
   level: LEVEL,
-  words: words("WAVE", "PAN"),
+  words: words("WAVE", "PAN", "LFO_SYNC"),
   songWords: SONG_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "a PC Engine channel has no :mode; its sound is its def-wave, or noise5 / noise6" },
@@ -76,7 +76,7 @@ export const pceWaveLfo = {
   ...pceWave,
   name: "pce-lfo",
   label: "PC Engine wave (ch1)",
-  words: words("WAVE", "PAN", "FM_FMS"),
+  words: words("WAVE", "PAN", "FM_FMS", "LFO_SYNC"),
 };
 
 export const pceNoise = {
@@ -85,7 +85,7 @@ export const pceNoise = {
   unit: "pce",
   kind: "noise",
   level: LEVEL,
-  words: words("PAN"),
+  words: words("PAN", "LFO_SYNC"),
   songWords: SONG_WORDS,
   modes: {},
   modeError: { code: "E_PARAM_VALUE", message: "the PC Engine's noise has no :mode; its rate is the note, c2 to g4" },
@@ -156,8 +156,8 @@ function pceEncoder() {
   const ctl = (ch) => [PORT, 0x04, on[ch] ? 0x80 | vol[ch] : 0x00];
   // The LFO (rule A, language.md §19 pce): while channel 1 takes it, channel
   // 2 stays on — silent between its notes at volume 0 — so the LFO runs at
-  // its last pitch; a note of channel 2 (keyOn), heard or at :vol 0, starts
-  // the LFO's wave over, the reset bit pulsed.
+  // its last pitch; a key-on under :lfo-sync, on any channel, starts the
+  // LFO's wave over, the reset bit pulsed (lfoReset).
   let lfoMode = 0;
   let ch2Note = false; // channel 2 is sounding a note of its own
   const LFO_CH = 1;
@@ -187,8 +187,8 @@ function pceEncoder() {
       on[LFO_CH] = ch2Note || lfoMode ? 1 : 0;
       return [...(lfoMode && !was ? lfoReset() : [[PORT, 0x09, lfoMode]]), ...(ch2Note ? [] : [sel(LFO_CH), ctl(LFO_CH)])];
     },
-    // A note starting on a channel: channel 2's restarts the LFO.
-    keyOn: (ch) => (ch === LFO_CH && lfoMode ? lfoReset() : []),
+    // :lfo-sync's reset, while the LFO runs.
+    lfoReset: () => (lfoMode ? lfoReset() : []),
     // DDA: the channel on as a DAC at a level (att 0 loud .. 31 off), each
     // sample a write; off, the channel back to its wave (off).
     dda: {

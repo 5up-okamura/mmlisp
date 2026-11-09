@@ -2380,7 +2380,7 @@ its own loop, `#top … (go top)`, as the drivers loop each track on its own.
   clocks late; without one running on from the `MP` / `MA`, so each note's
   curve starts at its `:phase`, to a sixteenth of the cycle), each one
   written twice or more a def named by its curve
-  (`vib-tri-19-24t`, `bend-up200-24t`, `trem-…`), `MH` the OPM's LFO words, and track H's noise (`w`, or `y$0F`)
+  (`vib-tri-19-24t`, `bend-up200-24t`, `trem-…`), `MH` the OPM's LFO words (its sync a track's `:lfo-sync on`), and track H's noise (`w`, or `y$0F`)
   stays on `fm8` as its `:mode noise` / `:mode tone`, the voice whole — a
   hi-hat keeps its envelope. A track with no notes that only sets the tempo — a
   loop dithering it between two Timer B values, for one in between — becomes

@@ -44,7 +44,7 @@ export const fdsWave = {
   label: "FDS wave",
   kind: "wave",
   level: { scale: "linear", steps: 33 }, // the gain: 32 loud .. 0 off
-  words: words("WAVE"),
+  words: words("WAVE", "LFO_SYNC"),
   songWords: words("LFO_FREQ", "LFO_PMD", "LFO_WAVE"),
   // `:lfo-wave` is a table of the modulation's steps here, not the OPM's
   // waveforms (mmlisp2ir.js).
@@ -79,14 +79,19 @@ function fdsEncoder() {
       return [at(0x4086, f & 0xff), at(0x4087, modHi)];
     },
     lfoPmd: (v) => [at(0x4084, 0x80 | Math.max(0, Math.min(63, Math.round(Number(v) || 0))))],
-    // The table: the unit halted (its table open), the 32 codes, the
-    // counter back to 0, and the unit running again.
+    // The table: the unit halted (its table open), the 32 codes, and the
+    // unit running again — the counter where it was: only :lfo-sync moves
+    // it (a table written again, as an import restates one, does not
+    // restart a modulation that runs on).
     lfoTable: (steps) => [
       at(0x4087, 0x80 | modHi),
       ...steps.map((v) => at(0x4088, FDS_MOD_STEPS[String(v)] ?? 0)),
-      at(0x4085, 0x00),
       at(0x4087, modHi),
     ],
+    // :lfo-sync's reset: the counter back to 0, as FDS drivers write it at a
+    // key-on. The table's place is not the CPU's to set (a table written
+    // whole comes round to where it was), so it goes on from there.
+    lfoReset: () => [at(0x4085, 0x00)],
   };
 }
 

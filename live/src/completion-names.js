@@ -36,7 +36,7 @@ const AC_FM_PARAMS = [...FM_CHANNEL_WORDS, ...opWords()].filter((w) => partsWith
 export const AC_PARAMS = [
   // song-wide (written on a track; §1) and the def-score keys
   ':tempo', ':lfo-rate', ':master', ':title', ':composer', ':author', ':pcm-voices', ':target',
-  ':noise-rate', ':env-rate', ':lfo-freq', ':lfo-pmd', ':lfo-amd', ':lfo-wave',
+  ':noise-rate', ':env-rate', ':lfo-freq', ':lfo-pmd', ':lfo-amd', ':lfo-wave', ':lfo-sync',
   // track / channel
   ':prio', ':oct', ':oct+', ':len', ':gate', ':gate*', ':gate-',
   ':vel', ':vel+', ':vel*', ':vol', ':pan', ':snap', ':mode', ':env', ':env-semi', ':env-detune', ':shuffle', ':shuffle-base',

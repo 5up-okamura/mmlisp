@@ -159,6 +159,19 @@ const loopTo = (track, at) => { const off = at - (track.length + 3); track.push(
     assert.deepEqual(curves("fm2"), [":phase 64 :wait", ":phase 192", ":phase 64 :wait"], "MDX LFO under an MD: waited at a key-on, on through a slur");
     clean(source, "MDX LFO");
   }
+  // MH's sync (its wave byte's bit 6): the track's key-ons start the OPM's
+  // LFO over, :lfo-sync on; a track whose MH has none says nothing of it.
+  {
+    const MH = (sync) => [0xea, (sync ? 0x40 : 0) | 2, 200, 0x80 | 60, 20, 0x21];
+    const A8 = [0xfd, 1, ...MH(true), ...N(60, 24), ...N(62, 24), ...END];
+    const B8 = [0xfd, 1, ...MH(false), ...N(64, 48), ...END];
+    const mdx8 = parseMdx(buildMdx({ title: "MH sync", tracks: [A8, B8, END, END, END, END, END, END, END], voices }));
+    const { source, warnings } = mdxToMmlisp(mdx8, { structure: false, fileName: "mh.mdx" }, analyzeMdx(mdx8));
+    has(source, /\(fm1 [^\n]*:lfo-sync on/, "MDX MH sync");
+    assert.ok(!/\(fm2 [^\n]*:lfo-sync/.test(source), "MDX MH without sync: no :lfo-sync");
+    assert.ok(!warnings.some((w) => /sync/i.test(w)), "MDX MH sync: read, not left out");
+    clean(source, "MDX MH sync");
+  }
   // A song on its composer's own grid: 22-clock 8ths, 176-clock bars. Its
   // quarter is 44 clocks, the tempo 48/44 faster, the notes plain 8ths.
   {

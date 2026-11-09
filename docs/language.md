@@ -340,6 +340,7 @@ keywords at the form's first tick.
 | `:snap`    | `[pitch classes]`, mask, `$slot`, `none` | The scale every pitch write snaps onto (§5.3) |
 | `:mode`    | symbol                    | `pcm1`–`pcm3`: `shot`/`loop`/`gate` (anything else `E_PCM_MODE_INVALID`); `noise`: `white0`–`white3`/`periodic0`–`periodic3`; on other targets, the part's own — the SSG's `tone`/`noise`/`both`/`env`, `x68k` fm8's `tone`/`noise` (§19) (all sticky) |
 | `:noise-rate` | 1–31 or curve        | The SSG's (`pc88`, `msx`, `fc`'s 5B) or the OPM's (`x68k`) one noise period, song-wide like `:lfo-rate` (§19) |
+| `:lfo-sync` | `on` / `off`            | The track's key-ons start the song's LFO over (below; sticky, `off` at the start) |
 | `:csm-rate`| Hz or curve               | Timer A rate (`fm3-csm` only, §15)                       |
 | `:shuffle` | 1–99, `[w1 … wN]` or `none` | Grid warp: a pair's first share, or a cycle's weights (§5.2) |
 | `:shuffle-base` | length token         | One step of the warped grid (default: sixteenth, §5.2)   |
@@ -370,6 +371,22 @@ order), and for all but `:tempo` that is flagged `W_SONG_WRITE_RACE` where
 the two writes differ (the same write twice races nothing); the
 tick-0 initial tempo resolves the same way. Keep song-wide automation on a
 single track to avoid ambiguity.
+
+**`:lfo-sync on`** has the track's key-ons start the song's one LFO over —
+its phase back to its start, for every channel it sways, as a driver's LFO
+sync does (MXDRV's `MH`). A key-on is a note's, a `:keyon` retrigger's or an
+`fm3-N` operator's; a tie or slur keys nothing, and resets nothing. The
+reset is written just ahead of the key-on. Nothing else moves the LFO's
+phase: its other words (`:lfo-rate`, `:lfo-freq`, `:lfo-wave` …) go on from
+where it is — but the OPN's LFO turned off (`:lfo-rate 0`) holds its start
+until it is turned on again, as the chip does. `on` or `off` only
+(`E_PARAM_VALUE`); on a track whose part has no LFO — the PSG's, the
+OPLL's, the 2A03's, a MIDI channel — `E_TARGET` / `E_UNSUPPORTED_TARGET`.
+What the reset writes is the chip's: the OPN's `$22` off and on again at its
+rate (`md`, `pc88`; none while `:lfo-rate` is 0), the OPM's `$01` bit 1
+(`x68k`), the HuC6280's `$09` reset (`pce`, any channel's key-on), the FDS's
+counter back to 0 (`fc`; its table goes on from where it is, which the CPU
+cannot set).
 
 On the `noise` channel, `:mode` sets the noise mode as **persistent channel
 state**: it emits `PARAM_SET NOISE_MODE`, and every noise note re-asserts the
@@ -1231,7 +1248,9 @@ A game's sound effects are written once, as defs, and every song carries them.
   voice loaded with the score (driver.md §4.1).
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the
   game's fader, the chip's one LFO, the score's values — so an effect does not
-  write them (`E_SE_PART`).
+  write them (`E_SE_PART`), nor `:lfo-sync`, which restarts that LFO: an
+  effect taking a channel takes it without the part's `:lfo-sync`, and its
+  key-ons leave the LFO as it runs.
 - **Not on CH3.** `fm3`, `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` take
   no effect part (`E_SE_PART`): CH3's operator mode and CSM are chip-wide,
   so a song part there could not play on under an effect. Put an FM effect
@@ -3013,7 +3032,8 @@ faster), and `wave1` takes it with **`:fms 0–3`** — 0 off, 1–3 how deep
 `:lfo-freq 0`, 9 Hz at 200, and at the top it is a tone of its own (the
 chip's "FM"). While `wave1`'s `:fms` is not 0, channel 2 stays on as the LFO:
 `wave2`'s rests and `:vol 0` only silence it, and the LFO runs on at its last
-pitch; a note of `wave2`, heard or at `:vol 0`, starts the LFO's wave over.
+pitch; a key-on under `:lfo-sync on` (§5) starts the LFO's wave over — on
+`wave2`, its notes, heard or at `:vol 0`; on `wave1`, each swayed note.
 `:fms 0` stops it. The depth is in the chip's period steps — ±16, ±64 or
 ±256 added to channel 1's 12-bit period — so a higher note sways further,
 and a deep sway on a high note wraps round to a low one, as on the chip.
@@ -3023,7 +3043,7 @@ and a deep sway on a high note wraps round to a low one, as on the chip.
 (def-score :target pce)
 (def-wave tri :wave (triangle -128..127))
 (def-wave lead :wave (saw -128..127))
-(wave2 tri :vol 0 :oct 5 :len 1 c ~ c)            ; the LFO: its shape, its speed
+(wave2 tri :vol 0 :lfo-sync on :oct 5 :len 1 c ~ c) ; the LFO: its shape, its speed
 (wave1 lead :lfo-freq 200 :fms 2 :len 4 c e g e)  ; channel 1 swayed by it
 ```
 
@@ -3251,7 +3271,8 @@ pitch (deep at once: at 20 a counter of ±16 is about ±30 %); and
 / (1.79 MHz × n) seconds — 20 a vibrato of about 8.5 Hz, the hundreds a
 rough, FM-like timbre. They are song-wide (any track may write them), take
 a value and a curve (`:lfo-freq` and `:lfo-pmd`), and start at 0; a table
-written starts the counter at 0. A def names a table (`(def vib [1 1 …])`).
+written leaves the counter where it is, and `:lfo-sync on` (§5) puts it back
+to 0 at each key-on. A def names a table (`(def vib [1 1 …])`).
 `:lfo-wave`'s OPM waveforms are `E_PARAM_VALUE` here, a table elsewhere.
 The chip's volume and modulation envelopes are not the language's. VGM
 carries the FDS (the 2A03's 0xB4, its clock's bit 31), both ways (guide.md

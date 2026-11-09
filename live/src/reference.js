@@ -85,6 +85,13 @@ export const REFERENCE = [
     example: '(def-score :target x68k)\n(fm1 :lfo-freq 200 :lfo-pmd 40 :lfo-wave triangle :fms 4 :len 2 c e)',
   },
   {
+    name: ':lfo-sync', aliases: ['lfo sync', 'lfo reset'], cat: 'track', section: '§5', tracks: ['fm', 'wave'],
+    syntax: ':lfo-sync on | off',
+    summary: 'on: each key-on of the track (a note, a :keyon retrigger, an fm3-N operator — not a tie or slur) starts the song\'s LFO over, for every channel it sways, as MXDRV\'s MH sync does. Sticky, off at the start. On FM (md, pc88, x68k), pce\'s wave and noise channels and the FDS (its counter back to 0).',
+    insert: ':lfo-sync on',
+    example: '(fm1 :lfo-rate 3 :fms 6 :lfo-sync on :len 2 c e g c)',
+  },
+  {
     name: ':target', aliases: ['pc88', 'x68k', 'msx', 'pce', 'fc', 'gb', 'midi', 'md', 'target'], cat: 'score', section: '§19', tracks: null,
     syntax: '(def-score :target md | pc88 | x68k | msx | pce | fc | gb | midi)',
     summary: 'The machine the score is for. md, the Mega Drive, is the default; pc88 is the PC-8801 with Sound Board II (YM2608), which plays, renders WAV and exports VGM with FM, the SSG, the rhythm and the ADPCM-B; the rhythm plays from the user\'s own ROM (File > Import > YM2608 Rhythm ROM…), else from an imported kit\'s files. x68k is the X68000\'s YM2151: eight FM channels and the noise, as VGM and WAV. msx is the MSX\'s PSG, an AY-3-8910: sqr1–sqr3 and the noise as on pc88, as VGM and WAV. pce is the PC Engine\'s HuC6280: six wave channels, wave1–wave6, two of them noise, as VGM and WAV. gb is the Game Boy\'s APU: sqr1 / sqr2 the pulses, wave and noise, as VGM and WAV. fc is the Famicom\'s 2A03: sqr1 / sqr2 the pulses, tri, noise and pcm1 (the DMC), as VGM and WAV — and its expansion chips where a score names their channels, each named by its chip (vrc6-sqr1, fds-wave …); VGM leaves out a chip it has no command for, WAV plays it. midi is a General MIDI instrument: ch1–ch16 but ch10, and drum1–drum8 — no sound of its own: File > Export > MIDI… writes it, MMLisp > MIDI > Output plays it (a MIDI port, or a GM SoundFont in the page), and its WAV is rendered on that SoundFont.',

@@ -221,6 +221,9 @@ export const TARGET_ID = {
   FM_VEL2: 0x4a,
   FM_VEL3: 0x4b,
   FM_VEL4: 0x4c,
+  // `:lfo-sync on|off` (language.md §5): an FM channel's key-ons start the
+  // LFO over ($22 off, then on at its rate).
+  LFO_SYNC: 0x4d,
   // The value slots (def-val, language.md §8) as write targets: VAL0–VAL15,
   // i16 like the slots themselves. Score-global, so their sweeps run in the
   // driver's global sweep slots, not a channel's (driver.md §4).

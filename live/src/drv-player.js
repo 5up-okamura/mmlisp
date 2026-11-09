@@ -176,6 +176,7 @@ function freshFmChannel() {
     feedback: 0,
     ams: 0,
     fms: 0,
+    lfoSync: false, // `:lfo-sync on`: each key-on starts the LFO over (_lfoReset)
     pan: 0, // -1/0/+1; B4 defaults to both speakers
     snap: 0, // `:snap` pitch-class mask (snapNote); 0 = off
     // vel is TWO values (driver.md §7.1). velBase is the score's sticky
@@ -806,6 +807,13 @@ export class DrvPlayer {
   }
 
   // ── Key handling ─────────────────────────────────────────────────────────
+  // `:lfo-sync` (language.md §5): the LFO off holds its counter at 0, then on
+  // again at its rate, ahead of the key-on (the C's lfo_reset).
+  _lfoReset() {
+    if (!this._lfoRate) return;
+    this._ym(0, 0x22, 0x00);
+    this._ym(0, 0x22, 0x08 | ((this._lfoRate - 1) & 0x07));
+  }
   _keyOn(ch) {
     const regs = this._fm[ch];
     const port = ch >= 3 ? 1 : 0;
@@ -822,6 +830,7 @@ export class DrvPlayer {
       return;
     }
     regs.keyed = true;
+    if (regs.lfoSync) this._lfoReset();
     this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
   }
   _keyOff(ch) {
@@ -916,6 +925,9 @@ export class DrvPlayer {
 
   _fm3KeyOp(op, on) {
     const bit = 0x10 << (op - 1); // OP1=0x10 … OP4=0x80 ($28 slot bits)
+    // An operator keyed that was not, under CH3's :lfo-sync (not under CSM,
+    // whose $28 holds no operator).
+    if (on && !(this._fm3OpMask & bit) && this._fm[2].lfoSync && !(this._reg27 & 0x80)) this._lfoReset();
     if (on) this._fm3OpMask |= bit;
     else this._fm3OpMask &= ~bit;
     // CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so
@@ -1862,6 +1874,9 @@ export class DrvPlayer {
         regs.algorithm = value & 0x07;
         this._ym(port, 0xb0 + off, encodeB0(regs));
         return;
+      case target === TARGET_ID.LFO_SYNC:
+        regs.lfoSync = value !== 0;
+        return;
       case target === TARGET_ID.FM_AMS:
         regs.ams = value & 0x03;
         this._ym(port, 0xb4 + off, encodeB4(regs));
@@ -2671,8 +2686,11 @@ export class DrvPlayer {
       // velocity (no PARAM_SET) sounds right after stealing it. The BASE is what
       // has to reset: every note-on copies base → live (§7.1), so resetting the
       // live vel alone would hand the next note the previous owner's velocity.
+      // …and its :lfo-sync, the part's: an effect's key-ons never restart the
+      // song's LFO (the C's claim).
       if (ch < 6) {
         const r = this._fm[ch];
+        r.lfoSync = false;
         r.velBase = VEL_FINE_MAX;
         r.vel = VEL_FINE_MAX;
         r.volBase = VOL_UNITY;
@@ -2845,6 +2863,7 @@ export class DrvPlayer {
       r.pitchCents = gr.pitchCents;
       r.currentNote = gr.currentNote;
       r.snap = gr.snap;
+      r.lfoSync = gr.lfoSync; // the part's, which the claim left behind
       // Carrier level as a note-on composes it, so a vel/vol below unity lands.
       this._recomposeCarriers(ch);
       keyed = gr.keyed;

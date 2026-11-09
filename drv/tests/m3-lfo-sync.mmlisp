@@ -1,0 +1,14 @@
+; M3 gate: `:lfo-sync`. A synced channel's key-ons start the song's LFO over
+; ($22 off, then on at its rate, ahead of the $28): a note, a :keyon
+; retrigger, an fm3-N operator keyed — not a slur, not an unsynced channel,
+; and nothing while :lfo-rate is 0.
+(def-fm wob :alg 4 :fb 3 :fms 5 :ams 1
+  :ar1 31 :tl1 20 :ar2 31 :tl2 30 :ar3 31 :tl3 20 :ar4 31 :tl4 8 :am4 1)
+(fm1 :tempo 120 :lfo-rate 4 wob :lfo-sync on :len 4
+  c d ~ e (macro :keyon [0 1]) f
+  :lfo-sync off g a
+  :lfo-sync on :lfo-rate 0 c :lfo-rate 4 d)
+(fm2 wob :oct 3 :len 2 c e g c)
+(fm3 :lfo-sync on wob)
+(fm3-1 :oct 5 :len 4 c e _ c)
+(fm3-2 :oct 4 :len 2 e c)

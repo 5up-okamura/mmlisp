@@ -43,6 +43,7 @@ export const MACRO_TARGET_RANGE = {
   // LFO: the OPN's rate; the OPM's frequency, depths and waveform
   LFO_RATE: { min: 0, max: 8 },
   LFO_FREQ: { min: 0, max: 255 },
+  LFO_SYNC: { min: 0, max: 1 },
   LFO_PMD: { min: 0, max: 127 },
   LFO_AMD: { min: 0, max: 127 },
   LFO_WAVE: { min: 0, max: 3 },

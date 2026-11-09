@@ -123,9 +123,7 @@ pcmt13.muc; Koshiro's sampl1–3.muc (onitama/mucom88 `package/`, CC BY-NC-SA).
   option `:duty` is 1–255 while the track word is sixteenths (raise if it
   confuses).
 - **fc expansions**: only the VRC6 and the FDS heard in Live; their levels
-  against the 2A03 are choices; every chip at once clips. `:lfo-wave`
-  restarts the FDS counter, so the writer's restatements reset a free-running
-  modulation (not decided).
+  against the 2A03 are choices; every chip at once clips.
 - **NSF**: the 6502's cycles are not bus-exact; $4015 and the FDS's other
   registers read back 0; VRC6 / N163 notes are keyed by level; $9003's
   shift is not followed; Parodius #03's DMC is 92 frames short.

@@ -373,12 +373,22 @@ same bounds.
 | 0x47 | RANGE_END   | 2     | 0..0x7F00      | PCM range end (`:pcm-end`) → a shot's, and a released loop note's, END |
 | 0x48 | RANGE_LEN   | 2     | 0..0x7F00      | PCM range length (`:pcm-len`); end = range start + this |
 | 0x49–0x4C | FM_VEL1–4 | 1   | −1, 0..16      | velocity sensitivity in sixteenths → composed TL (driver.md §7); −1 = the role's own |
-| 0x4D–0x4F | —      | —     | —              | reserved                           |
+| 0x4D | LFO_SYNC    | 1     | 0..1           | `:lfo-sync`: 1 = the channel's key-ons restart the LFO (YM $22 off, then on at its rate, ahead of the $28) |
+| 0x4E–0x4F | —      | —     | —              | reserved                           |
 | 0x50–0x5F | VAL0–VAL15 | 2   | −32768..32767  | value slot 0–15 (`def-val`) → the slot the PARAM_*_VAL ops and the host read |
 | 0x60–0xFF | —      | —     | —              | reserved                           |
 
 Per-op ids are consecutive op1→op4 within each parameter family (FM_TL1 = 0x11
 … FM_TL4 = 0x14).
+
+**LFO_SYNC** is the channel's, sticky, 0 at the start and at a claim (an
+effect's part starts without it): while it is 1 each key-on the channel
+writes — a note's (not a slur's), a KEYON retrigger's, an effect's restore
+re-key, an `fm3-N` operator's edge outside CSM (on CH3's) —
+is preceded by `$22` = 0 and `$22` at the LFO_RATE in force, which holds the
+YM2612's LFO counter at 0 between them; nothing while LFO_RATE is 0. The pair
+transport sends the frame's key-ons last, so the reset lands ahead of its
+key-on, 139 µs a write at the closest.
 
 **Song-wide targets** — MASTER, LFO_RATE and VAL0–VAL15 — belong to no
 channel: a PARAM_SWEEP on one runs in that target's own global sweep slot,

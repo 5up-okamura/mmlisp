@@ -84,6 +84,7 @@ eighth), `N.` dotted, `N/M` a fraction of a whole note, `Nt` `Nf` `Nms`.
 | `:tempo` | 120 | BPM, song-wide, from any track; a curve sweeps it |
 | `:pan` | center | `left` `center` `right`, −1..1, a curve, `none`; a chip with pan bits snaps it (§19) |
 | `:lfo-rate` | 0 | the chip's one LFO, 0–8, song-wide; `:noise-rate` 1–31 the SSG's / OPM's noise period (§19); `:csm-rate` Hz on `fm3-csm` (§15) |
+| `:lfo-sync` | off | `on`: the track's key-ons (not a tie or slur) start the song's LFO over, as MXDRV's MH sync; on FM, pce and the FDS (§5) |
 | `:snap` | none | pitch classes every note snaps down onto: `[0 2 4 5 7 9 11]`, a `$slot`, `none` (§5.3) |
 | `:shuffle` | none | warps the sixteenth grid: `66` swings a pair 66:34, `[7 6 3 4]` a 4-step groove; `:shuffle-base 8` makes the step an eighth (§5.2) |
 | `:mode` | | `noise`: noise mode; `pcm`: `shot` / `loop` / `gate` |
@@ -282,7 +283,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   notes (c2 the slowest rate, g4 the fastest); `:pan` −1..1 whole, on each
   channel's 4-bit left / right levels; the LFO as the FM LFO is written —
   the song's `:lfo-freq` (larger faster), `wave1` `:fms 0–3` taking it, its
-  shape and speed `wave2`'s (keep it at `:vol 0` to hear wave1 alone);
+  shape and speed `wave2`'s (keep it at `:vol 0` to hear wave1 alone),
+  `:lfo-sync on` on either restarting it at their notes;
   `pcm1`–`pcm6` channel N as DDA, a `def-pcm` at 6.99 kHz, 5 bits, each
   note baked at its pitch. `waveN` / `noiseN` / `pcmN` are one channel: all
   may be written, and where notes meet, `:prio` decides, else pcm > noise > wave.
@@ -311,7 +313,8 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
   The Disk System's `fds-wave` plays def-waves (a 32-step one each
   step twice in its 64), its gain 0–32 as `:vel`; its modulation is the
   song's `:lfo-wave [32 steps of 0 1 2 4 -1 -2 -4 reset]`, `:lfo-pmd 0–63`
-  (depth), `:lfo-freq 0–4095` (rate). VGM carries it. The MMC5's
+  (depth), `:lfo-freq 0–4095` (rate), `:lfo-sync on` its counter back to 0
+  at each note. VGM carries it. The MMC5's
   `mmc5-sqr1` / `mmc5-sqr2`: the 2A03's pulses with no sweep (its four
   duties); VGM leaves them out. The 5B's `5b-sqr1`–`5b-sqr3` / `5b-noise`:
   the SSG as on msx (`:mode tone|noise|both|env`, `:noise-rate`,

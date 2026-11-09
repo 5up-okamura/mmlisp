@@ -115,6 +115,7 @@ typedef struct {
   int16_t pitch_cents;
   uint16_t snap; /* `:snap` pitch-class mask the pitch writes pass through; 0 = off */
   uint8_t keyed; /* a note is on: 1 keyed in $28, 2 a CSM note Timer A keys (driver.md §9) */
+  uint8_t lfo_sync; /* `:lfo-sync on`: each key-on starts the LFO over (lfo_reset) */
   /* Each operator's velocity sensitivity in sixteenths, plus one (language.md
    * §6): 0 is the role's own — 16 on a carrier, 0 on a modulator — so a
    * zeroed channel plays as every voice did before `:vel1`–`:vel4` existed.

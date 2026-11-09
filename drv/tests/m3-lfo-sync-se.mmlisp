@@ -1,0 +1,14 @@
+; M3 gate: `:lfo-sync` under an effect. fm1 (synced) and fm2 (not) play; an
+; effect takes fm2, then one takes fm1. An effect's part starts without the
+; channel's :lfo-sync, so its key-ons leave the LFO running; fm1's displaced
+; notes, on into its ghost, still restart it (the LFO is the song's), and its
+; restore re-key does.
+; Host-driven from m3-lfo-sync-se.cmds.json.
+(def-fm wob :alg 4 :fb 3 :fms 5 :ams 1
+  :ar1 31 :tl1 20 :ar2 31 :tl2 30 :ar3 31 :tl3 20 :ar4 31 :tl4 8 :am4 1)
+(def-se zap (fm2 wob :oct 6 :len 16 c e g c))
+(def-se zip (fm1 wob :oct 6 :len 16 g e))
+; track 0: fm1, synced, a note every quarter.
+(fm1 :tempo 120 :lfo-rate 4 wob :lfo-sync on :len 4 c d e f g a b c)
+; track 1: fm2, not synced.
+(fm2 wob :oct 3 :len 2 c e g c)

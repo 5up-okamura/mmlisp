@@ -91,7 +91,9 @@ const MACRO_TARGETS = new Set([...SUPPORTED_TARGETS, "SSG_MIX", "WAVE"]);
 // `:env-detune`) move the period the channel's notes or rates give it.
 // PROG, BANK and BEND_RANGE (`:prog`, `:bank`, `:bend-range`) are a
 // MIDI channel's settings: an instrument, its bank, its bend's reach.
-const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE", "PROG", "BANK", "BEND_RANGE", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
+// LFO_SYNC (`:lfo-sync on|off`) has the channel's key-ons start the song's
+// LFO over.
+const INLINE_TARGETS = new Set(["SNAP", "SSG_ENV", "ENV_SEMI", "ENV_DETUNE", "PROG", "BANK", "BEND_RANGE", "LFO_SYNC", ...opWords(FM_OP_WORDS.filter((w) => w.inline)).map((w) => w.word)]);
 
 // An operator's velocity sensitivity, `:vel1`–`:vel4` (language.md §6): a
 // ratio 0–1 of the note's velocity offset, carried as sixteenths. A voice
@@ -394,6 +396,7 @@ const TARGET_SYMBOLS = {
   PAN: PAN_MAP,
   LFO_WAVE: { saw: 0, square: 1, triangle: 2, noise: 3 },
   SSG_ENV: { none: -1 },
+  LFO_SYNC: { off: 0, on: 1 },
   ENV_RATE: { note: 0 },
   ENV_SEMI: { none: 0 },
   ENV_DETUNE: { none: 0 },
@@ -3734,6 +3737,7 @@ const TARGET_KEYWORDS = new Map(Object.entries({
   ":lfo-pmd": "LFO_PMD",
   ":lfo-amd": "LFO_AMD",
   ":lfo-wave": "LFO_WAVE",
+  ":lfo-sync": "LFO_SYNC",
   ":noise-rate": "NOISE_RATE",
   ":env": "SSG_ENV",
   ":env-rate": "ENV_RATE",
@@ -4753,6 +4757,14 @@ function compileChannelBody(
               if (target === "SNAP") {
                 writeSnap(val, op, items[i], evalEnv, vals, push, diagnostics, nodeSrc(node),
                   trackName, typedDefs);
+                break;
+              }
+              if (target === "LFO_SYNC") {
+                // A switch, state: on or off, no number, curve, $value or `+`.
+                const word = items[i]?.kind === "atom" ? items[i].value : null;
+                if (!op && (word === "on" || word === "off")) push("PARAM_SET", { target, value: word === "on" ? 1 : 0 });
+                else pushDiag(diagnostics, "error", "E_PARAM_VALUE",
+                  `:lfo-sync takes on or off, not ${op ? `'${op}'` : `'${describeNodeToken(items[i])}'`}`, nodeSrc(node), trackName);
                 break;
               }
               if (VEL_SENS_TARGETS.has(target)) {
@@ -6070,7 +6082,7 @@ const SE_CHANNELS = new Set([
 const SE_CH3 = new Set(["fm3", "fm3-1", "fm3-2", "fm3-3", "fm3-4", "fm3-csm", "fm3-csm-rate"]);
 // What an effect may not write, by IR target: the source keyword to name.
 const SE_FORBIDDEN_TARGETS = { MASTER: ":master", LFO_RATE: ":lfo-rate", LFO_FREQ: ":lfo-freq", LFO_PMD: ":lfo-pmd",
-  LFO_AMD: ":lfo-amd", LFO_WAVE: ":lfo-wave", NOISE_RATE: ":noise-rate",
+  LFO_AMD: ":lfo-amd", LFO_WAVE: ":lfo-wave", LFO_SYNC: ":lfo-sync", NOISE_RATE: ":noise-rate",
   ENV_RATE: ":env-rate" };
 
 // (def-se name [:prio N] [:tempo T] (channel body…)…). The head options are

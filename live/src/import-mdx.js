@@ -34,7 +34,8 @@
 //                      through); with none, free-running from MP / MA, each
 //                      note's curve at its :phase; a curve written twice or
 //                      more a def (vib- bend- trem-)
-//   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd
+//   MH                 the OPM's LFO: :lfo-wave :lfo-freq :lfo-pmd :lfo-amd,
+//                      its sync :lfo-sync on
 //   w                  the noise (on track H, NE): fm8's :mode noise — the
 //                      voice whole, its fourth operator the noise — at
 //                      :noise-rate 32 - NFRQ
@@ -535,6 +536,7 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
     let keyedAt = 0; // the clock of the last key-on
     let gated = false; // a q or @q seen: from then on every note states its gate
     let gateInForce = ":gate* 1";
+    const syncs = tr.notes.some((n) => n.st?.hlfo?.sync);
     tr.notes.forEach((n) => {
       const st = n.st;
       if (!tr.pcm && st.pan === 0) return; // p0: not keyed
@@ -588,7 +590,9 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
         state.push(`:pan ${panWord(st.pan)}`);
         if (noisy) state.push(`:mode ${st.noise & 0x80 ? "noise" : "tone"}`, `:noise-rate ${Math.max(1, Math.min(31, 32 - (st.noise & 31)))}`);
         if (st.hlfo) state.push(`:lfo-wave ${LFO_WAVES[st.hlfo.wave]} :lfo-freq ${st.hlfo.freq} :lfo-pmd ${st.hlfo.pmd} :lfo-amd ${st.hlfo.amd}`);
-        if (st.hlfo?.sync) skip("MH's LFO sync (the LFO is not reset at each note)");
+        // MH's sync: the track's key-ons start the OPM's LFO over (MXDRV
+        // pulses $01) — stated on a track that ever asks for it.
+        if (syncs) state.push(`:lfo-sync ${st.hlfo?.sync ? "on" : "off"}`);
         if (st.detune) detuned = true;
         if (detuned) state.push(`:pitch ${cents(st.detune)}`);
       }

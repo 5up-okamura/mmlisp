@@ -129,6 +129,7 @@ enum {
   T_FM_FMS = 0x3f,
   T_PAN = 0x40,
   T_LFO_RATE = 0x41,
+  T_LFO_SYNC = 0x4d,
   T_NOISE_MODE = 0x42,
   T_LOOP_START = 0x43,
   T_LOOP_END = 0x44,
@@ -599,8 +600,19 @@ MML_HOT int fm3_op_for(const MMLSeq *s, int ch) {
   return 0;
 }
 static void write_fm3_op_tl(MMLSeq *s, int op);
+/* `:lfo-sync` (language.md §5): the LFO off holds its counter at 0, then on
+ * again at its rate — written ahead of the key-on, which the pair transport
+ * sends last in the frame, its writes 139 µs apart at the closest. */
+static void lfo_reset(MMLSeq *s) {
+  if (!s->lfo_rate) return;
+  ym(s, 0, 0x22, 0x00);
+  ym(s, 0, 0x22, (uint8_t)(0x08 | ((s->lfo_rate - 1) & 7)));
+}
 static void fm3_key_op(MMLSeq *s, int op, int on) {
   uint8_t bit = (uint8_t)(0x10 << (op - 1)); /* OP1=0x10 .. OP4=0x80 */
+  /* An operator keyed that was not, under CH3's :lfo-sync (not under CSM,
+   * whose $28 holds no operator). */
+  if (on && !(s->fm3_op_mask & bit) && s->fm[2].lfo_sync && !(s->reg27 & 0x80)) lfo_reset(s);
   if (on) s->fm3_op_mask |= bit;
   else s->fm3_op_mask &= (uint8_t)~bit;
   /* CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so the
@@ -647,6 +659,7 @@ static void key_on(MMLSeq *s, int ch) {
     return;
   }
   c->keyed = 1;
+  if (c->lfo_sync) lfo_reset(s);
   ym_key(s, (uint8_t)(0xf0 | chkey));
 }
 static void key_off(MMLSeq *s, int ch) {
@@ -941,6 +954,10 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   if (target == T_FM_ALG) {
     c->algorithm = (uint8_t)(value & 7);
     ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
+    return;
+  }
+  if (target == T_LFO_SYNC) {
+    c->lfo_sync = (uint8_t)(value != 0);
     return;
   }
   if (target == T_FM_AMS || target == T_FM_FMS || target == T_PAN) {
@@ -3227,6 +3244,7 @@ static void ghost_restore(MMLSeq *s, int ch) {
     c->pitch_cents = gc->pitch_cents;
     c->current_note = gc->current_note;
     c->snap = gc->snap;
+    c->lfo_sync = gc->lfo_sync; /* the part's, which the claim left behind */
     /* Carrier level as note_on composes it, so a vel/vol below unity lands. */
     recompose_carriers(s, ch);
     keyed = gc->keyed;
@@ -3383,8 +3401,10 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
     }
     /* Claiming a channel resets its level state to defaults, so a track that
      * relies on the default velocity (no PARAM_SET of its own) sounds right
-     * after stealing a channel someone else had faded. */
+     * after stealing a channel someone else had faded — and its :lfo-sync, the
+     * part's: an effect's key-ons never restart the song's LFO. */
     if (ch < 6) {
+      s->fm[ch].lfo_sync = 0;
       s->fm[ch].vel_base = VEL_MAX;
       s->fm[ch].vel = VEL_MAX;
       s->fm[ch].vol = VOL_UNITY;

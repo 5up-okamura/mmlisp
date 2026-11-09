@@ -93,6 +93,11 @@ const SAMPLE_HANDLERS = {
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
 const WAVE_LFO_WORDS = { LFO_FREQ: "lfoFreq", LFO_PMD: "lfoPmd", LFO_WAVE: "lfoTable" };
+// `:lfo-sync`'s reset is the LFO stopped and run again (chips/opn-fm.js,
+// ym2151.js `lfoReset`): each write this far apart, the last this far ahead
+// of the key, so the chip clocks between them — a write lands on an output
+// sample (the synths' renderInto), and two on one would never reset it.
+const LFO_RESET_GAP = 1e-4;
 // Half a millisecond: late enough to sort after every event of its frame,
 // far too early to hear.
 const PCM_SWEEP_AFTER = 0.0005;
@@ -325,6 +330,8 @@ export class IRPlayer {
     this._laneWave = new Array(PSG_LANES).fill(null); // the def-wave each wave lane plays (by name)
     this._psgPan = new Array(PSG_LANES).fill(0); // each lane's pan as last written (a chip with a pan per channel: the PC Engine's)
     this._psgDuty = new Array(PSG_LANES).fill(8); // each lane's duty in sixteenths (the 2A03's pulses)
+    this._laneLfoSync = new Array(PSG_LANES).fill(false); // a lane's :lfo-sync (the PC Engine's, the FDS's)
+    this._fmKeyMask = new Array(FM_CHANNELS).fill(0);
     this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
@@ -628,6 +635,8 @@ export class IRPlayer {
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._psgPan?.fill(0);
     this._psgDuty?.fill(8);
+    this._laneLfoSync?.fill(false);
+    this._fmKeyMask = new Array(FM_CHANNELS).fill(0); // each FM channel's key bits as last written (_fmKey)
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -4071,6 +4080,10 @@ export class IRPlayer {
         this._fmWrites(this._fmEnc.pan(ch, regs), when);
         break;
       }
+      // :lfo-sync: the channel's key-ons start the song's LFO over (_fmKey).
+      case "LFO_SYNC":
+        regs.lfoSync = value >= 0.5;
+        break;
       case "LFO_RATE": {
         const rate = Math.max(0, Math.min(8, Math.round(value)));
         this._lfoRate = rate;
@@ -6108,8 +6121,7 @@ export class IRPlayer {
           this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
           break;
         }
-        // A note starting: a chip that keys something on it hears it (the
-        // PC Engine's LFO restarts on channel 2's note, heard or at :vol 0).
+        // A note starting: a chip that keys something on it hears it.
         this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch, when, !!ev.args?.legato) ?? []), when);
         // A DDA note on this channel (another of its names) still sounding
         // ends here, its channel off a key-order lead before this key-on.
@@ -6132,6 +6144,13 @@ export class IRPlayer {
         const psgMacroLimit = Number.isFinite(psgNextNote)
           ? psgNextNote - KEY_OFF_LEAD_SECS
           : Infinity;
+        // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
+        // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
+        if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
+          const retrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit) ?? [];
+          for (const t of [when, ...retrigs.filter((r) => r > when + 1e-6)])
+            this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
+        }
         if (rateNote) {
           // Its mode re-asserted, and the note's :mode macro, as the PSG's
           // noise has them; its rate is the pitch below.
@@ -6355,6 +6374,9 @@ export class IRPlayer {
           // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
           this._ssgMixBase[psgCh] = Math.round(ev.args?.value ?? 0);
           this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], when)), when);
+        } else if (psgTarget === "LFO_SYNC") {
+          // :lfo-sync: the lane's key-ons start the chip's LFO over.
+          this._laneLfoSync[psgCh] = Number(ev.args?.value ?? 0) >= 0.5;
         } else if (psgTarget === "FM_FMS") {
           // Channel 1 taking the wave chip's LFO (chips/huc6280.js).
           this._psgWrites(this._lane(psgCh, (e, ch) => e.lfo?.(ch, Number(ev.args?.value ?? 0)) ?? []), when);
@@ -6514,6 +6536,14 @@ export class IRPlayer {
     for (const [port, addr, data, at] of writes) this._write(port, addr, data, at ?? when);
   }
   _fmKey(ch, mask, when) {
+    // A key-on under :lfo-sync — an operator keyed that was not: a note, a
+    // :keyon retrigger, an fm3-N operator — starts the LFO over just ahead.
+    const rising = mask & ~(this._fmKeyMask[ch] ?? 0) & 0xf0;
+    this._fmKeyMask[ch] = mask;
+    if (rising && this._chRegs[ch]?.lfoSync && when != null) {
+      const writes = this._fmEnc.lfoReset?.(this._lfoRate) ?? [];
+      writes.forEach(([p, a, d], i) => this._write(p, a, d, when - (writes.length - i) * LFO_RESET_GAP));
+    }
     this._fmWrites(this._fmEnc.key(ch, mask, when), when);
   }
   // One operator register, from the channel's shadow state.

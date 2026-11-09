@@ -1,0 +1,8 @@
+; fc: the FDS's :lfo-sync — each fds-wave note starts the modulation's counter
+; over ($4085), so every note's vibrato starts from the same place; the table
+; written again (as an import restates it) leaves the counter running.
+(def-score :target fc :title "fc fds sync")
+(def-wave tri :wave (triangle -128..127))
+(def vib [1 1 1 1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 1])
+(fds-wave :tempo 120 tri :lfo-wave vib :lfo-freq 12 :lfo-pmd 10 :lfo-sync on :len 4 c e g
+  :lfo-sync off c :lfo-wave vib e g |)

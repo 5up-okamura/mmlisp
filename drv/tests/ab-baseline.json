@@ -89,6 +89,18 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m3-lfo-sync-se.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m3-lfo-sync.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m3-loop-gate.mmlisp": {
     "ok": true,
     "mismatches": 0,

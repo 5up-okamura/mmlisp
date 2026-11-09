@@ -14,7 +14,7 @@ export const opnFm = {
   words: fmWords({
     channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],
     op: ["FM_AR", "FM_DR", "FM_SR", "FM_RR", "FM_SL", "FM_TL", "FM_KS", "FM_ML", "FM_DT", "FM_SSG", "FM_AMEN", "FM_VEL"],
-    more: ["PAN"],
+    more: ["PAN", "LFO_SYNC"],
   }),
   songWords: words("LFO_RATE"),
 };
@@ -68,6 +68,10 @@ export function opnFmEncoder(fnumRate, clock) {
     isKeyOn: (port, addr, data) => port === 0 && addr === 0x28 && (data & 0xf0) !== 0,
     // :lfo-rate: 0 off, 1-8 on at that rate.
     lfo: (rate) => [[0, 0x22, rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07)]],
+    // :lfo-sync's reset: the LFO off holds its counter at 0 (Nuked-OPN2's
+    // lfo_cnt &= lfo_en, ymfm's opn), then on again at its rate; none while
+    // it is off.
+    lfoReset: (rate) => (rate ? [[0, 0x22, 0x00], [0, 0x22, 0x08 | ((rate - 1) & 0x07)]] : []),
     // $27: CH3's mode (bit 6 FM3 special, bit 7 CSM) and the timers' control.
     mode: (reg27) => [[0, 0x27, reg27]],
     // Timer A's value for a rate: hz = clock / (144 · (1024 − TA)).

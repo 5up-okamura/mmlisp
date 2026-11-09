@@ -30,7 +30,7 @@ export const opmFm = {
   words: fmWords({
     channel: ["FM_ALG", "FM_FB", "FM_AMS", "FM_FMS"],
     op: ["FM_AR", "FM_DR", "FM_SR", "FM_RR", "FM_SL", "FM_TL", "FM_KS", "FM_ML", "FM_DT", "FM_DT2_", "FM_AMEN", "FM_VEL"],
-    more: ["PAN"],
+    more: ["PAN", "LFO_SYNC"],
   }), // no SSG-EG, the OPN's; DT2 its own
   songWords: words("LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"),
 };
@@ -172,6 +172,9 @@ export const ym2151 = {
       lfoPmd: (v) => [[0, 0x19, 0x80 | (v & 0x7f)]],
       lfoAmd: (v) => [[0, 0x19, v & 0x7f]],
       lfoWave: (v) => [[0, 0x1b, v & 3]],
+      // :lfo-sync's reset: $01's bit 1 holds the LFO at its start while set
+      // (ymfm's opm lfo_reset; MXDRV's MH sync pulses it at a key-on).
+      lfoReset: () => [[0, 0x01, 0x02], [0, 0x01, 0x00]],
     };
   },
 
