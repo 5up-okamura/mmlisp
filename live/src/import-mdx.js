@@ -559,6 +559,14 @@ export function mdxToMmlisp(mdx, options = {}, a = analyzeMdx(mdx)) {
       // MD's delay runs from the key-on: a note played legato is into it.
       const at = tick(n.clock + delay);
       if (!legato || tr.pcm) keyedAt = n.clock + delay;
+      // A note a tie continues is not keyed again: its `k` delays only its
+      // pitch (MXDRV L000c66 waits out the delay, then skips the key-on), so
+      // the note before sounds on up to it — not cut a delay short, which
+      // would key the pair as two notes.
+      if (legato && !tr.pcm && notes.length) {
+        const before = notes[notes.length - 1];
+        if (before.tick + before.len < at) before.len = at - before.tick;
+      }
       // An LFO at this note: under an MD it runs from MD clocks past the
       // key-on (MXDRV restarts it there; a slur does not), with none from
       // where MP / MA set it — waited for, or this far into its shape.
