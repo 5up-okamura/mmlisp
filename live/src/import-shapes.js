@@ -58,6 +58,101 @@ export function frameVector(values, sus) {
   return `[${items.join(" ")}]`;
 }
 
+// ── A level that moves, as a macro vector ─────────────────────────────────
+
+/**
+ * Values a sample apart — a frame, a tick (`unit`), or `stride` of them —
+ * as a macro vector's items, straight where they run straight: every
+ * importer's one way to write a level that moves. A span of four samples or
+ * more through three levels or more, which the line between its ends
+ * follows — through each stair, to within half a step (fits) — is one
+ * `(linear a..b :len N)` (its samples run from its first value to its last:
+ * it reaches its end on its Nth); the rest are values and their holds,
+ * `(wait N)`.
+ * `round` makes a value the step written, `fmt` writes it. `keepEnd`: the
+ * last value's hold is written — the time before what follows (a loop's
+ * length) — else the last value just holds.
+ */
+export function lineItems(values, { unit = "f", stride = 1, round = (x) => x, fmt = String, keepEnd = false } = {}) {
+  const out = [];
+  const flat = [];
+  const holds = (vals, end) => {
+    for (let i = 0; i < vals.length;) {
+      let j = i + 1;
+      while (j < vals.length && vals[j] === vals[i]) j++;
+      out.push(fmt(vals[i]));
+      if (j - i > 1 && (j < vals.length || end)) out.push(`(wait ${(j - i - 1) * stride}${unit})`);
+      i = j;
+    }
+  };
+  // Samples s..e (both played) on the line between values[s] and values[e]:
+  // at each, within half a step of the stair it is on — its value, or
+  // between it and the level before or after it in the span. A chip plays
+  // a level in steps, so a line through a staircase plays it again (each
+  // change where the line crosses the stair).
+  // (Where each value's stair begins and ends: the levels either side.)
+  const L = values.length;
+  const before = new Int32Array(L), after = new Int32Array(L);
+  for (let k = 0; k < L; k++) before[k] = k > 0 && values[k - 1] === values[k] ? before[k - 1] : k - 1;
+  for (let k = L - 1; k >= 0; k--) after[k] = k < L - 1 && values[k + 1] === values[k] ? after[k + 1] : k + 1;
+  const fits = (s, e) => {
+    for (let k = s + 1; k < e; k++) {
+      const at = values[s] + ((values[e] - values[s]) * (k - s)) / (e - s);
+      const p = Math.max(s, before[k]), n = Math.min(e, after[k]);
+      const lo = Math.min(values[p], values[k], values[n]) - 0.5, hi = Math.max(values[p], values[k], values[n]) + 0.5;
+      if (at < lo || at > hi) return false;
+    }
+    return true;
+  };
+  const levels = (s, e) => new Set(values.slice(s, e + 1).map(round)).size;
+  let i = 0;
+  while (i < values.length) {
+    let e = i + 1;
+    while (e + 1 < values.length && fits(i, e + 1)) e++;
+    // (Not into the last value's hold: it reaches the end no later than the
+    // values do, and holds there.)
+    if (e === values.length - 1) while (e - 1 > i && values[e - 1] === values[e]) e--;
+    if (e < values.length && e - i >= 3 && levels(i, e) >= 3 && fits(i, e)) {
+      holds(flat.splice(0), true);
+      out.push(`(linear ${fmt(values[i])}..${fmt(values[e])} :len ${(e - i + 1) * stride}${unit})`);
+      i = e + 1;
+    } else flat.push(round(values[i++]));
+  }
+  holds(flat, keepEnd);
+  return out;
+}
+
+/**
+ * A level's frames as one `(macro …)` on `target` (`:vol`, `:vel+` …):
+ * `head` from the key-on — its sustain loop from `loopAt`, or `hold` held
+ * while the key is — and `rel` from the key-off. On the coarsest clock
+ * every change lands on (`:step Nf`, a step a sample), written as
+ * lineItems on it. `flat`: the level, where it is one value and no more.
+ */
+export function levelMacro(target, { head, loopAt = null, hold = null, rel = null }, { round, fmt } = {}) {
+  const runs = (a) => {
+    const out = [];
+    for (const v of a) {
+      if (out.length && out[out.length - 1][0] === v) out[out.length - 1][1]++;
+      else out.push([v, 1]);
+    }
+    return out;
+  };
+  const pre = loopAt == null ? head : head.slice(0, loopAt), loop = loopAt == null ? [] : head.slice(loopAt);
+  // The runs whose lengths are heard: an open end (the head's before the
+  // key-off, the release's last) holds however long.
+  const heard = [...runs(pre).slice(0, loopAt != null || hold != null ? undefined : -1), ...runs(loop), ...runs(rel ?? []).slice(0, -1)];
+  const step = heard.reduce((g, [, k]) => gcd(g, k), 0) || 1;
+  const thin = (a) => a.filter((_, i) => i % step === 0);
+  const o = { stride: step, round, fmt };
+  const body = [...lineItems(thin(pre), { ...o, keepEnd: loopAt != null || hold != null })];
+  if (loopAt != null) body.push("#sus", ...lineItems(thin(loop), { ...o, keepEnd: true }));
+  else if (hold != null) body.push("#sus", (fmt ?? String)(hold));
+  if (rel?.length) body.push("#rel", ...lineItems(thin(rel), o));
+  const flat = loopAt == null && hold == null && !rel?.length && new Set(head).size === 1 ? head[0] : null;
+  return { flat, text: `(macro${step > 1 ? ` :step ${step}f` : ""} :${target} [${body.join(" ")}])` };
+}
+
 // ── Macros written more than once, as defs ────────────────────────────────
 
 // A curve macro's def name, read off its curve: a pitch line a bend (up or
@@ -192,21 +287,10 @@ export function shapeOf(env, release) {
 }
 
 /**
- * `(def env-01 (macro :vel+ [0 -1 -2 #sus -3 #rel -5 -7]))`, on a coarser
- * `:step` when every change is.
+ * `(def env-01 (macro :vel+ [0 (linear -1..-4 :len 4f) #sus -4 #rel -5 -7]))`,
+ * as every importer writes a level (levelMacro), on a coarser `:step` when
+ * every change is.
  */
 function envDef(name, { head, sus, rel }) {
-  const runs = (a) => {
-    const out = [];
-    for (const v of a) {
-      if (out.length && out[out.length - 1][0] === v) out[out.length - 1][1]++;
-      else out.push([v, 1]);
-    }
-    return out;
-  };
-  const parts = [runs(head), runs(rel ?? [])];
-  const step = parts.flat().reduce((g, [, k]) => gcd(g, k), 0) || 1;
-  const vals = (r) => r.flatMap(([v, k]) => new Array(k / step).fill(v));
-  const body = [...vals(parts[0]), "#sus", sus, ...(rel ? ["#rel", ...vals(parts[1])] : [])];
-  return `(def ${name} (macro${step > 1 ? ` :step ${step}f` : ""} :vel+ [${body.join(" ")}]))`;
+  return `(def ${name} ${levelMacro("vel+", { head, hold: sus, rel }).text})`;
 }

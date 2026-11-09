@@ -1884,6 +1884,14 @@ per channel of the song's own score, onto one of the machine's or dropped. The
 score's first line says it (`read as md, then onto pc88`), and Edit ▸ Tap
 Tempo converts it again as it rewrites it.
 
+**A level that moves** — an envelope, a release, a fade — is written the
+same way by every import: on the coarsest `:step` every change lands on, a
+span that runs straight is a `(linear a..b :len N)`, the rest values and
+their `(wait …)` holds. A staircase is straight too: a line that passes
+through each stair to within half a step is one (a chip plays a level in
+steps, so the line plays the stairs again, each change where it crosses
+one), and none runs into the last value's hold.
+
 **General MIDI** is the last Target of every chip song — VGM, NSF, DefleMask /
 Furnace, MDX, MGS, mucom88. The song is read as its own machine's score (the rows are
 that machine's), and that score through its MIDI — the MIDI import's beat,

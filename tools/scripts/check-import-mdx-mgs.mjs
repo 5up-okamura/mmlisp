@@ -280,11 +280,11 @@ function compressMgs(u8) {
     has(source, /e4? (\(glide none\) )?~ g/, what); // e & g: the e slurs into the g, no glide
     has(source, /#top[\s\S]*:pitch -?\d+[\s\S]*\(go top\)/, what); // `$`, then \ 5
     has(source, /\(sqr2[\s\S]*:mode noise :noise-rate 31/, what);
-    has(source, /\(def vol-e0-v15 \(macro :vol \[31 \(wait 1f\) 29 28 26 0\]\)\)/, what); // a=4: toward a, a step short (MGSDRV's)
-    has(source, /\(def vol-e0-v12-k2 \(macro :vol \[26 \(wait 1f\) 25 23 22 0\]\)\)/, what); // relative to v
+    has(source, /\(def vol-e0-v15 \(macro :vol \[\(linear 31\.\.26 :len 5f\) 0\]\)\)/, what); // a=4: toward a, a step short (MGSDRV's): 31 31 29 28 26 on its stairs
+    has(source, /\(def vol-e0-v12-k2 \(macro :vol \[\(linear 26\.\.22 :len 5f\) 0\]\)\)/, what); // relative to v
     has(source, /\(def bend-e2-c3 \(macro :pitch\+ \[-20 -10\]\)\)/, what); // \-10 then \5: the period's own units, + up
     has(source, /\(def-wave scc-00 :wave \[0 8 16/, what);
-    has(source, /\(def env-r1-v12-scc \(macro :vel \[12\.25 12\.75 13\.625 14 [^\]]*#rel 6\.25 \(wait 2f\) 3\.25 \(wait 1f\) 0\]\)\)/, what); // (E × 13) >> 8 as the SCC's levels in :vel eighths, RR a step on E a frame
+    has(source, /\(def env-r1-v12-scc \(macro :vel \[\(linear 12\.25\.\.14 :len 5f\) [^\]]*#rel \(linear 6\.25\.\.0 :len 6f\) 0\]\)\)/, what); // (E × 13) >> 8 as the SCC's levels in :vel eighths, RR a step on E a frame
     // h: one def for the setting, its notes' middle swing in cents
     has(source, /\(def vib-80-8-down-w13 \(macro :pitch\+ \(triangle -80\.\.80 :len 8f :phase 192 :wait 13f\)\)\)/, what);
     has(source, /\(wave1[\s\S]*scc-00[\s\S]*vib-80-8-down-w13/, what);
@@ -294,8 +294,8 @@ function compressMgs(u8) {
     has(source, /\(rhythm1[\s\S]*kick :vol 25/, what); // vb11 (3 dB steps)
     has(source, /\(rhythm2[\s\S]*hat :vol 22/, what);
     has(source, /\(rhythm1[\s\S]*kick :vol 25 :mode shot[^|]*c2 :mode gate c(8)? _(8)? c/, what); // ko: rings to its next; kf: keyed off at the hat's hit
-    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel 16 14 \(wait 1f\) 13 \(wait 1f\) 11 \(wait 1f\) 10 \(wait 1f\) 0\]\)\)/, what); // 8:3 holds; k2 holds a frame, then a level each 2 from 5
-    has(source, /\(macro :vol \[26 #rel 26 \(wait 1f\) 25 \(wait 2f\) 23 \(wait 2f\) [^\]]*10 \(wait 2f\) 0\]\)/, what); // k3 at v12: holds 2 frames, then a level each 3
+    has(source, /\(def vol-e3-v15-k2 \(macro :vol \[20 \(wait 2f\) 16 #rel \(linear 16\.\.10 :len 9f\) 0\]\)\)/, what); // 8:3 holds; k2 holds a frame, then a level each 2 from 5: a line through the stairs
+    has(source, /\(macro :vol \[26 #rel \(linear 26\.\.10 :len 35f\) 0\]\)/, what); // k3 at v12: holds 2 frames, then a level each 3 — the stairs one line
     has(source, /\(fm2[^\n]*:len 4\n  [^|]*c _8 d8/, what); // q0 holds c through the rest, to the `/`
     clean(source, what);
   }
@@ -371,7 +371,7 @@ function compressMgs(u8) {
   const mgs = parseMgs(buildMgs({ title: "k", tempo: 210, defs, tracks: [null, null, null, scc1] }));
   const { source } = mgsToMmlisp(mgs, { fileName: "k.mgs" });
   const what = "MGS k from the key-off";
-  has(source, /\(def env-e0-v5-k2-r5-scc \(macro :vel \[[^\]]*#rel 10\.25 9\.25 \(wait 1f\) 8 \(wait 1f\) /, what); // v5 held a frame, then v4 two, v3 two (the SCC's levels, :vel eighths)
+  has(source, /\(def env-e0-v5-k2-r5-scc \(macro :vel \[[^\]]*#rel \(linear 10\.25\.\.3\.25 :len 9f\) 0\]\)\)/, what); // from v5: held a frame, then v4 two, v3 two … (the SCC's levels, :vel eighths), a line through the stairs
   has(source, /\(wave1[^|]*:vol 31 env-e0-v5-k2-r5-scc/, what);
   clean(source, what);
 }

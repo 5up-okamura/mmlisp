@@ -15,6 +15,7 @@ import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "./export-wav.js";
 import { VEL_DB_PER_STEP, fmCarrierOpsForAlg } from "./ir-utils.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
+import { lineItems } from "./import-shapes.js";
 import { ym2608 } from "./chips/ym2608.js";
 import { envCycle } from "./chips/ssg.js";
 import { pruneUnnamedDefs, PORT_TARGETS } from "./score-port.js";
@@ -2204,10 +2205,11 @@ function finishChain(ctx, out) {
 // while held; key-off falls RR a clock. The register gets level*(v+1)/256,
 // which plays as ssgRegVel of it — so in dB a decay is deeper the louder the
 // note, and its last steps are the PSG's wide ones. As a :vel* macro (the
-// note's vel times each value) a stage is that played :vel over the note's,
-// clock by clock, fitted with straight pieces. One envelope therefore draws
-// per `v`, named like the LFO's pitch classes.
-const SSG_ENV_TOLERANCE = 1; // :vel steps, the straight-piece fit of a stage
+// note's vel times each value) the stages are that played :vel over the
+// note's, tick by tick, written as every importer writes a level
+// (import-shapes.js lineItems: a line where it passes each of SOFENV's
+// stairs, else values and holds). One envelope therefore draws per `v`,
+// named like the LFO's pitch classes.
 // The note plays at :vel 15 under its fader (ssgLevelVol), so a level is the
 // :vel that, with the fader's steps, lands on its register value — a
 // fraction is fine, the macro's ratio carries it — down to 30 dB below the
@@ -2219,7 +2221,8 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   const vel = 15;
   const played = (level) => Math.max(0, Math.min(15, 15 - (3 * (15 - Math.floor((level * (v + 1)) / 256)) - faderDb) / 2));
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
-  const items = [];
+  const seq = []; // the played :vel a tick, up to the key-off
+  let end = null; // where the last stage ends: the level it holds
   // The tick the held note's register reaches 0. SOFENV's level falls
   // to silence there, which a :vel* cannot (:vel 0 is 30 dB down): the
   // envelope's :vol holds the fader until then and drops to 0, so the note is
@@ -2227,8 +2230,7 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   let held = true, zeroTick = null;
   // A stage from level a towards b, `rate` a clock — SOFENV steps the level
   // once a clock and holds it between, so a note keeps its start level for
-  // its first clock — as the played :vel per tick, fitted greedily with pieces
-  // that stay within the tolerance.
+  // its first clock — as the played :vel per tick.
   const stage = (a, b, rate) => {
     if (rate <= 0) return;
     const total = Math.max(1, Math.round(Math.ceil(Math.abs(b - a) / rate) * factor));
@@ -2239,32 +2241,23 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
       if (held && dir < 0 && zeroTick == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroTick = ticks - total + j;
       return played(lv);
     });
-    let i = 0;
-    while (i < total) {
-      let j = i + 1;
-      for (let e = i + 2; e <= total; e++) {
-        let ok = true;
-        for (let k = i + 1; k < e && ok; k++) ok = Math.abs(y[i] + ((y[e] - y[i]) * (k - i)) / (e - i) - y[k]) <= SSG_ENV_TOLERANCE;
-        if (!ok) break;
-        j = e;
-      }
-      items.push(`(linear ${ratio(y[i])}..${ratio(y[j])} :len ${j - i}t)`);
-      i = j;
-    }
+    seq.push(...y.slice(0, total));
+    end = y[total];
   };
   const { al, ar, dr, sl, sr, rr } = op;
   if (al < 255) {
     if (ar > 0) stage(al, 255, ar);
-    else items.push(`${ratio(played(al))}`); // AR 0: it never rises
+    else end = played(al); // AR 0: it never rises
   } else if (ar > 0) {
     // At the top already, the attack still takes its clock: SOFENV adds AR,
     // finds 0FFH and only then turns to the decay (music.asm SOFEV1).
-    items.push(`(linear 1..1 :len ${Math.round(factor)}t)`);
+    seq.push(...new Array(Math.round(factor)).fill(vel));
+    end = vel;
     ticks += Math.round(factor);
   }
   if (al >= 255 || ar > 0) {
     if (sl < 255) stage(255, sl, dr);
-    if (dr === 0 && sl < 255) items.push("1"); // DR 0: it holds at the top
+    if (dr === 0 && sl < 255) end = vel; // DR 0: it holds at the top
     else if (sr > 0 && sl > 0) stage(sl, 0, sr);
   }
   // Key-off releases from wherever the level is: a release without its :from
@@ -2272,6 +2265,8 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   // the top when there is no sustain level (one straight piece: the played
   // level is linear in SOFENV's on pc88). Its length is fixed where mucom's
   // is the level's own over RR.
+  if (end != null) seq.push(end);
+  const items = lineItems(seq, { unit: "t", fmt: ratio });
   items.push("(wait key-off)");
   held = false;
   if (rr > 0) {

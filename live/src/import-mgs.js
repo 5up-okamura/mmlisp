@@ -71,7 +71,7 @@
 // ---------------------------------------------------------------------------
 
 import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones, noteName, octOf, GLIDE_NONE } from "./import-song.js";
-import { defTable, sjis, frameVector, hoistMacros } from "./import-shapes.js";
+import { defTable, sjis, frameVector, levelMacro, hoistMacros } from "./import-shapes.js";
 import { OPLL_ROM_NAMES } from "./chips/ym2413.js";
 import { envCycle } from "./chips/ssg.js";
 
@@ -526,17 +526,17 @@ function expandEnv(env) {
 }
 
 /**
- * An envelope at a level `v` as a :vol macro spec; `k` (an @e's, or none's)
+ * An envelope at a level `v` as a level macro on `target` (levelMacro); `k` (an @e's, or none's)
  * the release after the key-off, a level step every k frames, the first k
  * frames after it (held to MGSDRV on libkss: k1 steps on the key-off's own
- * frame, k2 holds it one) — written as its steps, which a line on :vol is
- * not on the SCC's linear volume.
+ * frame, k2 holds it one) — its frames as every importer writes a level
+ * (lineItems: a line where it passes each stair, else values and holds).
  */
 function kRelease(k, v, volOf) {
-  if (!(k > 0 && v > 0)) return "";
+  if (!(k > 0 && v > 0)) return null;
   const steps = new Array(k - 1).fill(volOf(v));
   for (let lv = v - 1; lv >= 0; lv--) for (let i = 0; i < k; i++) steps.push(volOf(lv));
-  return ` #rel ${frameVector(steps, null).slice(1, -1)}`;
+  return steps;
 }
 // An @e's level (relative to v) at frame `f`: through its sustain loop, or
 // held at its last.
@@ -576,23 +576,23 @@ function releaseFrom(env, v, off) {
 // `off`: the frame its note keys off on, where the release (k's, or an
 // @r's RR) starts from the level of the frame before — its last level when
 // none is given.
-function envelopeSpec(env, v, volOf, k = 0, off = null) {
+function envelopeSpec(env, v, volOf, target, k = 0, off = null) {
   if (env.type === "r") {
     // The level is (E × (v + 1)) >> 8; the release falls by RR from where
     // it is.
     const out = adsrSteps(env).map((E) => volOf((E * (v + 1)) >> 8));
     const E = releaseFrom(env, v, off);
-    // The release as its steps: a line on :vol is not one on E, a linear level.
+    // The release frame by frame (a line on E is not one on :vol: lines
+    // where its levels run straight).
     const steps = [];
     if (env.rr > 0) for (let e = E - env.rr; ; e -= env.rr) { steps.push(volOf((Math.max(0, e) * (v + 1)) >> 8)); if (e <= 0) break; }
-    const rel = steps.length && E > 0 ? ` #rel ${frameVector(steps, null).slice(1, -1)}` : "";
-    return frameVector(out, null).replace(/\]$/, rel + "]");
+    return levelMacro(target, { head: out, rel: steps.length && E > 0 ? steps : null });
   }
   const x = expandEnv(env);
   // An @e's level is relative to v: 15 is v itself, each step below one
   // step quieter.
   const levels = x.levels.map((lv) => Math.max(0, v + lv - 15));
-  return frameVector(levels.map(volOf), x.sus).replace(/\]$/, kRelease(k, releaseFrom(env, v, off), volOf) + "]");
+  return levelMacro(target, { head: levels.map(volOf), loopAt: x.sus, rel: kRelease(k, releaseFrom(env, v, off), volOf) });
 }
 
 // The rhythm track's hits → rhythm1-rhythm5, a track a sound, in the key-on
@@ -697,13 +697,12 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
       if (!env) { warnings.push(`@e${num} is not in the file — its notes play without an envelope`); return null; }
       // The SCC's levels as :vel (sccVel), the others' as :vol.
       const scc = kind === "scc";
-      const spec = envelopeSpec(env, v, scc ? sccVel : ssgVol, k, relTag != null ? off : null);
+      const mac = envelopeSpec(env, v, scc ? sccVel : ssgVol, scc ? "vel" : "vol", k, relTag != null ? off : null);
       // One level held: the note's level, no macro.
-      const flat = /^\[([\d.]+)\]$/.exec(spec);
-      if (flat) return { level: Number(flat[1]) };
+      if (mac.flat != null) return { level: mac.flat };
       // vel-/vol- name the target, as the score writer reads them (import-song.js).
       const name = `${scc ? "env" : "vol"}-${env.type}${num}-v${v}${k ? `-k${k}` : ""}${relTag != null ? `-r${relTag}` : ""}${scc ? "-scc" : ""}`; // the PSG's and the OPLL's are one ladder
-      return { name, text: `(def ${name} (macro ${scc ? ":vel" : ":vol"} ${spec}))` };
+      return { name, text: `(def ${name} ${mac.text})` };
     });
   };
   // An @e's pitch steps on one note, as a :pitch+ macro (a def a note).
@@ -880,10 +879,10 @@ export function mgsToMmlisp(mgs, options = {}, a = analyzeMgs(mgs)) {
         // The SCC: the note's velocity is its level, its envelope a :vel macro.
         noteVel = e?.level ?? volOf(st.vol);
         state.push(":vol 31");
-        state.push(e?.name ?? (rel ? `(macro :vel [${volOf(st.vol)}${rel}])` : "(macro :vel none)"));
+        state.push(e?.name ?? (rel ? levelMacro("vel", { head: [volOf(st.vol)], rel }).text : "(macro :vel none)"));
       } else {
         state.push(`:vol ${e?.level ?? volOf(st.vol)}`);
-        state.push(e?.name ?? (rel ? `(macro :vol [${volOf(st.vol)}${rel}])` : "(macro :vol none)"));
+        state.push(e?.name ?? (rel ? levelMacro("vol", { head: [volOf(st.vol)], rel }).text : "(macro :vol none)"));
       }
       const detune = detuneOf(tr.kind, n.midi, st);
       state.push(`:pitch ${detune}`);

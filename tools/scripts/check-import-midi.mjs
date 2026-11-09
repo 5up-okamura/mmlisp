@@ -121,7 +121,7 @@ assert.deepEqual([noiseNoteOfHz(500), noiseNoteOfHz(1804), noiseNoteOfHz(12000)]
   const p = parseMidi(swelled), pa = analyzeMidi(p);
   for (const [t, after] of [["md", /env-01 [^()]*c2 \(macro :vel none\) d/], ["midi", /env-01 [^()]*c2 \(macro :vel none\) d/], ["gb", /env-01 [^()]*c2 env-[a-z-]+ d/]]) {
     const { source } = midiToMmlisp(p, { ...defaultMidiOptions(pa, t), dest: { "0:0": t === "gb" ? "sqr1" : t === "md" ? "fm1" : "ch1" }, structure: true, fileName: "swell.mid" }, pa);
-    assert.match(source, /\(def env-01 \(macro (:step \d+f )?:vel\+ \[0 [^\]]*-\d/, `${t}: the fade a :vel+ macro:\n${source}`);
+    assert.match(source, /\(def env-01 \(macro (:step \d+f )?:vel\+ \[(\(linear )?0[ .][^\]]*-\d/, `${t}: the fade a :vel+ macro:\n${source}`);
     assert.match(source, after, `${t}: cleared after it:\n${source}`);
     const bad = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) }).diagnostics.filter((d) => d.severity === "error");
     assert.deepEqual(bad, [], `${t}: compiles`);
