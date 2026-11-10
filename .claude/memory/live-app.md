@@ -198,5 +198,10 @@ Open, in the order worth taking:
    the voice's fader to the driver now — the A/B gate does not see it).
    The chips' sample tracks and `:target midi` are on it too
    (`_sampleWord`, `_midiLevel`; a sample track's slots are its own,
-   `strk<track>`). Still on its own: value slots (`_writeVal`, a sweep
-   read by formula).
+   `strk<track>`). Value slots too: `_writeVal` is a word (`_word`), the
+   slot (`_vals`) its value now, a sweep in a song-wide slot (`song:VALn`,
+   `isSongWord`, stepped in SONG as the driver's global sweeps), so an
+   event reads what the frame before left; `_resolveSrc` reads the value.
+   A wave expression's frames are KEYED work at each frame's head
+   (`_waveExprFrame`). The panel reads a swept slot moving (it read the
+   pre-sweep value).

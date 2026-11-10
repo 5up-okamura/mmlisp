@@ -6,7 +6,7 @@
 // `this` is the player.
 import { toSlotValue, VOL_UNITY, sampleSweepPhase, sampleCurveUnit, WAVE } from "./ir-utils.js";
 import { curveId, sweepFrameValue } from "./mmb.js";
-import { SONG_WORDS, SLOT_FREEING, DRIVER_SWEEP_CURVES, SWEEP, SONG } from "./ir-player-shared.js";
+import { isSongWord, SLOT_FREEING, DRIVER_SWEEP_CURVES, SWEEP, SONG } from "./ir-player-shared.js";
 
 export const wordMethods = {
   // ---- a sweep ----
@@ -49,7 +49,7 @@ export const wordMethods = {
       baseFrames: this._sweepLen(a, when), loop: !!a.loop,
       startWhen: when, startFrame: this._eventFrame(when),
     };
-    this._runSweep(this._slotKey(ev, target), SONG_WORDS.has(target) ? SONG : SWEEP, sw, write);
+    this._runSweep(this._slotKey(ev, target), isSongWord(target) ? SONG : SWEEP, sw, write);
     return sw;
   },
 
@@ -73,7 +73,7 @@ export const wordMethods = {
     const target = String(a.target ?? "").toUpperCase();
     let last = null;
     // The driver's integer steps; the word is written where it moves.
-    this._runSweep(this._slotKey(ev, target), SONG_WORDS.has(target) ? SONG : SWEEP, {
+    this._runSweep(this._slotKey(ev, target), isSongWord(target) ? SONG : SWEEP, {
       loop, baseFrames: len, startWhen: when, startFrame: this._eventFrame(when),
       valueAt: (f) => sweepFrameValue(id, from, to, len, loop, f) / scale,
       timeOf: (f) => when + f / 60,
@@ -94,64 +94,27 @@ export const wordMethods = {
     const v = toSlotValue(value);
     if (v === null || !this._vals) return;
     // The latest write wins: the host's ends the score's sweep of the slot.
-    if (this._valSweeps) delete this._valSweeps[name];
+    const slot = this._valNames?.indexOf(name);
+    if (slot >= 0) this._slots.delete(`song:VAL${slot}`);
     this._vals[name] = v;
   },
 
   // The score writing a value slot (`:name …`, language.md §8): a song-wide
-  // target, so it is handled here whichever track carries it. A sweep runs in
-  // the slot's own sweep slot, as on the driver — a write ends it only where
-  // the driver's would (a SET, a STOP or a new sweep), and a read in a frame
-  // sees what the sweep wrote the frame before (_resolveSrc).
+  // word, so it is handled here whichever track carries it — a word as any
+  // other (_word): a value, `+` `*` `$slot`, a sweep in the slot's own sweep
+  // slot (song-wide, stepped after a frame's macros, as the driver's global
+  // sweeps are), a stop. The slot is its value now: an event of a frame
+  // reads what the frame before left, a sweep's step writes it.
   _writeVal(ev, name, when) {
     if (name == null) return;
     // A slot in the panel's hand: skipped while held, taken back once let go.
     if (!this._scoreWrites(`val:${name}`)) return;
-    const a = ev.args ?? {};
     const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
-    const cur = this._resolveSrc(name, when);
-    // A one-shot past its last frame has left the slot, its endpoint in it.
-    const sw = this._valSweeps[name];
-    if (sw && !sw.loop && this._eventFrame(when) - sw.startFrame - 1 >= sw.baseFrames - 1) {
-      delete this._valSweeps[name];
-      this._vals[name] = cur;
-    }
-    switch (ev.cmd) {
-      case "PARAM_SET":
-        delete this._valSweeps[name];
-        this._vals[name] = i16(a.value ?? 0);
-        break;
-      case "PARAM_SWEEP_STOP":
-        delete this._valSweeps[name];
-        this._vals[name] = cur;
-        break;
-      case "PARAM_FROM_VAL":
-        this._vals[name] = i16(this._resolveSrc(a.src, when));
-        break;
-      case "PARAM_ADD":
-      case "PARAM_MUL":
-        this._vals[name] = i16(this._writeValue(ev, cur, when));
-        break;
-      case "PARAM_SWEEP": {
-        const df = this._curveFields(a, when);
-        const baseFrames = a.dyn?.len != null
-          ? this._resolveLenFrames(a, null, when)
-          : a.lenFrames
-            ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-            : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
-        this._valSweeps[name] = {
-          from: df.from != null ? Number(df.from) : cur,
-          to: Number(df.to ?? 0),
-          curve: a.curve ?? "linear",
-          params: df.params,
-          baseFrames,
-          loop: !!a.loop,
-          startFrame: this._eventFrame(when),
-          prev: cur,
-        };
-        break;
-      }
-    }
+    this._word(ev, when, {
+      read: () => this._vals[name] ?? 0,
+      // (a sweep's step is a score write at its own time: the panel's hand first)
+      write: (v) => { if (this._scoreWrites(`val:${name}`)) this._vals[name] = i16(v); },
+    });
   },
 
   getVal(name) {
@@ -163,23 +126,16 @@ export const wordMethods = {
     return Math.max(0, Math.round((when - (this._startAudioTime ?? 0)) * 60));
   },
 
-  // Resolve a value source id: "$time" (built-in) or a slot name. Slots are kept
-  // finite at write time (setVal); the finite guard here is belt-and-braces
-  // so no dynamic-value path can ever hand NaN to downstream math.
+  // Resolve a value source id: "$time" (built-in) or a slot name — its value
+  // now. Slots are kept finite at write time (setVal); the finite guard here
+  // is belt-and-braces so no dynamic-value path can ever hand NaN to
+  // downstream math.
   _resolveSrc(src, when) {
     if (src === "$time") return this._valTime(when);
-    const sw = this._valSweeps?.[src];
-    if (sw) {
-      // The driver steps a sweep after the frame's events, so an event reads
-      // the value the frame before wrote — the slot as it was, in the sweep's
-      // own first frame. A finished one-shot holds its endpoint (_sweepAt).
-      const k = this._eventFrame(when) - sw.startFrame - 1;
-      if (k < 0) return sw.prev;
-      return Math.max(-32768, Math.min(32767, Math.round(this._sweepAt(sw, k))));
-    }
     const v = this._vals?.[src];
     return Number.isFinite(v) ? v : 0;
   },
+
 
   // A write's value from its word's value now (`cur`): a SET's, a `$slot`'s,
   // a `+` or a `*`, in the driver's arithmetic (opcodes.md PARAM_ADD /
@@ -397,7 +353,7 @@ export const wordMethods = {
   // frames still waiting for their time (_at) stop there; a `+`, a `*` or a
   // `$slot` moves the word and the sweep steps on.
   _slotKey(ev, target) {
-    if (SONG_WORDS.has(target)) return `song:${target}`;
+    if (isSongWord(target)) return `song:${target}`;
     const r = ev._route;
     // A chip's sample track keeps its words (_sampleWord), and so its slots.
     if (r?.core === "sample" && r.part?.name !== "dac") return `strk${ev._trackIndex}:${target}`;

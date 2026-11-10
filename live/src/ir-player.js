@@ -159,7 +159,7 @@ export class IRPlayer {
     this._psgDuty = new Array(PSG_LANES).fill(8); // each lane's duty in sixteenths (the 2A03's pulses)
     this._laneLfoSync = new Array(PSG_LANES).fill(false); // a lane's :lfo-sync (the PC Engine's, the FDS's)
     this._fmKeyMask = new Array(FM_CHANNELS).fill(0);
-    this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals, nextFrame }
+    this._laneExpr = new Array(PSG_LANES).fill(null); // a lane's wave expression with $slots: { tree, slots, vals }
     this._drawnWaves = new Map(); // def-wave name → the steps the editor drew over it (setWave)
     // Persistent PSG noise mode (FB+NF bits 0-7). A noise NOTE_ON re-asserts this
     // current value; PARAM_SET NOISE_MODE updates it; the mode macro is a
@@ -323,7 +323,6 @@ export class IRPlayer {
     this._vals = {};
     this._valUnits = {}; // slot → "frame" | "tick" (for dynamic :len/:step)
     this._valNames = []; // slot index → name, for the VALn write targets
-    this._valSweeps = {}; // name → the score's running sweep of that slot
     for (const v of irObj.metadata?.vals ?? []) {
       this._vals[v.name] = toSlotValue(v.init) ?? 0;
       this._valUnits[v.name] = v.unit ?? "frame";
@@ -469,7 +468,7 @@ export class IRPlayer {
     this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 };
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the chips' own sample voices (_chipPcmState)
-    this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
+    this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrame)
     this._psgPan?.fill(0);
     this._psgDuty?.fill(8);
     this._laneLfoSync?.fill(false);
@@ -1321,9 +1320,6 @@ export class IRPlayer {
     // What every call up to a time is known by (_settled): the encoders and
     // models that order a chip's writes by their time write up to it.
     const settled = this._settled(horizon);
-    // A wave expression follows its slots — and once the song is done, to
-    // the end of its last note.
-    this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : settled);
     // The SSG's mixer changes, in time order (chips/ssg.js).
     this._flushEncoders(done ? Infinity : settled);
     // Every hit up to there is known now: the chip's sample voices' levels
@@ -3633,23 +3629,22 @@ export class IRPlayer {
     this._writeLaneWave(lane, data, when);
   }
 
-  // Each wave expression's frames up to `horizon`: one whose slots moved
-  // since the frame before (a host's setVal, a def-val sweep) is written in
-  // that frame — at most once a frame, as the driver would.
-  _waveExprFrames(horizon) {
-    const last = this._eventFrame(horizon);
-    this._laneExpr.forEach((x, lane) => {
-      if (!x) return;
-      for (let f = x.nextFrame; f <= last; f++) {
-        const t = this._frameOrigin + f / 60;
-        const vals = x.slots.map((n) => this._resolveSrc(n, t));
-        if (vals.some((v, k) => v !== x.vals[k])) {
-          x.vals = vals;
-          this._writeWaveExpr(lane, t);
-        }
+  // A wave expression's frame `f`, as work at the frame's head (before its
+  // events: its slots as the frame before left them): written where one
+  // moved since (a host's setVal, a def-val sweep) — at most once a frame,
+  // as the driver would. The frames go on while the expression is the
+  // lane's, never keeping a run alive.
+  _waveExprFrame(lane, x, f) {
+    const t = this._frameOrigin + f / 60;
+    this._step(f, KEYED, t, () => {
+      if (this._laneExpr[lane] !== x) return;
+      const vals = x.slots.map((n) => this._resolveSrc(n, t));
+      if (vals.some((v, k) => v !== x.vals[k])) {
+        x.vals = vals;
+        this._writeWaveExpr(lane, t);
       }
-      x.nextFrame = Math.max(x.nextFrame, last + 1);
-    });
+      this._waveExprFrame(lane, x, f + 1);
+    }, null, true);
   }
 
   /** The def-wave lane `lane` last played, or null. */
@@ -3889,13 +3884,14 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
         // A wave expression with a $slot (`expr`) is written now and again
-        // in each frame its slots have moved (_waveExprFrames).
+        // in each frame its slots have moved (_waveExprFrame).
         if (ev.args?.expr && String(ev.args.target).toUpperCase() === "WAVE") {
           this._laneWave[psgCh] = null;
           const slots = [...waveSlots(ev.args.expr)];
           const vals = slots.map((n) => this._resolveSrc(n, when));
-          this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals, nextFrame: this._eventFrame(when) + 1 };
+          const x = (this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals });
           this._writeWaveExpr(psgCh, when);
+          this._waveExprFrame(psgCh, x, this._eventFrame(when) + 1);
           break;
         }
         this._word(ev, when, this._psgWord(psgCh, String(ev.args?.target ?? "").toUpperCase()));

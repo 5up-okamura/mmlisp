@@ -58,6 +58,9 @@ export const UNSHIFTED = new Set([KEYED, FM3_KEYS, FM3_TL, VOICES]);
 // The words that are the song's, not a channel's: one slot each, stepped
 // after every channel's in a frame (SONG).
 export const SONG_WORDS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
+// A song-wide word: those, and the value slots (VAL0–15) — the driver's
+// global sweeps (driver.md §4 step 4).
+export const isSongWord = (target) => SONG_WORDS.has(target) || /^VAL\d+$/.test(target);
 // The writes that free a sweep's slot (driver.md §4 step 3).
 export const SLOT_FREEING = new Set(["PARAM_SET", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).

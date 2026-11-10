@@ -425,6 +425,27 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
   }
 }
 
+// A value slot the score sweeps: the panel reads it moving (it read the
+// slot as it was before the sweep, the sweep living in a formula), and a
+// hold takes it from the sweep.
+{
+  try {
+    const r = RIGS.ir(compile(`(def-val depth 0 0..40 :public)\n(fm1 :tempo 120 :len 4 :depth (linear 0..40 :len 1/1) c c c c c c)`));
+    r.to(0.5);
+    const a = r.player.read(val("depth")).v;
+    r.to(1.0);
+    const b = r.player.read(val("depth")).v;
+    assert.ok(a > 0 && b > a && b <= 40, `the sweep, read (${a} → ${b})`);
+    r.player.hold(val("depth"), 3);
+    r.to(1.5);
+    assert.equal(r.player.read(val("depth")).v, 3, "held over the sweep");
+    r.player.stop();
+  } catch (e) {
+    failed++;
+    console.error(`FAIL a swept value slot on the panel: ${e.message}`);
+  }
+}
+
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);
 console.log(`check:panel ok${open.length ? ` (${open.length} open)` : ""}`);

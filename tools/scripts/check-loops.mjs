@@ -82,6 +82,13 @@ const CASES = [
   ["a pitch sweep from before the loop", `(fm1 :tempo 120 :len 4 :pitch (linear 0..300 :len 2/1) #top c c (go top))`, FNUM],
   ["a PCM voice's :vol sweep runs on through a + and a *", `(def-val m 12 0..31 :public)\n(def-pcm pad :file "pad.wav")\n(pcm1 pad :tempo 120 :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)`, ["pcm", 0]],
   ["a PCM voice's :vol sweep in its loop", `(def-pcm pad :file "pad.wav")\n(pcm1 pad :tempo 120 :len 4 #top :vol (linear 31..4 :len 2/1) c c (go top))`, ["pcm", 0]],
+  // A value slot swept (a song-wide sweep, stepped after a frame's macros)
+  // and read: by a note's :vol, through a `+` and a `*`, a loop of it, and
+  // a macro step reading it.
+  ["a slot swept, read by :vol", `(def-val m 31 0..31 :public)\n(fm1 :tempo 120 :len 8 :m (linear 31..0 :len 2/1) #t :vol $m c (go t))`, TL4],
+  ["a slot's sweep through + and *", `(def-val m 31 0..31 :public)\n(fm1 :tempo 120 :len 8 :m (linear 31..4 :len 2/1) #t :vol $m c :m+ 3 c :m* 0.5 c c (go t))`, TL4],
+  ["a slot's loop curve", `(def-val m 31 0..31 :public)\n(fm1 :tempo 120 :len 8 :m (sin 31..11 :len 50f) #t :vol $m c (go t))`, TL4],
+  ["a macro step reading a swept slot", `(def-val m 0 -100..100 :public)\n(fm1 :tempo 120 :len 4 :m (linear 0..100 :len 1/1) #t (macro :pitch [0 0 0 0 0 0 0 0]) :pitch $m c (go t))`, FNUM],
   // A held note (:len 0) runs its macros as long as it sounds — while the
   // song plays on (fm4) — stepped one at a time, nothing laid out ahead.
   ["a held note's sustain loop", `(sqr1 :tempo 120 :len 0 (macro :vel [#sus 15 10 6]) c)\n(fm4 :len 1 #t c (go t))`, ["psg", 0]],
