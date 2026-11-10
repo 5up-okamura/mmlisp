@@ -91,6 +91,12 @@ const SAMPLE_HANDLERS = {
 };
 // A frame's order (driver.md §4): the places work takes in it (IRPlayer._at).
 const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3, AFTER = 4; // (AFTER: what follows a frame's steps — a PCM retrigger)
+// Channel 3's shared $28 in FM3 mode, then its CSM operators' levels: the
+// frame's edges once every write to them is known (_scheduleFm3OpKey), each
+// at its own time.
+const FM3_KEYS = 5, FM3_TL = 6;
+// The phases whose writes keep their own time (_runWork).
+const UNSHIFTED = new Set([KEYED, FM3_KEYS, FM3_TL]);
 // The words that are the song's, not a channel's: one slot each, stepped
 // after every channel's in a frame (SONG).
 const SONG_WORDS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
@@ -214,18 +220,6 @@ function lcm(a, b) {
   b = Math.max(1, Math.round(b));
   const g = gcd(a, b);
   return g ? (a / g) * b : a;
-}
-
-// The driver's order of FM3 key edges (IRPlayer._scheduleFm3OpKey): by frame,
-// then the tracks' dispatch before the macros, then track (or operator), then
-// time — where a key-off and a key-on at the same time go off first.
-function fm3KeyOrder(a, b) {
-  return (
-    a.frame - b.frame ||
-    a.phase - b.phase ||
-    a.order - b.order ||
-    (Math.abs(a.t - b.t) > 1e-6 ? a.t - b.t : a.on - b.on)
-  );
 }
 
 // The FM encoder of a target with no FM (the MSX's PSG alone): no channels,
@@ -404,7 +398,7 @@ export class IRPlayer {
 
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
     // operator of channel 3 via the shared 0x28 key register (see
-    // _scheduleFm3OpKey / _flushFm3Keys).
+    // _scheduleFm3OpKey).
     this._resetFm3Keys();
     // FM3 independent-OP: each operator's own note, sticky :pitch offset
     // and level (index = op − 1) — what its F-number and TL are written
@@ -615,7 +609,6 @@ export class IRPlayer {
     // level — their key is their TL (driver.md §9), so that is what stops them.
     if (this._reg27 & 0x80)
       for (let op = 0; op < 4; op++) this._fmWrites(this._fmEnc.ch3Tl(op, 127));
-    this._fm3TlQueue = [];
     this._reg27 = 0;
     this._fm3Ops = false;
     if (this._fmEnc.csm) this._fmWrites(this._fmEnc.mode(0));
@@ -1079,11 +1072,8 @@ export class IRPlayer {
     });
     if (fm3Off && this._reg27 & 0x80) this._fm3CsmRelease(fm3Off, when);
     else if (fm3Off && this._fm3Mask & fm3Off) {
-      this._fm3KeyQueue = this._fm3KeyQueue.filter((e) => !(e.on && e.bit & fm3Off));
       this._fm3Held &= ~fm3Off;
-      this._fm3Mask &= ~fm3Off;
-      this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
-      this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
+      this._fm3KeysOff(fm3Off, when);
     }
     // PSG: force silent attenuation on an inaudible channel.
     for (const [ti, psgCh] of this._lanesOf("psg")) {
@@ -1514,10 +1504,7 @@ export class IRPlayer {
         if (this._reg27 & 0x80) {
           this._fm3CsmRelease(held, when); // CSM: the key is the level (§9)
         } else {
-          this._fm3KeyQueue = this._fm3KeyQueue.filter((e) => !(e.on && e.bit & held));
-          this._fm3Mask &= ~held;
-          this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
-          this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
+          this._fm3KeysOff(held, when);
         }
       } else {
         this._fmKey(ch, 0, when);
@@ -1905,8 +1892,8 @@ export class IRPlayer {
 
   // `run` as work of frame `F`, whatever the time: a sweep's step waits for
   // its frame's events even in the frame it is dispatched in.
-  _step(F, phase, t, run) {
-    this._putWork(F, phase, t, run);
+  _step(F, phase, t, run, ord = null) {
+    this._putWork(F, phase, t, run, ord);
   }
 
   // Whether `when` is still ahead of the run: what composes a write from the
@@ -1916,12 +1903,21 @@ export class IRPlayer {
     return when != null && when > this._writeCursor;
   }
 
-  _putWork(F, phase, t, run) {
+  // `ord`: within its frame and phase, the place the item takes — a list
+  // compared in turn (FM3_KEYS: the driver's order, _scheduleFm3OpKey); a
+  // dispatch's timed parts by time; the rest in the order they were made.
+  _putWork(F, phase, t, run, ord = null) {
     const q = this._work;
-    const item = { F, phase, t, run };
-    // After every item not later than it: frame, then phase, then — for a
-    // dispatch's timed parts — time; the rest in the order they were made.
-    const later = (x) => x.F > F || (x.F === F && (x.phase > phase || (x.phase === phase && phase === KEYED && x.t > t)));
+    const item = { F, phase, t, run, ord };
+    const after = (x) => {
+      if (x.F !== F) return x.F > F;
+      if (x.phase !== phase) return x.phase > phase;
+      if (phase === KEYED) return x.t > t;
+      if (!ord) return false;
+      for (let i = 0; i < ord.length; i++) if (x.ord[i] !== ord[i]) return x.ord[i] > ord[i];
+      return false;
+    };
+    const later = after;
     let lo = this._workHead, hi = q.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
@@ -1955,7 +1951,7 @@ export class IRPlayer {
     // (An event's time runs up to a frame past the frame's own, the driver
     // dispatching the ticks ahead of it: the work stays within half a frame
     // of its time, so the next frame's keeps its distance.)
-    const ts = item.phase !== KEYED && this._lastEvent.F === item.F
+    const ts = !UNSHIFTED.has(item.phase) && this._lastEvent.F === item.F
       ? Math.max(item.t, Math.min(this._lastEvent.t, item.t + 0.49 / 60)) : item.t;
     this._sendAhead(ts);
     const was = [this._stampFrom, this._stampShift];
@@ -2040,7 +2036,6 @@ export class IRPlayer {
     if (done) this._writeCursor = Infinity; // the run is over: what follows (a key, the panel) is written at once
     // Every event up to the horizon is dispatched, so the frames before the
     // horizon's own have all their FM3 key edges.
-    this._flushFm3Keys(done ? Infinity : this._eventFrame(horizon) - 1);
     return done;
   }
 
@@ -2335,7 +2330,6 @@ export class IRPlayer {
         elapsed += stepSec;
       }
       this._advance(Infinity, Infinity);
-      this._flushFm3Keys();
     } finally {
       this._sink = saved.write;
       this._onLine = saved.onLine;
@@ -2649,10 +2643,12 @@ export class IRPlayer {
     o.tl = this._fm3OpTl(op, when);
     // Under CSM an operator's level is its key, and a rest on the rate track
     // dispatched after this note silences it through the rest (driver.md §9):
-    // the write waits in a queue until no later dispatch can reach its frame
-    // (_flushFm3Keys), where a rest spanning it turns it into 127.
+    // the write waits for its frame's dispatch (FM3_TL), where a rest
+    // spanning it turns it into 127.
     if (this._reg27 & 0x80 && this._fm3Ops && when !== undefined) {
-      this._fm3TlQueue.push({ t: when, frame: this._eventFrame(when), seq: this._fm3TlSeq++, op, tl: o.tl });
+      const tl = o.tl;
+      this._step(this._eventFrame(when), FM3_TL, when, () =>
+        this._fmWrites(this._fmEnc.ch3Tl(op - 1, this._inCsmHold(when) ? 127 : tl), when), [Math.round(when * 1e6)]);
       return;
     }
     this._fmWrites(this._fmEnc.ch3Tl(op - 1, o.tl), when);
@@ -2766,20 +2762,20 @@ export class IRPlayer {
   // note's pending key-off, then the key-on) — and after them the macros, in
   // ascending operator, where a :keyon retrigger is the operator's off and on
   // (driver.md §13.4). The edges are queued with that order and written once
-  // no later dispatch can add to their frame (_flushFm3Keys), so the preview
+  // no later dispatch can add to their frame (FM3_TL), so the preview
   // writes the driver's mask sequence.
   _resetFm3Keys() {
-    this._fm3TlQueue = []; // CSM operators' level writes, flushed with the key edges
-    this._fm3TlSeq = 0;
     this._csmHoldSpans = []; // [start, end) in audio time: the rate track's rests
-    this._fm3KeyQueue = [];
     this._fm3Mask = 0; // the operator bits $28 holds
     this._fm3Held = 0; // operators keyed by a hold (len 0) note
     this._fm3KeyLast = -Infinity; // the last $28 write's time
+    this._fm3KeyGen = [0, 0, 0, 0]; // per operator: bumped to drop its key-ons still waiting
   }
 
   /**
-   * Queue one FM3 operator note's key edges.
+   * Queue one FM3 operator note's key edges as its frames' work (FM3_KEYS),
+   * in the driver's order: dispatch before macros, then track (a :keyon
+   * retrigger: operator), then time, a key-off before a key-on at one time.
    * @param {number} opBit  operator key bit (0x10=OP1 … 0x80=OP4)
    * @param {number} onTime audio time of key-on
    * @param {number|null} offTime audio time of key-off, or null for a hold note
@@ -2787,21 +2783,35 @@ export class IRPlayer {
    * @param {number} track  the note's track index (its dispatch order)
    */
   _scheduleFm3OpKey(opBit, onTime, offTime, retriggers, track) {
-    const q = this._fm3KeyQueue;
-    const edge = (t, frame, phase, order, on) =>
-      q.push({ t, frame, phase, order, on, bit: opBit });
+    const op = Math.log2(opBit) - 4;
+    const gen = this._fm3KeyGen[op];
+    const edge = (t, frame, phase, order, on) => this._step(frame, FM3_KEYS, t, () => {
+      if (on && this._fm3KeyGen[op] !== gen) return; // dropped: a mute, a hold let go
+      if (on) this._fm3Mask |= opBit;
+      else this._fm3Mask &= ~opBit;
+      // Never behind the previous write: the worklet applies them in time order.
+      this._fm3KeyLast = Math.max(t, this._fm3KeyLast);
+      this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
+    }, [phase, order, Math.round(t * 1e6), on ? 1 : 0]);
     edge(onTime, this._eventFrame(onTime), 0, track, true);
     // A full-gate note's key-off lands in the next note's dispatch, before its
-    // key-on: same frame, same track, earlier in the sort (_fm3KeyOrder).
+    // key-on: same frame, same track, earlier in the order.
     if (offTime == null) this._fm3Held |= opBit;
     else edge(offTime, this._eventFrame(offTime), 0, track, false);
-    const op = Math.log2(opBit) - 4;
     for (const r of retriggers) {
       if (offTime != null && r.on >= offTime) break;
       const frame = this._eventFrame(r.on);
       edge(r.off, frame, 1, op, false);
       edge(r.on, frame, 1, op, true);
     }
+  }
+
+  // The operators of `bits` keyed off now, their key-ons still waiting dropped.
+  _fm3KeysOff(bits, when) {
+    for (let op = 0; op < 4; op++) if (bits & (0x10 << op)) this._fm3KeyGen[op]++;
+    this._fm3Mask &= ~bits;
+    this._fm3KeyLast = Math.max(when, this._fm3KeyLast);
+    this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
   }
 
   // CSM (driver.md §9): Timer A keys CH3, so releasing an operator — a hold
@@ -2814,36 +2824,6 @@ export class IRPlayer {
     }
   }
 
-  // Write the queued FM3 key edges of every frame up to `uptoFrame`.
-  _flushFm3Keys(uptoFrame = Infinity) {
-    const q = this._fm3KeyQueue;
-    if (q.length) {
-      q.sort(fm3KeyOrder);
-      let n = 0;
-      for (; n < q.length && q[n].frame <= uptoFrame; n++) {
-        const e = q[n];
-        if (e.on) this._fm3Mask |= e.bit;
-        else this._fm3Mask &= ~e.bit;
-        // Never behind the previous write: the worklet applies them in time order.
-        this._fm3KeyLast = Math.max(e.t, this._fm3KeyLast);
-        this._fmKey(2, this._fm3Mask, this._fm3KeyLast);
-      }
-      q.splice(0, n);
-    }
-    // CSM operators' levels (_writeFm3OpTl): a rest on the rate track that
-    // spans a write silences it.
-    const tq = this._fm3TlQueue;
-    if (tq.length) {
-      tq.sort((a, b) => a.frame - b.frame || a.t - b.t || a.seq - b.seq);
-      let n = 0;
-      for (; n < tq.length && tq[n].frame <= uptoFrame; n++) {
-        const e = tq[n];
-        this._fmWrites(this._fmEnc.ch3Tl(e.op - 1, this._inCsmHold(e.t) ? 127 : e.tl), e.t);
-      }
-      tq.splice(0, n);
-    }
-  }
-
   _applyCsmRate(ev, when) {
     // A rate rest stops Timer A (CSM stays on); a rate, or the gate's run
     // form, starts it again at the period it has (driver.md §9).
@@ -2853,7 +2833,7 @@ export class IRPlayer {
       this._csmHold = run === false;
       // With the operators as tracks the rest is the voice's breath: the
       // formants fall silent with Timer A and come back with it (driver.md
-      // §9) — a span the queued level writes read (_flushFm3Keys), and an
+      // §9) — a span the queued level writes read (FM3_TL), and an
       // edge of their own here.
       if (this._fm3Ops && this._csmHold !== held) {
         if (this._csmHold) this._csmHoldSpans.push([when, Infinity]);
