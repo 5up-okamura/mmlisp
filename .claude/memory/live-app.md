@@ -104,10 +104,15 @@ Open, in the order worth taking:
    and drop writes by the calls they have seen. Listen to those first.
 4. **One level model for FM channels, fm3 operators and tone lanes**
    (`_lv(site)`: vel, vol, liveVel / liveVol, note, key, hand; `_lvWrite`
-   is the only part that differs by kind). Still outside it: the Mega
-   Drive's PCM voices (the worklet's model + `_pcmVolNow`), the chips'
-   sample voices and `:target midi` (lines of their own) — they have only
-   the panel's hand there, so `_volOf` still switches on them. The other
+   is the only part that differs by kind). A Mega Drive PCM voice's
+   fader and :vel are its record's too (`pcm:n`; the worklet's model
+   composes them). Still outside it: the chips' sample voices and
+   `:target midi` — a timeline of their own (`_chipPcmParam`'s lines, a
+   sweep read by formula, `_levelMacroLines`), read as their frames are
+   written after the fact (`_chipPcmFrames`, up to `_settled`); they have
+   only the panel's hand in the record, so `_volOf` still switches on
+   them. Making them live means writing those frames as frame work — five
+   dispatchers, no driver to hold them to: only the snapshot. The other
    words a sample track writes (`:pan`, `:pitch`) are still per dispatcher;
    probe each against the driver as MASTER and :vol were.
 5. Bounds of the lookahead, as they are: a hand has the chip within it
