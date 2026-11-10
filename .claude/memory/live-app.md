@@ -144,13 +144,23 @@ Open, in the order worth taking:
    it runs whether the track's note is still its own (`_noteOf`,
    `_noteScope`) — the next note takes the lane over on its frame, as the
    driver's dispatch does before the frame's macros; no score's output
-   moved. `_nextNote` stays for what is decided ahead of the next note's
-   dispatch: the key edges (a slur, a note that abuts the next, a :keyon
-   macro's last key-off, a level tail's silence) and the callers reading a
-   macro's values now (sample voices, midi). Those key edges are the next
-   forecast to take out — the `_pendingKeyOff` path is already the live
-   form of one of them. A scaled macro (`:scale $slot`) still reads its
-   slot when laid out, not per step.
+   moved. **Key edges are the driver's too**: a gate shorter than its note
+   keys off at its end; a full gate's key-off waits for the track's next
+   event (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, each with its
+   gate's end `at`): a note keys off before its key-on (a slur cancels
+   it), a REST or the track's end (`TRACK_END`, added by `_flattenTracks`
+   with a REST in every gap, as export-mmb.js syncClock fills them) keys
+   off / silences there (`_resolveOff`). Work that belongs to a note
+   (a :keyon tail's key-off, a level tail's silence, a CSM mute, a DMC
+   stop, an MD PCM retrigger) runs `_whileNote`: just after any event at
+   its own time, and only while the note is still the track's. A hot-swap
+   settles the outgoing pendings at their gate's end (`_settlePending`).
+   No macro takes a limit any more. On the frame-clocked machines this
+   removed a silence / key-off a frame early between abutting notes (the
+   gate's end rounded to the frame before the next note's). `_nextNote` is
+   left only for the sample editor's playhead (`_reportSample`'s `cut`), a
+   UI hint. A scaled macro (`:scale $slot`) still reads its slot when laid
+   out, not per step.
 8. **A word's event is one rule** (`_word(ev, when, w)`): a value, a
    `$slot`, `+`, `*`, a sweep, a stop — the same for every word on every
    track; the track gives only the word, `{ read, write, sweep? }`

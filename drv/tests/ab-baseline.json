@@ -685,9 +685,9 @@
   },
   "p3-claim-evict.mmlisp": {
     "ok": false,
-    "mismatches": 120,
+    "mismatches": 119,
     "compileErrors": 0,
-    "digest": "12fc1cc8"
+    "digest": "3c242ecb"
   },
   "p3-claim-se-in-twin.mmlisp": {
     "ok": true,
@@ -697,9 +697,9 @@
   },
   "p3-claim-se-in.mmlisp": {
     "ok": false,
-    "mismatches": 120,
+    "mismatches": 119,
     "compileErrors": 0,
-    "digest": "12fc1cc8"
+    "digest": "3c242ecb"
   },
   "p3-claim-se-out-twin.mmlisp": {
     "ok": true,

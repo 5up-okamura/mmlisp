@@ -1043,8 +1043,12 @@ for (const [start, phase] of [[1, 96], [2, 128], [5, 224], [6, null]]) {
   const bell = fs.readFileSync(path.join(ROOT, "drv/tests/m3-pcm-fm6-tie.mmlisp"), "utf8").match(/\(def-fm bell[^)]*\)/)[0];
   const dacLog = (ir) => {
     const log = new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog();
-    return log.writes.filter((w) => w.port === 0 && (w.addr === 0x2b || (w.addr === 0x28 && (w.data & 7) === 6)))
-      .map((w) => `${w.sec.toFixed(2)} ${w.addr}=${w.data}`).join(" ");
+    // (Writes at one instant as a set: tracks dispatch in their order, and an
+    // import orders its tracks its own way.)
+    const at = new Map();
+    for (const w of log.writes.filter((w) => w.port === 0 && (w.addr === 0x2b || (w.addr === 0x28 && (w.data & 7) === 6))))
+      at.set(w.sec.toFixed(2), [...(at.get(w.sec.toFixed(2)) ?? []), `${w.addr}=${w.data}`]);
+    return [...at].map(([t, ws]) => `${t} ${ws.sort().join(",")}`).join(" ");
   };
   for (const [name, others, fm6Dest] of [["beside", "(fm1 bell :oct 3 :len 2 c e g c)", "fm2"],
     ["full", [1, 2, 3, 4, 5].map((n) => `(fm${n} bell :oct ${3 + (n > 2)} :len 2 c e g c)`).join("\n"), "fm6"]]) {
