@@ -2257,6 +2257,9 @@ export class IRPlayer {
       this._onPosition = saved.onPosition;
       this._audioContext = saved.ctx;
       this._loop = saved.loop;
+      // The capture's run is over: nothing of it waits, and a write is made at once again.
+      this._dropAhead();
+      this._writeCursor = Infinity;
       this._playing = saved.playing;
       this._bpm = saved.bpm;
       this._tempoSweep = saved.tempoSweep;
@@ -5870,8 +5873,11 @@ export class IRPlayer {
         this._at(frameWhen, () => {
           if (this._slots.get(slot) !== sw) return;
           if (volOp) this._writeFm3OpTl(volOp, frameWhen, { vol, master });
-          else if (groupSweep) for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
-          else this._writeFmLevel(ch, frameWhen, { vol, master });
+          else if (groupSweep) {
+            // The group fader has no reader ahead of it: it is where the sweep has it.
+            regs.vol = vol;
+            for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
+          } else this._writeFmLevel(ch, frameWhen, { vol, master });
           if (!last) return;
           if (st) st.vol = vol;
           else regs.vol = vol;
