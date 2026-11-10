@@ -136,18 +136,30 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
   const offs = sent.filter((m) => isOff(m.b) && (m.b[0] & 0x0f) === 0 && m.t >= 0.6 && m.t < 0.65);
   assert.ok(offs.length >= 1, "fm1 muted mid-note: its key let go at the mute");
 }
-{ // The mixer's faders: a key's velocity on GM's curve (−12 dB is half),
-  // the score's CC7 as it stands; a fader at 0 keys nothing.
+{ // The panel's level (Live: a strip's :vol, the MASTER in hand): a melodic
+  // channel's CC7 is the panel's, sent as it moves and over the plan's (−12 dB
+  // is 64 on GM's curve); its keys' velocity stays the score's; at 0, a mute.
   const { ir, plan } = both(SONG);
   const p = standIn(ir);
   const sent = [];
-  const faders = [[25, 31], [0, 31]]; // fm1 −12 dB, fm2 off
-  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }), fadersOf: (ti) => faders[ti] });
+  const levels = [{ vol: 25, master: 31, scoreVol: 31, scoreMaster: 31 }, { vol: 0, master: 31, scoreVol: 31, scoreMaster: 31 }];
+  const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }), levelOf: (ti) => levels[ti] });
   run.setPlan(plan, ir);
   drive(run, p, 0, 0.6);
-  const ons = sent.filter((m) => isOn(m.b));
-  assert.ok(ons.length && ons.every((m) => (m.b[0] & 0x0f) === 0 && m.b[2] === 64), `fm1 at half its velocity: ${ons.map((m) => m.b[2])}`);
-  assert.ok(sent.some((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7 && m.b[2] === 127), "the score's CC7 untouched");
+  const cc7 = sent.filter((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7 && (m.b[0] & 0x0f) === 0);
+  assert.ok(cc7.length && cc7.at(-1).b[2] === 64, `fm1's CC7 the panel's: ${cc7.map((m) => m.b[2])}`);
+  assert.ok(!sent.some((m) => isOn(m.b) && (m.b[0] & 0x0f) === 1), "fm2 at 0 keys nothing");
+  const plain = [];
+  const run2 = new MidiOutRun({ send: (b, ms) => plain.push({ b, t: ms / 1000 }) });
+  run2.setPlan(plan, ir);
+  drive(run2, standIn(ir), 0, 0.6);
+  const vels = (list) => list.filter((m) => isOn(m.b) && (m.b[0] & 0x0f) === 0).map((m) => m.b[2]).join();
+  assert.equal(vels(sent), vels(plain), "fm1's keys at the score's velocity");
+  // Let go and written over by the score: its CC7 as the plan last had it.
+  levels[0] = null;
+  run.pass(p, 0.6);
+  const back = sent.filter((m) => (m.b[0] & 0xf0) === 0xb0 && m.b[1] === 7 && (m.b[0] & 0x0f) === 0).at(-1);
+  assert.equal(back.b[2], 127, "the score's CC7 back");
 }
 { // Stop: every key, then All Notes Off on each channel.
   const { ir, plan } = both(SONG);

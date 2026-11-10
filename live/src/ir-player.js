@@ -1188,7 +1188,7 @@ export class IRPlayer {
       : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3OpVolAtTime(n, when)
       : kind === "psg" ? this._psgVolAtTime(n, when)
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
-      : kind === "midi" ? VOL_UNITY // the output's plan has the score's
+      : kind === "midi" ? this._chipPcmParamAt(strip.tracks[0], "vol", when)
       : this._chipPcmParamAt(strip.tracks[0], "vol", when);
     return { v: Math.round(v), hand: false };
   }
@@ -1281,7 +1281,21 @@ export class IRPlayer {
 
   /** The master level as last scheduled, 0-31: what the panel shows. */
   getMaster() {
+    if (this._target?.name === "midi" && !this._hands.has("MASTER"))
+      return Math.round(this._chipPcmParamAt("master", "vol", this._audioContext?.currentTime ?? 0));
     return this._masterVol ?? VOL_UNITY;
+  }
+
+  /**
+   * `:target midi`: a strip's :vol and the master as the score has them now,
+   * under any hand of the panel's — what the MIDI output's plan already says.
+   */
+  scoreLevelOf(strip) {
+    const when = this._audioContext?.currentTime ?? 0;
+    return {
+      vol: Math.round(this._chipPcmParamAt(strip?.tracks?.[0], "vol", when)),
+      master: Math.round(this._chipPcmParamAt("master", "vol", when)),
+    };
   }
 
   /** The panel lets go of `word`: its value stays until the score writes the word. */
@@ -2603,6 +2617,14 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    // `:target midi`: its sound is the output's, which the plan writes; what
+    // the panel shows of its levels is the score's, kept here — before the
+    // panel's hand, which the output reads beside it (scoreLevelOf).
+    if (this._target?.name === "midi" && ev.cmd.startsWith("PARAM_")) {
+      const t = String(ev.args?.target ?? "").toUpperCase();
+      if (t === "MASTER") this._chipPcmParam({ ...ev, _trackIndex: "master" }, when, "vol");
+      else if (t === "VOL" && ev._trackIndex != null) this._chipPcmParam(ev, when, "vol");
+    }
     const hand = handWordOf(ev);
     if (hand && !this._scoreMayWrite(hand)) return;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);

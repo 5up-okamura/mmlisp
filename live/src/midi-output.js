@@ -18,9 +18,12 @@
 //                            the bar, its controllers as they stand
 //   mute / solo              a track that does not sound sends no key; one
 //                            muted mid-note lets it go at once
-//   the mixer's faders       a key's velocity, as the strip's fader and the
-//                            master's dB read on GM's curve (the score's CC7
-//                            stays the score's); a fader at 0 is a mute
+//   the panel's level        a strip's :vol or the MASTER in Live's hand
+//                            (`levelOf`): a melodic channel's CC7 is the
+//                            panel's level, sent as it moves and over the
+//                            plan's; channel 10's keys, whose velocity holds
+//                            the level, move by the difference from the
+//                            score's (no louder than the key at full)
 //   stop                     every key let go, All Notes Off on each channel
 //   Live's keyboards         a key at once on a channel (keyOn / keyOff);
 //                            stopped, the channel takes its opening voice
@@ -36,6 +39,9 @@
 // ---------------------------------------------------------------------------
 
 import { RPN_BEND, midiPlan, faderDb, velocity7 } from "./export-midi.js";
+
+// CC7 for a level in dB, as the plan writes it (export-midi.js level7).
+const cc7Of = (db) => (db === -Infinity ? 0 : Math.max(0, Math.min(127, Math.round(127 * 10 ** (db / 40)))));
 import { compileMMLisp } from "./mmlisp2ir.js";
 
 export const midiOutSupported = typeof navigator !== "undefined"
@@ -122,14 +128,16 @@ export class MidiOutRun {
    *           perfAt?: (audioTime: number) => number,
    *           clear?: () => void,
    *           onSkip?: (what: string) => void,
-   *           fadersOf?: (trackIndex: number) => number[] }} io
+   *           levelOf?: (trackIndex: number) => ({ vol: number, master: number,
+   *             scoreVol: number, scoreMaster: number } | null) }} io
    *        `clear` drops what was sent ahead and not yet played (MIDIOutput
-   *        clear(), where the browser has it); `fadersOf` the mixer's faders
-   *        (0–31) over a track, its strip's and the master
+   *        clear(), where the browser has it); `levelOf` a track's level as
+   *        the panel holds it — its :vol and the master as shown (0–31) and
+   *        the score's — or null while the score's own stands
    */
-  constructor({ send, perfAt = (t) => t * 1000, clear = null, onSkip = null, fadersOf = null }) {
+  constructor({ send, perfAt = (t) => t * 1000, clear = null, onSkip = null, levelOf = null }) {
     this.send = send;
-    this.fadersOf = fadersOf;
+    this.levelOf = levelOf;
     this.perfAt = perfAt;
     this.clear = clear;
     this.onSkip = onSkip;
@@ -225,9 +233,17 @@ export class MidiOutRun {
       // A track stopped at a `:len 0` note waits: its clock picks up from
       // there at the key-off (IRPlayer _resumeHeldTrack).
       if (held.has(t.trackIndex)) continue;
-      // The faders' dB, a key's velocity scaled on GM's curve (export-midi
-      // level7); a fader at 0 is a mute.
-      const db = (this.fadersOf?.(t.trackIndex) ?? []).reduce((s, f) => s + faderDb(f), 0);
+      // The panel's level: a melodic channel's CC7 goes out as it moves; a
+      // drum's keys move by its difference from the score's. At 0, a mute.
+      const lv = this.levelOf?.(t.trackIndex) ?? null;
+      const db = lv ? faderDb(lv.vol) + faderDb(lv.master) : 0;
+      const delta = lv && t.drums ? db - faderDb(lv.scoreVol) - faderDb(lv.scoreMaster) : 0;
+      const cc7 = lv && !t.drums ? cc7Of(db) : null;
+      if (cc7 != null && st.cc7 !== cc7) this.send([0xb0 | t.channel, 7, cc7], this.perfAt(now));
+      // The score's back: its CC7 as the plan last had it, which may have
+      // gone out as the panel's.
+      else if (cc7 == null && st.cc7 != null && st.planCc7 != null) this.send([0xb0 | t.channel, 7, st.planCc7], this.perfAt(now));
+      st.cc7 = cc7;
       const audible = player.isTrackAudible(t.trackIndex) && db > -Infinity;
       if (st.audible && !audible) this.letGo(st, now); // muted mid-note
       st.audible = audible;
@@ -241,9 +257,14 @@ export class MidiOutRun {
         let bytes = e.bytes;
         if (isOn(bytes)) {
           if (!audible) return;
-          if (db < 0) bytes = [bytes[0], bytes[1], Math.max(1, Math.round(bytes[2] * 10 ** (db / 40)))];
+          if (delta) bytes = [bytes[0], bytes[1], Math.max(1, Math.min(127, Math.round(bytes[2] * 10 ** (delta / 40))))];
           st.active.set(keyOf(bytes), { bytes, at });
         } else if (isOff(e.bytes)) st.active.delete(keyOf(e.bytes));
+        // The plan's CC7 under the panel's level is the panel's.
+        else if ((bytes[0] & 0xf0) === 0xb0 && bytes[1] === 7) {
+          st.planCc7 = bytes[2];
+          if (cc7 != null) bytes = [bytes[0], 7, cc7];
+        }
         this.lastAt = Math.max(this.lastAt, at);
         this.send(bytes, this.perfAt(at));
       });
@@ -353,10 +374,18 @@ export class MidiOutRun {
    * channel is first given its opening voice in `ir`'s plan; playing, it has
    * the song's. `vel` is the language's :vel (15 when not given).
    */
-  keyOn(ir, channel, note, vel, now) {
+  // `level`: the channel's :vol and the master as the panel shows them,
+  // which a key stopped plays at (its CC7, or a drum's velocity).
+  keyOn(ir, channel, note, vel, now, level = null) {
     const at = this.perfAt(now);
-    if (!this.running) for (const b of channelOpening(this.plans.get(ir), channel)) this.send(b, at);
-    this.send([0x90 | channel, note, velocity7(vel ?? 15)], at);
+    const db = level ? faderDb(level.vol) + faderDb(level.master) : 0;
+    const drums = channel === 9;
+    if (!this.running) {
+      for (const b of channelOpening(this.plans.get(ir), channel)) this.send(b, at);
+      if (level && !drums) this.send([0xb0 | channel, 7, cc7Of(db)], at);
+    }
+    const v = velocity7(vel ?? 15);
+    this.send([0x90 | channel, note, drums && level && !this.running ? Math.max(1, Math.round(v * 10 ** (db / 40))) : v], at);
   }
 
   keyOff(channel, note, now) {

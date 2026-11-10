@@ -8996,12 +8996,6 @@
         if (knob) setKnobVisual(knob, v);
       }
     }
-    // The strip's :vol the panel holds over a plan whose score has its own
-    // (the MIDI output, the note meters), else unity.
-    const stripHandVol = (entry) => {
-      const r = entry && player?.volOf?.(entry.strip);
-      return r?.hand ? r.v : VOL_UNITY;
-    };
 
     // Map vol 0-31 to the knob indicator angle (-135°…+135°).
     function volToKnobAngle(vol) {
@@ -9060,9 +9054,6 @@
       'sl-master': 'MASTER', 'sl-tempo': 'tempo', 'sl-lfo': 'LFO_RATE',
       'sl-lfo-freq': 'LFO_FREQ', 'sl-lfo-pmd': 'LFO_PMD', 'sl-lfo-amd': 'LFO_AMD', 'sl-lfo-wave': 'LFO_WAVE',
     };
-    // The master the panel holds over a plan (the MIDI output, the note meters),
-    // whose score already has its own.
-    const panelMaster = () => (player?.handOn?.('MASTER') ? player.getMaster() : 31);
     function holdWord(word, val) {
       if (!player) initParamOnlyPlayer();
       player?.holdWord?.(word, val);
@@ -13697,7 +13688,10 @@
         return null;
       }
       const ch = midiKeyChannel();
-      _midiOutRun.keyOn(_lastGoodIR, ch, note, vel, audioCtx?.currentTime ?? 0);
+      // Stopped, a key plays at the level the panel shows for its strip.
+      const entry = _chStripModel.find((e) => e.head === selectedChannel) ?? _chStripModel.find((e) => channelVoice(e.head)?.voice === ch);
+      const level = { vol: (entry && player?.volOf?.(entry.strip)?.v) ?? VOL_UNITY, master: player?.getMaster?.() ?? VOL_UNITY };
+      _midiOutRun.keyOn(_lastGoodIR, ch, note, vel, audioCtx?.currentTime ?? 0, level);
       return { midiCh: ch, note };
     }
     function midiKeyChannel() {
@@ -13973,11 +13967,14 @@
       _midiOutRun = new MidiOutRun({
         ...io,
         onSkip: (what) => log(`MIDI output: ${what}`, 'warn'),
-        // A key's velocity follows the mixer: the track's strip (not a
-        // ROM rhythm's sounds, which share their tracks) and the master.
-        fadersOf: (ti) => {
-          const entry = _chStripModel.find((e) => e.trackIndex === ti && !e.rhythmTracks);
-          return [stripHandVol(entry), panelMaster()];
+        // The level the panel holds over a track (its strip's :vol, the
+        // MASTER), which the output sends in place of the plan's.
+        levelOf: (ti) => {
+          const entry = _chStripModel.find((e) => e.strip?.tracks.includes(ti));
+          const r = entry && player?.volOf?.(entry.strip);
+          if (!r?.hand && !player?.handOn?.('MASTER')) return null;
+          const score = player.scoreLevelOf?.(entry?.strip) ?? { vol: VOL_UNITY, master: VOL_UNITY };
+          return { vol: r?.v ?? score.vol, master: player.getMaster(), scoreVol: score.vol, scoreMaster: score.master };
         },
       });
       _midiOutTimer = setInterval(midiOutTick, 25);
@@ -15094,7 +15091,7 @@
       _vuNotes.set(head, n);
       if (!n || player.isTrackAudible?.(cell.trackIndex) === false) return 0;
       const fader = (v) => (v <= 0 ? -Infinity : (Math.min(31, v) - 31) * 2);
-      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(stripHandVol(_chStripModel.find((e) => e.head === head))) + fader(panelMaster());
+      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(player?.volOf?.(_chStripModel.find((e) => e.head === head)?.strip ?? {})?.v ?? VOL_UNITY) + fader(player?.getMaster?.() ?? VOL_UNITY);
       const level = Math.max(0, Math.min(1, 1 + db / VU_RANGE_DB));
       return fresh ? level : n.sample ? 0 : level * NOTE_VU_HELD;
     }
