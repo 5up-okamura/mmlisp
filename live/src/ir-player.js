@@ -1938,7 +1938,9 @@ export class IRPlayer {
         // falls in, so a note's key-on and its macros' steps count from one
         // frame (_frameTime).
         const when = this._target.frameClock ? this._frameStart(evTime) : evTime;
-        this._sendAhead(when); // what was ahead of this event is before it now
+        // What was ahead of this event is before it now — on a frame clock,
+        // what comes before it in its frame (_frameTime keeps that order).
+        this._sendAhead(this._target.frameClock ? this._frameTime(evTime) : evTime);
         this._dispatchEvent(ev, when);
         // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
         if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
@@ -6396,13 +6398,34 @@ export class IRPlayer {
     );
     // The frame the note keys off in is not keyed at its sweep step.
     const last = Math.min(end, this._eventFrame(untilWhen));
-    const sounding = this._psgSounding[psgCh];
     for (let F = this._eventFrame(fromWhen); F < last; F++) {
       const t = Math.max(fromWhen, this._frameOrigin + F / 60);
-      const att = this._composePsgAtt(psgCh, vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F));
-      this._psgSetAtt(psgCh, att, t);
+      this._psgLevelAt(psgCh, vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F), t, false);
     }
-    this._psgSounding[psgCh] = sounding;
+  }
+
+  // A keyed PSG lane's level on a frame of its note. A frame ahead is
+  // composed when the run reaches it — with the panel's hand as it is then
+  // (_composePsgAtt). The lane's sounding flag is the dispatch's to keep: it
+  // says how the note's writes leave the lane, known as they are queued
+  // (`flag`: this write moves it, as a macro's steps do; a sweep's leave it).
+  _psgLevelAt(psgCh, vel, vol, master, t, flag) {
+    const was = this._psgSounding[psgCh];
+    // Only where the chip's level write stands alone (`attAnytime`, the
+    // SN76489's): an encoder that orders or drops writes by the calls it has
+    // seen (a queued one, the Game Boy's, the 2A03's) must see its note's
+    // whole as it is dispatched.
+    if (!this._isAhead(t) || !this._toneEnc[psgCh]?.enc.attAnytime) {
+      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, vol, master), t);
+      if (!flag) this._psgSounding[psgCh] = was;
+      return;
+    }
+    if (flag) this._psgSounding[psgCh] = this._composePsgAtt(psgCh, vel, vol, master) < this._psgOff(psgCh);
+    this._at(t, () => {
+      const now = this._psgSounding[psgCh];
+      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, vol, master), t);
+      this._psgSounding[psgCh] = now;
+    });
   }
 
   // The level a PSG note-on composes. The driver runs a frame's notes before
@@ -6553,7 +6576,7 @@ export class IRPlayer {
     for (let F = F0; F <= lastF; F++) {
       const t = F === F0 ? noteWhen : Math.max(noteWhen, this._frameOrigin + F / 60);
       const master = this._masterAtFrame(F);
-      const write = () => this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLive, volAtF(F), master), t);
+      const write = () => this._psgLevelAt(psgCh, velLive, volAtF(F), master, t, true);
       if (F < keyEnd && volAhead.has(F)) {
         volNow = volAhead.get(F);
         write();

@@ -22,7 +22,9 @@ const compile = (src) => {
 };
 
 // A player and its clock: `to(sec)` plays up to `sec` of the song; `reg(addr)`
-// the last value the chip's port-0 register took by then.
+// the last value the chip's port-0 register took by then, `att(ch)` a PSG
+// channel's attenuation (0 loud .. 15 off).
+const isAtt = (data, ch) => (data & 0x90) === 0x90 && ((data >> 5) & 3) === ch;
 const RIGS = {
   ir(ir) {
     const writes = [];
@@ -49,13 +51,21 @@ const RIGS = {
         for (const w of writes) if (w.port === 0 && w.addr === addr && w.when <= ctx.currentTime + 1e-9 && (!last || w.when >= last.when)) last = w;
         return last?.data ?? null;
       },
+      att(ch) {
+        let last = null;
+        for (const w of writes) if (w.port === 2 && isAtt(w.data, ch) && w.when <= ctx.currentTime + 1e-9 && (!last || w.when >= last.when)) last = w;
+        return last ? last.data & 15 : null;
+      },
     };
   },
   drv(ir) {
     const reg = new Map();
+    const atts = [null, null, null, null];
     const { bytes, sampleBank } = encodeMmb(ir);
     const player = new DrvPlayer((port, addr, data) => {
-      if (typeof port !== "object" && port === 0) reg.set(addr & 0xff, data & 0xff);
+      if (typeof port === "object") return;
+      if (port === 0) reg.set(addr & 0xff, data & 0xff);
+      if (port === 2 && (data & 0x90) === 0x90) atts[(data >> 5) & 3] = data & 15;
     });
     player.loadMMB(bytes, sampleBank);
     player._reset(true);
@@ -66,6 +76,7 @@ const RIGS = {
         for (; frame < Math.round(sec * 60); frame++) player.stepFrame();
       },
       reg: (addr) => reg.get(addr) ?? null,
+      att: (ch) => atts[ch],
     };
   },
 };
@@ -164,13 +175,19 @@ scene("an FM register in hand",
 // stay under the hand. The IR player's chip is behind its run by the
 // lookahead, and what the run had sent plays out: a hand has the chip within
 // it (0.2 s), which is where these look.
-const through = (name, src, c, value, read, louder = true) => scene(name, src, ({ player, to, reg: r }) => {
+const through = (name, src, c, value, read, louder = true) => scene(name, src, ({ player, to, reg: r, att }) => {
+  r.att = att;
   to(0.5);
   const swept = read(r);
   player.hold(c, value);
   to(0.8);
   const held = read(r);
-  if (louder) assert.ok(held < swept, `the panel's level over the sweep's (TL ${swept} → ${held})`);
+  if (louder === null) {
+    // The note's own :vel runs on; the :vol under it is the panel's (louder than the score's).
+    assert.ok(held < swept, `the panel's :vol under the note's :vel (att ${swept} → ${held})`);
+    return;
+  }
+  if (louder) assert.ok(held < swept, `the panel's level over the sweep's (${swept} → ${held})`);
   else assert.equal(held, value, "the panel's value on the chip");
   to(1.5);
   assert.equal(read(r), held, "the score's frames stay under the hand");
@@ -185,6 +202,11 @@ through("an FM register held through the score's sweep",
   `(fm1 :tempo 120 :len 1 :fb (linear 0..7 :len 1/1) c c)`, reg(0, "FM_FB"), 1, (r) => (r(0xb0) >> 3) & 7, false);
 through("an FM register held through a note's macro",
   `(fm1 :tempo 60 :len 1 (macro :fb [(linear 0..7 :len 1/1)]) c)`, reg(0, "FM_FB"), 1, (r) => (r(0xb0) >> 3) & 7, false);
+
+through("a PSG lane's level held through the score's sweep",
+  `(sqr1 :tempo 120 :len 1 :vol (linear 31..4 :len 1/1) c c)`, vol("sqr1", [0]), 31, (r) => r.att(0));
+through("a PSG lane's level held through a note's :vel macro",
+  `(sqr1 :tempo 60 :len 1 :vol 20 (macro :vel [(linear 15..4 :len 1/1)]) c)`, vol("sqr1", [0]), 31, (r) => r.att(0), null);
 
 scene("MASTER let go follows the score's next write; the score's own ran on under it",
   `(fm1 :tempo 120 :len 4 :master 20 c :master 24 c c :master 28 c c)`,

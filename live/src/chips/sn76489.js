@@ -45,8 +45,11 @@ export const sn76489 = {
   // (white-noise feedback taps 0x0009, a 16-bit shift register, no flags);
   // the command a write on the worklet's port 2 becomes, one data byte.
   vgm: { clock: 0x0c, header: [[0x28, 2, 0x0009], [0x2a, 1, 16], [0x2b, 1, 0]], ports: { 2: { cmd: 0x50, addr: false } } },
-  // The IR player's PSG: stateless, so the chip is its own encoder.
+  // The IR player's PSG: stateless, so the chip is its own encoder — and a
+  // level write stands alone, so the player may make it at its own time
+  // (IRPlayer._psgLevelAt).
   psgEncoder() { return this; },
+  attAnytime: true,
   // The tone counter divides the clock by 32 per period step; 1..1023.
   period(hz) {
     return Math.max(1, Math.min(1023, Math.round(this.clock / (32 * hz))));
