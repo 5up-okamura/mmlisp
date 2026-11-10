@@ -229,3 +229,35 @@ Open, in the order worth taking:
    A wave expression's frames are KEYED work at each frame's head
    (`_waveExprFrame`). The panel reads a swept slot moving (it read the
    pre-sweep value).
+
+## The note path, one for every voice (in progress, 2026-11)
+
+User's goal (verbatim intent): the same function, the same operation, runs
+the same path whatever the chip or target — no per-chip copies, no ad-hoc
+second implementations. Approved: unify the path first, then let each kind
+of voice answer at fixed points. PSG has no hardware envelope (a soft
+envelope: its level macros), PCM rarely uses gate (its `:mode` does).
+
+Review count before starting: 7 note-on handlers, 3 gate rules, 5 pending
+key-off flags (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, `_fm3Held`,
+`_holdChannels`), 5 :keyon retrigger paths, 3 onset paths, 6 word tables.
+
+Design:
+- One per-track "open note" record and one close path: `_closeNote(ti, t,
+  by)` — by the next note (legato or not), a REST, TRACK_END, a gate's end
+  (a timer), the host's key-off (a hold), a hot-swap, a PCM_NOTE_OFF. It
+  keys off / silences through the voice, then lets its macros go.
+- One gate rule (the driver's, FM's): a gate shorter than the note closes
+  at its end; one that reaches the note's end (none, or into a tie) closes
+  at the track's next event or its gate's end, whichever first; length or
+  gate 0 is a hold. PCM: its note closes at its NOTE_OFF (gate / loop
+  mode), else as the rule says; what closing does is the mode's.
+- A voice is an adapter: key on, close (what the gate's end does: FM key
+  off — before the next note's key-on, none on a slur; FM3 op an edge; CSM
+  a TL 127 after the level tail; PSG its level macros' release, then
+  silence — nothing when a note follows; PCM by mode: shot nothing, gate
+  cut, loop release), retrigger (a :keyon step), level site (_lv), pitch.
+- Stages, each committed with the gates green: (1) close path and the
+  open record; (2) one gate rule; (3) one retrigger path; (4) levels and
+  onset through _lv for every voice; (5) pitch; (6) the note function and
+  the voice adapters; (7) the word tables (VOL / PAN once).
