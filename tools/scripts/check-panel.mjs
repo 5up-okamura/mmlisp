@@ -84,7 +84,7 @@ function scene(name, src, body, { openOn = [] } = {}) {
     try {
       body(make(ir), which);
     } catch (e) {
-      if (openOn.includes(which)) { open.push(`${name} (${which}): ${e.message.split("\n")[0]}`); continue; }
+      if (openOn.includes(which)) { open.push(`${name} (${which}): ${e.message.replace(/\n+/g, " ")}`); continue; }
       failed++;
       console.error(`FAIL ${name} (${which}): ${e.message}`);
     }
@@ -160,49 +160,48 @@ scene("an FM register in hand",
     assert.equal((r(0xb0) >> 3) & 7, 3, "the score's again");
   });
 
-// Held through the score's own motion: a sweep's or a macro's later frames
-// must not come back over the hand.
-scene("a level held through the score's sweep",
-  `(fm1 :tempo 120 :len 1 :vol (linear 31..0 :len 1/1) c c)`,
-  ({ player, to, reg: r }) => {
-    to(0.5);
-    player.hold(vol("fm1", [0]), 31);
-    to(0.6);
-    const held = r(TL4);
-    to(1.5);
-    assert.equal(r(TL4), held, "the sweep's frames stay under the hand");
-  }, { openOn: ["ir"] });
+// Held through the score's own motion: a sweep's and a macro's later frames
+// stay under the hand. The IR player's chip is behind its run by the
+// lookahead, and what the run had sent plays out: a hand has the chip within
+// it (0.2 s), which is where these look.
+const through = (name, src, c, value, read, louder = true) => scene(name, src, ({ player, to, reg: r }) => {
+  to(0.5);
+  const swept = read(r);
+  player.hold(c, value);
+  to(0.8);
+  const held = read(r);
+  if (louder) assert.ok(held < swept, `the panel's level over the sweep's (TL ${swept} → ${held})`);
+  else assert.equal(held, value, "the panel's value on the chip");
+  to(1.5);
+  assert.equal(read(r), held, "the score's frames stay under the hand");
+});
+through("a level held through the score's sweep",
+  `(fm1 :tempo 120 :len 1 :vol (linear 31..0 :len 1/1) c c)`, vol("fm1", [0]), 31, (r) => r(TL4));
+through("a level held through a note's :vol macro",
+  `(fm1 :tempo 60 :len 1 (macro :vol [(linear 31..0 :len 1/1)]) c)`, vol("fm1", [0]), 31, (r) => r(TL4));
+through("MASTER held through the score's sweep",
+  `(fm1 :tempo 120 :len 1 :master (linear 31..0 :len 1/1) c c)`, word("MASTER"), 31, (r) => r(TL4));
+through("an FM register held through the score's sweep",
+  `(fm1 :tempo 120 :len 1 :fb (linear 0..7 :len 1/1) c c)`, reg(0, "FM_FB"), 1, (r) => (r(0xb0) >> 3) & 7, false);
+through("an FM register held through a note's macro",
+  `(fm1 :tempo 60 :len 1 (macro :fb [(linear 0..7 :len 1/1)]) c)`, reg(0, "FM_FB"), 1, (r) => (r(0xb0) >> 3) & 7, false);
 
-scene("a level held through a note's :vol macro",
-  `(fm1 :tempo 60 :len 1 (macro :vol [(linear 31..0 :len 1/1)]) c)`,
-  ({ player, to, reg: r }) => {
-    to(0.5);
-    player.hold(vol("fm1", [0]), 31);
-    to(0.6);
-    const held = r(TL4);
-    to(1.5);
-    assert.equal(r(TL4), held, "the macro's frames stay under the hand");
-  }, { openOn: ["ir"] });
-
-scene("MASTER held through the score's sweep",
-  `(fm1 :tempo 120 :len 1 :master (linear 31..0 :len 1/1) c c)`,
-  ({ player, to, reg: r }) => {
-    to(0.5);
-    player.hold(word("MASTER"), 31);
-    to(0.6);
-    const held = r(TL4);
-    to(1.5);
-    assert.equal(r(TL4), held, "the sweep's frames stay under the hand");
-  }, { openOn: ["ir"] });
-
-scene("an FM register held through the score's sweep",
-  `(fm1 :tempo 120 :len 1 :fb (linear 0..7 :len 1/1) c c)`,
-  ({ player, to, reg: r }) => {
-    to(0.5);
-    player.hold(reg(0, "FM_FB"), 1);
-    to(1.5);
-    assert.equal((r(0xb0) >> 3) & 7, 1, "the sweep's frames stay under the hand");
-  }, { openOn: ["ir"] });
+scene("MASTER let go follows the score's next write; the score's own ran on under it",
+  `(fm1 :tempo 120 :len 4 :master 20 c :master 24 c c :master 28 c c)`,
+  ({ player, to }, which) => {
+    to(0.2);
+    player.hold(word("MASTER"), 5);
+    to(0.8);
+    const held = player.read(word("MASTER"));
+    assert.deepEqual([held.v, held.hand], [5, true]);
+    // The IR player lays a level over the score's, which it keeps; the
+    // driver's gate skips the score's write.
+    if (which === "ir") assert.equal(held.score, 24, "the score's master under the hand");
+    player.release(word("MASTER"));
+    to(2.5);
+    const back = player.read(word("MASTER"));
+    assert.deepEqual([back.v, back.hand], [28, false], "taken back");
+  });
 
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);

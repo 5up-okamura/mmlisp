@@ -93,9 +93,9 @@ const SAMPLE_HANDLERS = {
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
 const WAVE_LFO_WORDS = { LFO_FREQ: "lfoFreq", LFO_PMD: "lfoPmd", LFO_WAVE: "lfoTable" };
-// The song-wide words the panel can take in hand (IRPlayer.hold): a score
-// event's word, or null.
-const HAND_PARAMS = new Set(["MASTER", ...LFO_TARGETS]);
+// The song-wide words the panel takes in hand by a gate (IRPlayer.hold): a
+// score event's word, or null. (MASTER is a level: laid over, _handMaster.)
+const HAND_PARAMS = new Set(LFO_TARGETS);
 // A score event that writes a track's :vol: the word, or a note's :vol macro.
 const writesVol = (ev) => (ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() === "VOL"
   : (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.vol != null);
@@ -253,7 +253,7 @@ export class IRPlayer {
     // restoring the page's) is that writer again.
     let rawWrite = writeCallback;
     let framed = null;
-    Object.defineProperty(this, "_write", {
+    Object.defineProperty(this, "_sink", {
       get: () => {
         if (!this._target?.frameClock) return rawWrite;
         if (framed?.raw !== rawWrite) {
@@ -269,6 +269,10 @@ export class IRPlayer {
     // A write on a timer of the machine's own, not the video frame (the PC
     // Engine's DDA, a sample a CPU timer tick): the writer itself, unmoved.
     Object.defineProperty(this, "_writeTimer", { get: () => rawWrite, configurable: true });
+    // The writes still ahead (_write), in time order: { t, write } | { t, run }.
+    this._ahead = [];
+    this._aheadHead = 0; // the first not yet sent
+    this._writeCursor = Infinity; // the time the run has reached; Infinity with no run
     this._ir = null;
     this._playing = false;
     this._loopCount = new Map(); // loopId → iteration count
@@ -390,6 +394,7 @@ export class IRPlayer {
     // ("bd" … "rim") and the ADPCM-B ("adpcm"), whichever track keys them.
     this._mutedVoices = new Set();
     this._soloVoices = new Set();
+    this._masterHand = null; // { v, held }: the panel's MASTER, laid over the score's (_handMaster)
     this._panelWrite = false; // the panel's own write, which no hand stops
     this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (_holdVol)
 
@@ -593,6 +598,8 @@ export class IRPlayer {
       this._schedulerTimer = null;
     }
     this._clearPendingUiTimers();
+    this._dropAhead();
+    this._writeCursor = Infinity;
     // All notes off (FM)
     for (let ch = 0; ch < this._fmEnc.channels; ch++) {
       this._writeKeyOff(ch);
@@ -641,8 +648,11 @@ export class IRPlayer {
   // there; sweeps and keyed spans are kept in audio time, so a previous run's
   // would read as running in this one.
   _resetRunState() {
+    this._dropAhead();
+    this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
     this._hands.clear(); // a run starts with the score's own values
     this._volHands.clear();
+    this._masterHand = null;
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
     this._pcm8State = this._ddaState = this._dpcmState = null;
@@ -840,10 +850,10 @@ export class IRPlayer {
   // it; the real write path and callbacks come back. Returns the held writes
   // and, when watching, that event's time from `start` (null if none plays).
   _chase(audioContext, start, until, watchLine) {
-    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold, onPosition: this._onPosition };
+    const saved = { write: this._sink, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold, onPosition: this._onPosition };
     const held = [];
     this._onLine = this._onSeq = this._onTrig = this._onHold = this._onPosition = null;
-    this._write = (portOrMsg, addr, data, when) => {
+    this._sink = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object") held.push({ msg: portOrMsg, when: portOrMsg.when });
       else held.push({ port: portOrMsg | 0, addr: addr & 0xff, data: data & 0xff, when });
     };
@@ -889,7 +899,10 @@ export class IRPlayer {
         if (done || t >= END) break;
       }
     } finally {
-      this._write = saved.write;
+      // What was still ahead of the chase's end is not the live run's to
+      // write: the notes it belonged to are let go at the seek point.
+      this._dropAhead();
+      this._sink = saved.write;
       this._onLine = saved.onLine;
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
@@ -1122,26 +1135,40 @@ export class IRPlayer {
   // — let go, it stays until the score next writes it; read — what it is
   // now. A run starts with the score's own values (play, seek).
   //
-  // Two mechanisms carry a hand here. A word, a register and a slot are
-  // gated: the score's writes of one in hand are skipped (_scoreWrites), so
-  // the state is the panel's until the score takes it back. A strip's :vol
-  // is laid over: the score's :vol runs on unheard, and the level is composed
-  // with the panel's value wherever a :vol goes in (_handVol).
+  // Two mechanisms carry a hand here. A level — a strip's :vol, MASTER — is
+  // laid over: the score's own runs on unheard, and wherever a level is
+  // composed the panel's value stands in (_handVol, _handMaster), so letting
+  // go has the score's to come back to. A word, a register and a slot are
+  // gated: the score's writes of one in hand are skipped (_scoreWrites), at
+  // their own time — a sweep's and a macro's frames wait for it (_at) — and
+  // the state is the panel's until the score takes it back.
+  //
+  // The player's state is the song at its cursor (the last horizon), and the
+  // chip is behind it by the lookahead: what the run has already sent plays
+  // out under a hand just taken. So the panel's write is made twice — now,
+  // and again where the sent writes end (_writeCursor) — and a hand has the
+  // chip to itself within the lookahead.
 
   /** The panel takes `c` in hand at `value`. */
   hold(c, value) {
     if (c.kind === "vol") return this._holdVol(c.strip, value);
+    if (c.word === "MASTER") {
+      this._masterHand = { v: Math.max(0, Math.min(31, Math.round(value))), held: true };
+      this._levelsNow();
+      return;
+    }
     const h = this._hands.get(c.id);
     if (h) h.held = true;
     else this._hands.set(c.id, { held: true });
     this._panelWrite = true;
     try {
       if (c.kind === "val") this.setVal(c.name, value);
-      else if (c.kind === "reg") this.setParam(c.word, value, c.ch);
       else if (c.word === "tempo") this._setTempoNow(value);
       else {
-        if (c.word === "MASTER") this._masterSweep = null;
-        this.setParam(c.word, value);
+        const ch = c.kind === "reg" ? c.ch : 0;
+        this.setParam(c.word, value, ch);
+        const sent = this._sentUntil();
+        if (sent != null) this.setParam(c.word, value, ch, sent);
       }
     } finally {
       this._panelWrite = false;
@@ -1151,33 +1178,34 @@ export class IRPlayer {
   /** The panel lets go of `c`: its value stays until the score writes it. */
   release(c) {
     if (c.kind === "vol") return this._releaseVol(c.strip);
-    const h = this._hands.get(c.id);
+    const h = c.word === "MASTER" ? this._masterHand : this._hands.get(c.id);
     if (h) h.held = false;
   }
 
   /**
    * `c` now, as the panel shows it. `hand`: the panel's value is in force
-   * (held, or let go and not yet written over); `score`, where the player
-   * keeps the score's value under a hand (a strip's :vol; `:target midi`'s
-   * master), is that value.
+   * (held, or let go and not yet written over); `score`, for a level (a
+   * strip's :vol, MASTER), is the score's value under it.
    * @returns {{ v: number, hand: boolean, score?: number } | null}
    */
   read(c) {
     if (c.kind === "vol") return this._volOf(c.strip);
+    const when = this._audioContext?.currentTime ?? 0;
+    if (c.word === "MASTER") {
+      // `:target midi` keeps its master as a line (_midiLevel).
+      const score = this._target?.name === "midi"
+        ? Math.round(this._chipPcmParamAt("master", "vol", when))
+        : this._playing ? this._masterAt(when) : this._masterVol ?? VOL_UNITY;
+      return { v: this._masterHand ? this._masterHand.v : score, hand: !!this._masterHand, score };
+    }
     const hand = this._hands.has(c.id);
     if (c.kind === "val") {
       const v = this.getVal(c.name);
       return v == null ? null : { v, hand };
     }
     if (c.kind === "reg") return { v: this._readParam(c.ch, c.word), hand };
-    const when = this._audioContext?.currentTime ?? 0;
     switch (c.word) {
       case "tempo": return { v: this._bpm, hand };
-      case "MASTER": {
-        if (this._target?.name !== "midi") return { v: this._masterVol ?? VOL_UNITY, hand };
-        const score = Math.round(this._chipPcmParamAt("master", "vol", when));
-        return { v: hand ? this._masterVol ?? VOL_UNITY : score, hand, score };
-      }
       case "LFO_RATE": return { v: this._lfoRate ?? 0, hand };
       default: {
         // The machine's LFO words: a wave chip's own where it has one, else the OPM's.
@@ -1186,6 +1214,27 @@ export class IRPlayer {
         if (wave && wave !== "lfoTable") return { v: this._waveLfo[wave] ?? 0, hand };
         return opm ? { v: this._opmLfo?.[opm] ?? 0, hand } : null;
       }
+    }
+  }
+
+  // Where the writes the run has sent end, while it plays: the time the
+  // panel's write is made again (hold), after the last of them.
+  _sentUntil() {
+    return this._playing && Number.isFinite(this._writeCursor) ? this._writeCursor : null;
+  }
+
+  // The panel's MASTER, or null: laid over the score's wherever a level is composed.
+  _handMaster() {
+    return this._masterHand ? this._masterHand.v : null;
+  }
+
+  // Every level recomposed, after the panel moved MASTER: now, and where the
+  // sent writes end.
+  _levelsNow() {
+    const now = this._playing ? this._audioContext?.currentTime : undefined;
+    for (const when of [now, this._sentUntil()]) {
+      if (when === null) continue;
+      this._recomposeLevels(when === undefined ? this._masterVol ?? VOL_UNITY : this._masterAt(when), when);
     }
   }
 
@@ -1230,7 +1279,11 @@ export class IRPlayer {
     for (const ti of strip.tracks ?? []) hand.tracks.add(ti);
     hand.v = Math.max(0, Math.min(31, Math.round(value)));
     hand.held = true;
-    for (const site of sites) this._levelNow(site);
+    const sent = this._sentUntil();
+    for (const site of sites) {
+      this._levelNow(site, this._playing ? this._audioContext?.currentTime : undefined);
+      if (sent != null) this._levelNow(site, sent);
+    }
   }
 
   // Let go: it stays until the score writes :vol there.
@@ -1301,11 +1354,10 @@ export class IRPlayer {
     }
   }
 
-  // A level recomposed now, after the panel moved it: a sounding FM channel,
-  // PSG lane or Mega Drive PCM voice at once; a chip's sample voice from its
-  // next hit.
-  _levelNow(site) {
-    const when = this._playing ? this._audioContext?.currentTime : undefined;
+  // A level recomposed at `when` (now when absent), after the panel moved
+  // it: an FM channel, a keyed PSG lane, a Mega Drive PCM voice; a chip's
+  // sample voice follows as its frames are written (_chipPcmFrames).
+  _levelNow(site, when) {
     const [kind, at] = site.split(":");
     const n = Number(at);
     if (kind === "fm") {
@@ -1314,10 +1366,17 @@ export class IRPlayer {
     } else if (kind === "fm3op") {
       if (this._fm3Ops) this._writeFm3OpTl(n, when);
     } else if (kind === "psg") {
-      // A fader move must never un-silence an idle channel into a tone.
-      if (!this._psgSounding[n]) return;
+      // A fader move must never un-silence an idle lane into a tone. A run
+      // knows a lane keyed at its cursor, not at the chip's now: its level
+      // moves where the sent writes end. Stopped, the keys' lane is live.
+      const keyed = this._playing
+        ? when != null && when >= this._writeCursor - 1e-9 && when < (this._psgKeyedUntil[n] ?? 0) - 1e-6
+        : this._psgSounding[n];
+      if (!keyed) return;
+      const sounding = this._psgSounding[n];
       const vel = this._psgLastVel[n] ?? 15;
-      this._psgSetAtt(n, this._composePsgAtt(n, vel, this._psgVol[n] ?? VOL_UNITY, this._masterVol ?? VOL_UNITY), when ?? 0);
+      this._psgSetAtt(n, this._composePsgAtt(n, vel, this._psgVolAtTime(n, when ?? 0), this._masterVol ?? VOL_UNITY), when ?? 0);
+      this._psgSounding[n] = sounding;
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
 
@@ -1714,6 +1773,71 @@ export class IRPlayer {
     return done;
   }
 
+  // ---- the writes ahead ----
+  // An event is dispatched ahead of its time (the lookahead), and what it
+  // sets going — a note's key-off, a sweep's and a macro's frames — lies
+  // further ahead still. A write whose time the run has not reached waits
+  // here, in time order, and goes out when the run reaches it: before any
+  // event at or after its time is dispatched, and at each pass's horizon. So
+  // nothing is with the chip's queue (the worklet's) further ahead than the
+  // lookahead, and what waits can still be decided at its own time (_at).
+  // Writes of one time go out in the order they were made.
+
+  /** A register write (port, addr, data) or a message ({ type, when, … }), at `when` — now when absent. */
+  _write(portOrMsg, addr, data, when) {
+    let t = portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg) ? portOrMsg.when : when;
+    // On a frame-clocked target a write's time is its frame's (_sink).
+    if (t != null && this._target?.frameClock) t = this._frameTime(t);
+    if (t == null || t <= this._writeCursor) this._sink(portOrMsg, addr, data, when);
+    else this._putAhead({ t, write: [portOrMsg, addr, data, when] });
+  }
+
+  // `run` at time `t`, among the writes: now when the run has reached `t`.
+  _at(t, run) {
+    if (t == null || t <= this._writeCursor) run();
+    else this._putAhead({ t: this._target?.frameClock ? this._frameTime(t) : t, run });
+  }
+
+  // Whether `when` is still ahead of the run: what composes a write from the
+  // player's state (a level, a register word) waits for it then (_at), and
+  // reads the state — and the panel's hand — as it is at that time.
+  _isAhead(when) {
+    return when != null && when > this._writeCursor;
+  }
+
+  _putAhead(item) {
+    const q = this._ahead;
+    let lo = this._aheadHead, hi = q.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (q[mid].t <= item.t) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo === q.length) q.push(item);
+    else q.splice(lo, 0, item);
+  }
+
+  // The run reaches `until`: everything ahead up to it goes out.
+  _sendAhead(until) {
+    const q = this._ahead;
+    while (this._aheadHead < q.length && q[this._aheadHead].t <= until) {
+      const item = q[this._aheadHead++];
+      if (item.t > this._writeCursor) this._writeCursor = item.t;
+      if (item.run) item.run();
+      else this._sink(...item.write);
+    }
+    if (until > this._writeCursor) this._writeCursor = until;
+    if (this._aheadHead > 1024 && this._aheadHead * 2 > q.length) {
+      q.splice(0, this._aheadHead);
+      this._aheadHead = 0;
+    }
+  }
+
+  _dropAhead() {
+    this._ahead.length = 0;
+    this._aheadHead = 0;
+  }
+
   _scheduleEvents(now, horizon) {
     // Once the boundary has passed, the post-swap dispatch floor is moot.
     if (this._dispatchFloor !== -Infinity && now >= this._dispatchFloor) {
@@ -1735,9 +1859,13 @@ export class IRPlayer {
 
     // Playback is complete when no track will loop further and all are exhausted.
     const willLoopAny = this._loop && this._tracks.some((t) => t.hasLoop);
-    const done =
+    const dispatched =
       !willLoopAny &&
       this._tracks.every((t) => t.flatIndex >= t.events.length);
+    // ...and what they set going has gone out: the writes ahead (_write).
+    this._sendAhead(horizon);
+    const done = dispatched && this._aheadHead >= this._ahead.length;
+    if (done) this._writeCursor = Infinity; // the run is over: what follows (a key, the panel) is written at once
     // Every event up to the horizon is dispatched, so the frames before the
     // horizon's own have all their FM3 key edges.
     this._flushFm3Keys(done ? Infinity : this._eventFrame(horizon) - 1);
@@ -1809,7 +1937,9 @@ export class IRPlayer {
         // On a frame-clocked target an event happens on the frame its time
         // falls in, so a note's key-on and its macros' steps count from one
         // frame (_frameTime).
-        this._dispatchEvent(ev, this._target.frameClock ? this._frameStart(evTime) : evTime);
+        const when = this._target.frameClock ? this._frameStart(evTime) : evTime;
+        this._sendAhead(when); // what was ahead of this event is before it now
+        this._dispatchEvent(ev, when);
         // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
         if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
           track.held = { tick: ev.tick, when: evTime };
@@ -1877,7 +2007,7 @@ export class IRPlayer {
     const pcm8Events = [];
 
     const saved = {
-      write: this._write,
+      write: this._sink,
       onLine: this._onLine,
       onSeq: this._onSeq,
       onTrig: this._onTrig,
@@ -1897,7 +2027,7 @@ export class IRPlayer {
     this._onHold = null;
     this._onPosition = null;
 
-    this._write = (portOrMsg, addr, data, when) => {
+    this._sink = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
         pcmCount++; // DAC/PCM event — not encoded into VGM yet
         if (portOrMsg.type === "pcm-ev")
@@ -2029,9 +2159,10 @@ export class IRPlayer {
 
         elapsed += stepSec;
       }
+      this._sendAhead(Infinity);
       this._flushFm3Keys();
     } finally {
-      this._write = saved.write;
+      this._sink = saved.write;
       this._onLine = saved.onLine;
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
@@ -2342,10 +2473,11 @@ export class IRPlayer {
       ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
     return levelSteps(this._fmLevel, {
       base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
-      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, over.master ?? this._masterVol ?? VOL_UNITY],
+      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, this._handMaster() ?? over.master ?? this._masterVol ?? VOL_UNITY],
     });
   }
   _writeFm3OpTl(op, when, over = {}) {
+    if (this._isAhead(when)) return void this._at(when, () => this._writeFm3OpTl(op, when, over));
     const o = this._chRegs[2].ops[op - 1];
     o.tl = this._fm3OpTl(op, when, over);
     // Under CSM an operator's level is its key, and a rest on the rate track
@@ -2368,10 +2500,11 @@ export class IRPlayer {
   // `over` pins any of vel / vol / master for a caller that has its own value.
   // The one place a normal channel's level is composed (§7).
   _writeFmLevel(ch, when, over = {}) {
+    if (this._isAhead(when)) return void this._at(when, () => this._writeFmLevel(ch, when, over));
     const regs = this._chRegs[ch];
     const vel = over.vel ?? this._fmLiveVelAt(ch, when);
     const vol = this._handVol(`fm:${ch}`) ?? over.vol ?? this._fmLiveVolAt(ch, when);
-    const master = over.master ?? this._masterAt(when);
+    const master = this._handMaster() ?? over.master ?? this._masterAt(when);
     const carriers = this._carrierOps(regs);
     for (let opIdx = 0; opIdx < 4; opIdx++) {
       const carrier = carriers.includes(opIdx);
@@ -2403,7 +2536,7 @@ export class IRPlayer {
       op,
       this._fmLiveVelAt(ch, when),
       this._fmLiveVolAt(ch, when),
-      this._masterVol ?? VOL_UNITY,
+      this._handMaster() ?? this._masterVol ?? VOL_UNITY,
       carrier,
     );
   }
@@ -2681,6 +2814,10 @@ export class IRPlayer {
     if (this._target?.name === "midi") this._midiLevel(ev, when);
     const hand = handWordOf(ev);
     if (hand && !this._scoreWrites(hand)) return;
+    // A score write of MASTER takes it back from a hand let go; under one
+    // held it runs on, unheard.
+    if (this._masterHand && !this._masterHand.held && ev.cmd.startsWith("PARAM_")
+      && String(ev.args?.target ?? "").toUpperCase() === "MASTER") this._masterHand = null;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -2703,7 +2840,11 @@ export class IRPlayer {
       const a = ev.args ?? {};
       if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
       else if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP")
-        this._writeSongRate(ev, when, cur, (v, t) => write((this._waveLfo[lfoWord] = v), t));
+        this._writeSongRate(ev, when, cur, (v, t) => this._at(t, () => {
+          // A frame ahead is a score write of the word at its own time.
+          if (t > when && !this._scoreWrites(String(ev.args.target).toUpperCase())) return;
+          write((this._waveLfo[lfoWord] = v), t);
+        }));
       else {
         const v = ev.cmd === "PARAM_ADD" ? cur + Number(a.delta ?? 0)
           : ev.cmd === "PARAM_MUL" ? cur * Number(a.factor ?? 1)
@@ -3143,6 +3284,7 @@ export class IRPlayer {
       if (fields.kind === "vol") fields = { ...fields, value: hand };
       else if (fields.kind === "on" || fields.kind === "retrig") fields = { ...fields, vol: hand };
     }
+    if (fields.kind === "master" && this._masterHand) fields = { ...fields, value: this._masterHand.v };
     this._write({ type: "pcm-ev", when, ...fields });
   }
 
@@ -3337,7 +3479,7 @@ export class IRPlayer {
     return {
       vel: this._lineAt(hit.velLine, when) ?? hit.vel,
       vol: this._handVol(`voice:${hit.voice}`) ?? this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
-      master: lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
+      master: this._handMaster() ?? lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
     };
   }
 
@@ -4229,11 +4371,13 @@ export class IRPlayer {
   }
 
   _applyParam(ch, ev, when) {
+    if (this._isAhead(when)) return void this._at(when, () => this._applyParam(ch, ev, when));
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
     // A register in the panel's hand: the score's write waits while it is
     // held, and takes it back once let go.
-    if (this._hands.size && !this._panelWrite && !this._scoreWrites(`reg:${ch}:${target}`)) return;
+    if (this._hands.size && !this._panelWrite
+      && !this._scoreWrites(HAND_PARAMS.has(target) ? target : `reg:${ch}:${target}`)) return;
     const value = ev.args?.value ?? 0;
 
     // Helper to round, clamp and apply. All hardware register targets are integers;
@@ -4609,6 +4753,20 @@ export class IRPlayer {
   _applyMasterChange(value, when, F = this._eventFrame(when), ahead = false) {
     const master = Math.max(0, Math.min(31, Math.round(value)));
     this._masterVol = master;
+    this._recomposeLevels(master, when, F, ahead);
+    if (this._chipPcm) insertLine(this._chipPcm.master, when, master);
+  }
+
+  // Every level composed again with `master` — the score's; the panel's
+  // stands in for it where each is composed (_handMaster).
+  _recomposeLevels(master, when, F = this._eventFrame(when), ahead = false) {
+    this._recomposeFmLevels(master, when, F);
+    this._recomposePsgLevels(master, when, F, ahead);
+    // PCM voices ride master too: the voice model recomposes every voice.
+    this._pcmEv(when, { kind: "master", value: master });
+  }
+
+  _recomposeFmLevels(master, when, F) {
     // FM channels: update carrier TL
     for (let ci = 0; ci < this._fmEnc.channels; ci++) {
       if (ci === 2 && this._fm3Ops) { this._recomposeFm3Ops(when); continue; }
@@ -4616,6 +4774,9 @@ export class IRPlayer {
       const vol = this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F);
       this._writeFmLevel(ci, when, { vol, master });
     }
+  }
+
+  _recomposePsgLevels(master, when, F, ahead) {
     // PSG channels: recalculate attenuation from vel * vol * master, but only
     // for channels currently sounding — re-writing a non-silent att to an idle
     // channel (e.g. at play start, before any note) would drone a tone.
@@ -4632,9 +4793,6 @@ export class IRPlayer {
       this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLevel, vol, master), when);
       this._psgSounding[psgCh] = sounding; // may be ahead of time (a sweep frame)
     }
-    // PCM voices ride master too: the voice model recomposes every voice.
-    this._pcmEv(when, { kind: "master", value: master });
-    if (this._chipPcm) insertLine(this._chipPcm.master, when, master);
   }
 
   // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
@@ -5667,7 +5825,18 @@ export class IRPlayer {
       this._masterSweep = null;
       for (let i = 0; i < iterFrames; i++) {
         const t = this._sweepFrameTime(ms, i);
-        this._applyMasterChange(this._sweepAt(ms, ms.frameOffset + i), t, ms.startFrame + i, i > 0);
+        const master = Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + i))));
+        const F = ms.startFrame + i;
+        // The FM and PCM levels at the frame's own time. A PSG lane's are
+        // composed as its note is dispatched (_schedulePsgEnvelope), so its
+        // frames of this sweep are the ones known now.
+        this._at(t, () => {
+          this._masterVol = master;
+          this._recomposeFmLevels(master, t, F);
+          this._pcmEv(t, { kind: "master", value: master });
+        });
+        this._recomposePsgLevels(master, t, F, i > 0);
+        if (this._chipPcm) insertLine(this._chipPcm.master, t, master);
       }
       this._masterSweep = iterFrames > 1 ? ms : null;
       this._masterVol = this._masterAt(when);
@@ -5711,21 +5880,22 @@ export class IRPlayer {
    * target: e.g. 'FM_TL1', 'FM_FB', 'FM_ALG'
    * value: absolute value (always SET, not ADD)
    * chIndex: an FM channel (default 0)
+   * when: its time (now when absent)
    */
-  setParam(target, value, chIndex = 0) {
+  setParam(target, value, chIndex = 0, when = undefined) {
     // Wave chips' song-wide LFO words use their own encoder, as score writes do.
     const waveLfo = this._waveLfoRoute(target);
     if (waveLfo && waveLfo.word !== "lfoTable") {
-      waveLfo.write((this._waveLfo[waveLfo.word] = Math.round(value)));
+      waveLfo.write((this._waveLfo[waveLfo.word] = Math.round(value)), when);
       return;
     }
     this._applyParam(chIndex, {
       cmd: "PARAM_SET",
       args: { target, value },
-    });
+    }, when);
     // An encoder that holds a voice change for the note's key-on (the
     // OPLL's) writes a live edit now.
-    this._fmWrites(this._fmEnc.live?.(chIndex) ?? []);
+    this._fmWrites(this._fmEnc.live?.(chIndex) ?? [], when);
   }
 
   /** The sample a PCM voice (0-2) last played, or null. */
@@ -6023,6 +6193,7 @@ export class IRPlayer {
   // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
   _composePsgAtt(psgCh, vel, vol, master) {
     vol = this._handVol(`psg:${psgCh}`) ?? vol;
+    master = this._handMaster() ?? master;
     const level = this._psgLevel[psgCh];
     if (!level || vol <= 0 || master <= 0) return this._psgOff(psgCh); // no such lane here: silent
     if (level.scale === "linear") // a linear volume (the SCC's), upside down

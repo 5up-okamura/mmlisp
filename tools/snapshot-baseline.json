@@ -98,17 +98,17 @@
  "drv/tests/m2-motion.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef11ab299d3fb33f",
-  "regs": "fc0c582d6cdf8144",
+  "regs": "bd89c3d11ac61296",
   "mmb": "384db850483cc872",
-  "vgm": "40f0a216c77893d7",
+  "vgm": "e3b2c60203795955",
   "mid": "0d337c0613c4fdaf"
  },
  "drv/tests/m2-motion.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "c66c515bb2863a1c",
-  "regs": "fc0c582d6cdf8144",
+  "regs": "bd89c3d11ac61296",
   "mmb": "e29090a1755651a4",
-  "vgm": "40f0a216c77893d7",
+  "vgm": "e3b2c60203795955",
   "mid": "3b670773689d36da"
  },
  "drv/tests/m2-pcm.mmlisp": {
@@ -1442,7 +1442,7 @@
  "drv/tests/m4-pcm-loop-curve.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "91680dced6e4360a",
-  "regs": "405a70618e07c9d9",
+  "regs": "12a8be1ceaacc6c1",
   "mmb": "e35edf8a97f4b9c5",
   "vgm": "61e3a3194d15b353",
   "mid": "399a714e98631d6f"
@@ -1450,7 +1450,7 @@
  "drv/tests/m4-pcm-loop-curve.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "3edf0a6ef033a33b",
-  "regs": "5b402d205499a478",
+  "regs": "94c7f56f0f5c566b",
   "mmb": "4bbf97e8d033cbf2",
   "vgm": "aef8461e3bf89054",
   "mid": "399a714e98631d6f"
@@ -1490,7 +1490,7 @@
  "drv/tests/m4-pcm-macro.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "32df1c20613682c8",
-  "regs": "baa96984c465d10e",
+  "regs": "a6c4acc42786a323",
   "mmb": "3695f3ea8c13db11",
   "vgm": "159964ba28b51120",
   "mid": "fa40b804882af3da"
@@ -1498,7 +1498,7 @@
  "drv/tests/m4-pcm-macro.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "1a3189150c69b849",
-  "regs": "baa96984c465d10e",
+  "regs": "a6c4acc42786a323",
   "mmb": "65f2cb53c5a64a01",
   "vgm": "c64966de171f6b43",
   "mid": "67aa619a5a635015"
@@ -1762,17 +1762,17 @@
  "drv/tests/p3-claim-evict.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "9ff2897bb5410be6",
-  "regs": "31fb52e97fb7f9de",
+  "regs": "4b5a29a43333a275",
   "mmb": "388a6e6df4e1399f",
-  "vgm": "8a3d7ea509e96810",
+  "vgm": "2e8c25df8604d005",
   "mid": "cc706a19f6500091"
  },
  "drv/tests/p3-claim-evict.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "4d53466d23baba5e",
-  "regs": "31fb52e97fb7f9de",
+  "regs": "4b5a29a43333a275",
   "mmb": "a3f9c99489eecba1",
-  "vgm": "8a3d7ea509e96810",
+  "vgm": "2e8c25df8604d005",
   "mid": "87af07ab63b1ee3c"
  },
  "drv/tests/p3-claim-se-in-twin.mmlisp": {
@@ -1794,17 +1794,17 @@
  "drv/tests/p3-claim-se-in.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "6d18bf6a5054821e",
-  "regs": "31fb52e97fb7f9de",
+  "regs": "4b5a29a43333a275",
   "mmb": "5b1108918d263f0b",
-  "vgm": "4a099686edf02e47",
+  "vgm": "53c87f20e5b7a1dc",
   "mid": "b4f69dd5440e23ba"
  },
  "drv/tests/p3-claim-se-in.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "c6d7e2087f717352",
-  "regs": "31fb52e97fb7f9de",
+  "regs": "4b5a29a43333a275",
   "mmb": "16fec423632976ed",
-  "vgm": "4a099686edf02e47",
+  "vgm": "53c87f20e5b7a1dc",
   "mid": "4f26c6189758719d"
  },
  "drv/tests/p3-claim-se-out-twin.mmlisp": {
@@ -1906,33 +1906,33 @@
  "drv/tests/p3-se-ghost-twin.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b18b389666d0973a",
-  "regs": "480cb33a4a01a2f1",
+  "regs": "83a6aadb5c0b7847",
   "mmb": "a274750eb26e4e79",
-  "vgm": "94336b8b1360eecf",
+  "vgm": "9ef755a5ce9a300f",
   "mid": "27c3a2f9e43265bc"
  },
  "drv/tests/p3-se-ghost-twin.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "9cda05d7cc34d485",
-  "regs": "480cb33a4a01a2f1",
+  "regs": "83a6aadb5c0b7847",
   "mmb": "50dc1a6069fe04a3",
-  "vgm": "94336b8b1360eecf",
+  "vgm": "9ef755a5ce9a300f",
   "mid": "190aff610ab085d4"
  },
  "drv/tests/p3-se-ghost.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "26b13676b804d68f",
-  "regs": "480cb33a4a01a2f1",
+  "regs": "83a6aadb5c0b7847",
   "mmb": "3e19977c007e27b0",
-  "vgm": "7b5c889caa0aee12",
+  "vgm": "a55e2af0e01cabda",
   "mid": "ef13f377b5fe7fb3"
  },
  "drv/tests/p3-se-ghost.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "a6a59a8d541f65a7",
-  "regs": "480cb33a4a01a2f1",
+  "regs": "83a6aadb5c0b7847",
   "mmb": "f4cf073e1c0330b1",
-  "vgm": "7b5c889caa0aee12",
+  "vgm": "a55e2af0e01cabda",
   "mid": "535ccd0e3c123f4b"
  },
  "drv/tests/p3-se-noise.mmlisp": {
@@ -1986,7 +1986,7 @@
  "drv/tests/p3-se-pcm-macro.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "547f4f57631cfa27",
-  "regs": "256b2389c14f6183",
+  "regs": "c249ea217975714d",
   "mmb": "27c3ac94f2340551",
   "vgm": "0a57c01247fcfdbf",
   "mid": "ada71ed9c0ac772a"
@@ -1994,7 +1994,7 @@
  "drv/tests/p3-se-pcm-macro.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "a03e9694e99844bc",
-  "regs": "256b2389c14f6183",
+  "regs": "c249ea217975714d",
   "mmb": "5d95703c7cf47de8",
   "vgm": "5c0135a089d52721",
   "mid": "56db5b89f49b4dd8"
@@ -2240,8 +2240,8 @@
  "tools/tests/msx/fm-pac.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "f6e5e2321354bdf1",
-  "regs": "447408c00b8039cb",
-  "vgm": "17acd09c8fa446eb",
+  "regs": "7a454000843d6181",
+  "vgm": "eb220e9c8739be8e",
   "mid": "580e462fe58bb751"
  },
  "tools/tests/msx/noise.mmlisp": {
