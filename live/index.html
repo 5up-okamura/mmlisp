@@ -558,36 +558,36 @@
         <div class="param-grid" style="grid-template-columns: repeat(3, 1fr)">
           <div class="knob-wrap">
             <div class="knob-label">MASTER <span class="val" id="val-master">31</span></div>
-            <input type="range" id="sl-master" min="0" max="31" value="31" oninput="onMaster(this)">
+            <input type="range" id="sl-master" min="0" max="31" value="31" data-ctl="MASTER">
           </div>
           <div class="knob-wrap">
             <div class="knob-label">TEMPO <span class="val" id="val-tempo">120</span></div>
-            <input type="range" id="sl-tempo" min="20" max="400" value="120" oninput="onTempo(this)">
+            <input type="range" id="sl-tempo" min="20" max="400" value="120" data-ctl="tempo">
           </div>
           <!-- The OPN's LFO rate; the OPM has its own LFO (below), which
                reads :lfo-rate too but shows its own words -->
           <div class="knob-wrap" data-needs="part:fm">
             <div class="knob-label">LFO <span class="val" id="val-lfo">0</span></div>
-            <input type="range" id="sl-lfo" min="0" max="8" value="0" oninput="onLfo(this)">
+            <input type="range" id="sl-lfo" min="0" max="8" value="0" data-ctl="LFO_RATE">
           </div>
         </div>
         <div class="param-grid" style="grid-template-columns: repeat(4, 1fr)" data-needs="word:LFO_FREQ">
           <div class="knob-wrap" data-needs="word:LFO_FREQ">
             <div class="knob-label">LFRQ <span class="val" id="val-lfo-freq">0</span></div>
-            <input type="range" id="sl-lfo-freq" min="0" max="255" value="0" oninput="onOpmLfo('LFO_FREQ', this)">
+            <input type="range" id="sl-lfo-freq" min="0" max="255" value="0" data-ctl="LFO_FREQ">
           </div>
           <div class="knob-wrap" data-needs="word:LFO_PMD">
             <div class="knob-label">PMD <span class="val" id="val-lfo-pmd">0</span></div>
-            <input type="range" id="sl-lfo-pmd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_PMD', this)">
+            <input type="range" id="sl-lfo-pmd" min="0" max="127" value="0" data-ctl="LFO_PMD">
           </div>
           <div class="knob-wrap" data-needs="word:LFO_AMD">
             <div class="knob-label">AMD <span class="val" id="val-lfo-amd">0</span></div>
-            <input type="range" id="sl-lfo-amd" min="0" max="127" value="0" oninput="onOpmLfo('LFO_AMD', this)">
+            <input type="range" id="sl-lfo-amd" min="0" max="127" value="0" data-ctl="LFO_AMD">
           </div>
           <!-- FDS LFO_WAVE is a step table, not the OPM waveform selector. -->
           <div class="knob-wrap" data-needs="part:opm-fm">
             <div class="knob-label">WAVE <span class="val" id="val-lfo-wave">saw</span></div>
-            <input type="range" id="sl-lfo-wave" min="0" max="3" value="0" oninput="onOpmLfo('LFO_WAVE', this)">
+            <input type="range" id="sl-lfo-wave" min="0" max="3" value="0" data-ctl="LFO_WAVE">
           </div>
         </div>
         </div>
@@ -1929,16 +1929,12 @@
       };
     }
     function channelVolDesc(head, valEl) {
-      const entry = _chStripModel.find((e) => e.head === head);
-      const knob = valEl.closest('.ch-col')?.querySelector('.ch-knob');
       return {
         min: 0, max: 31, step: 1,
-        get: () => _stripVolShown.get(head) ?? VOL_UNITY,
+        get: () => ctlShown(`vol:${head}`, VOL_UNITY),
         set: (v) => {
-          _stripVolShown.set(head, v);
-          if (knob) setKnobVisual(knob, v);
-          if (entry) { holdStripVol(entry, v); releaseStripVol(entry); }
-          valEl.textContent = v;
+          panelHold(`vol:${head}`, v);
+          panelRelease(`vol:${head}`);
         },
       };
     }
@@ -7447,10 +7443,10 @@
     // of them is off its written value, so the file does not surprise.
     function logPreviewOnly(kind) {
       const off = [
-        player?.handOn?.('tempo') && 'TEMPO',
-        player?.handOn?.('MASTER') && 'MASTER',
+        player?.read?.(_panelCtl.get('tempo').c)?.hand && 'TEMPO',
+        player?.read?.(_panelCtl.get('MASTER').c)?.hand && 'MASTER',
         (_mutedChannels.size || _soloChannels.size) && 'mute/solo',
-        _chStripModel.some((e) => player?.volOf?.(e.strip)?.hand) && 'channel vol',
+        _chStripModel.some((e) => player?.read?.(e.ctl)?.hand) && 'channel vol',
       ].filter(Boolean);
       if (!off.length) return;
       const list = off.length > 1 ? `${off.slice(0, -1).join(', ')} and ${off.at(-1)}` : off[0];
@@ -8095,7 +8091,6 @@
       _mucomSong = null; // a .dat / .bin applied now belongs to the new document, not the song before
       _mutedChannels.clear();
       _soloChannels.clear();
-      _dynVals = {};
       selectedChannel = null;
       selectedCh = null;
       // A dimmed editor keeps what it showed, of this score: not of the last.
@@ -8268,7 +8263,7 @@
       // When not playing, show the score's starting tempo (the loop drives it
       // live) and measure TIME's bar for it.
       if (_fmLiveRaf == null) {
-        updateTempoDisplay(irInitialBpm(ir));
+        showControl(_panelCtl.get('tempo'), irInitialBpm(ir));
         refreshTimeBar(ir);
       }
       // Anchor playhead highlights to the document this IR was compiled from.
@@ -8400,20 +8395,41 @@
     const _mutedChannels = new Set();      // muted channel names (heads)
     const _soloChannels = new Set();       // soloed channel names (heads)
     let _chStripModel = [];                // [{ head, label, trackIndex, slot }] built from the current IR
-    let _dynVals = {};                     // Dynamic Parameters: name → current slider value (declared here so the startup compileNow can render before the panel functions)
+    const _panelCtl = new Map();           // the panel's controls: id → { c, show, idle, shown, held } (panelControl)
+    const _heldRegs = new Map();           // the FM channel's registers a slider holds: id → control
+    // The song-wide sliders. TEMPO's slider covers a common range; its number
+    // shows the tempo the score may push past it.
+    {
+      const word = (id, show, idle) => panelControl({ id, kind: 'word', word: id }, show, idle);
+      const slider = (slId, valId) => (v) => setSlider(slId, valId, v);
+      word('MASTER', slider('sl-master', 'val-master'), () => VOL_UNITY);
+      word('tempo', (bpm) => {
+        const r = Math.round(bpm);
+        setSlider('sl-tempo', 'val-tempo', Math.max(20, Math.min(400, r)));
+        setValueTextById('val-tempo', r);
+      }, () => irInitialBpm(_lastGoodIR));
+      // The chip's LFO is the song's, not a channel's.
+      word('LFO_RATE', slider('sl-lfo', 'val-lfo'), () => 0);
+      word('LFO_FREQ', slider('sl-lfo-freq', 'val-lfo-freq'), () => 0);
+      word('LFO_PMD', slider('sl-lfo-pmd', 'val-lfo-pmd'), () => 0);
+      word('LFO_AMD', slider('sl-lfo-amd', 'val-lfo-amd'), () => 0);
+      // The OPM LFO's waveform names (language.md §19 x68k, :lfo-wave).
+      const LFO_WAVES = ['saw', 'square', 'triangle', 'noise'];
+      word('LFO_WAVE', (v) => {
+        setSlider('sl-lfo-wave', 'val-lfo-wave', v);
+        setValueTextById('val-lfo-wave', LFO_WAVES[v] ?? v);
+      }, () => 0);
+    }
     let _fmSliderCache = {};               // last-applied FM panel slider values (change detection for live refresh)
     let _libraryScorePlayer = null;          // the score or snippet Library ▶ is playing
     let _libraryScorePath = null;
     let _fmLiveRaf = null;                  // requestAnimationFrame id for the playback refresh loop
     let _fmLiveLast = 0;                    // last live-tick timestamp (throttle)
     let _fmPanelDragging = false;           // dragging an FM-panel slider → don't let the loop overwrite it
-    let _tempoDragging = false;             // dragging the tempo slider → don't let the loop move its thumb
-    let _tempoShown = null;                 // last tempo value shown (change detection)
     let _sourceOn = true;                  // MMLisp > View > Source: the score's text shows
     let _vizRoll = false;                  // the piano roll's pane is open
     let _vizScope = false;                 // the oscilloscope draws behind the editor
     let _vizPixelRatio = 0;                // a video take's canvas scale (0: the screen's devicePixelRatio)
-    const _stripVolShown = new Map();      // head → the :vol its knob shows (player.volOf)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
     let _fmCursorDefContext = null;
     let _stepInputEnabled = false;
@@ -8641,12 +8657,17 @@
       const present = new Set(_chStripModel.map((e) => e.head));
       for (const h of _mutedChannels) if (!present.has(h)) _mutedChannels.delete(h);
       for (const h of _soloChannels) if (!present.has(h)) _soloChannels.delete(h);
-      for (const h of [..._stripVolShown.keys()]) if (!present.has(h)) _stripVolShown.delete(h);
-      // What the player takes a strip as (IRPlayer.holdVol): its tracks, and
-      // a chip's sound several tracks share, its voice.
+      for (const id of [..._panelCtl.keys()]) if (id.startsWith('vol:') && !present.has(id.slice(4))) _panelCtl.delete(id);
+      // A strip's :vol is a control (panelControl). What the player takes a
+      // strip as: its tracks, and a chip's sound several tracks share, its voice.
       for (const e of _chStripModel) {
         const tracks = e.rhythmTracks ?? (ir?.tracks ?? []).flatMap((t, i) => ((t.scoreChannel ?? t.channel) === e.head ? [i] : []));
         e.strip = { heads: [e.head], tracks, voice: e.voice };
+        e.ctl = { id: `vol:${e.head}`, kind: 'vol', strip: e.strip };
+        panelControl(e.ctl, (v) => {
+          const knob = document.querySelector(`#chStrips .ch-knob[data-head="${e.head}"]`);
+          if (knob) setKnobVisual(knob, v);
+        }, () => VOL_UNITY);
       }
       if (selectedChannel != null && !present.has(selectedChannel)) {
         selectedChannel = null;
@@ -8669,7 +8690,7 @@
         const selCls  = selectedChannel === h ? ' ch-sel' : '';
         const muteCls = _mutedChannels.has(h) ? ' muted' : '';
         const soloCls = _soloChannels.has(h) ? ' soloed' : '';
-        const vol = _stripVolShown.get(h) ?? VOL_UNITY;
+        const vol = ctlShown(`vol:${h}`, VOL_UNITY);
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
@@ -8699,35 +8720,40 @@
 
     // Dynamic Parameters: one slider per (def-val …) slot, the `:public` ones
     // marked — `:public` says what the game may write (language.md §8), not
-    // what the panel may. A slider shows its slot as the score plays it (from
-    // its init; _dynVals, declared with the panel state above); moved, it
-    // stands in for the game — its value is the slot's and the score's writes
-    // of it wait (IRPlayer.holdVal) — and let go it stays until the score
-    // writes the slot again. The section auto-hides when the score declares
-    // no def-vals.
+    // what the panel may. Each slot is a control (panelControl): its slider
+    // shows the slot as the score plays it, from its init; moved, it stands in
+    // for the game. The section auto-hides when the score declares no
+    // def-vals.
     let _dynValDefs = [];                  // the last render's metadata.vals, for the pad's axes
     function renderDynParams(ir) {
       const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals : [];
       const section = document.getElementById('dynParamSection');
       const body = document.getElementById('dynParamBody');
       if (!section || !body) return;
-      // From the slots' inits; a playing run's values follow (syncDynParams).
-      _dynVals = Object.fromEntries(vals.map((v) => [v.name, v.init]));
       _dynValDefs = vals;
+      for (const id of [..._panelCtl.keys()]) if (id.startsWith('val:')) _panelCtl.delete(id);
       section.hidden = vals.length === 0;
       body.innerHTML = '';
       for (const v of vals) {
         const wrap = document.createElement('div');
         wrap.className = 'knob-wrap';
-        const cur = _dynVals[v.name];
+        // A slot's value while a run plays it, else its init.
+        const c = { id: `val:${v.name}`, kind: 'val', name: v.name };
+        const cur = (player?.isPlaying?.() ? player.read(c)?.v : null) ?? v.init;
         const rtl = v.reversed ? ' style="direction:rtl"' : '';
         const pub = v.public ? '<span class="pub" title="The game writes this value too">public</span>' : '';
         wrap.innerHTML =
           `<div class="knob-label">${v.name} ${pub}<span class="val" id="dynval-${v.name}">${cur}</span></div>` +
           `<input type="range" min="${v.min}" max="${v.max}" step="${v.step ?? 1}" value="${cur}"${rtl} ` +
-          `data-midi-key="val:${v.name}" ` +
-          `oninput="onDynParam('${v.name}', this)">`;
+          `data-midi-key="val:${v.name}" data-ctl="val:${v.name}">`;
         body.appendChild(wrap);
+        const slider = wrap.querySelector('input'), disp = wrap.querySelector('.val');
+        panelControl(c, (val) => {
+          slider.value = String(val);
+          disp.textContent = val;
+          if (v.name === _dynPadAxes?.x || v.name === _dynPadAxes?.y) refreshDynPad();
+        }, () => v.init);
+        _panelCtl.get(c.id).shown = cur;
       }
       refreshMidiBadges();
       renderDynPad();
@@ -8737,9 +8763,9 @@
     // ---- The XY pad: one pointer plays two values ----
     // Two of the score's def-vals are the pad's axes (X across, Y up), each
     // running the way its slider does (`90..10` runs its axis backwards, as
-    // the slider runs right-to-left). A drag writes both slots, through the
-    // same path as their sliders, which follow; a slider or a learned CC
-    // moving one of them moves the dot. The pad is shown on request (the XY
+    // the slider runs right-to-left). A drag moves both slots' controls, so
+    // their sliders follow; a slider or a learned CC moving one of them moves
+    // the dot. The pad is shown on request (the XY
     // button in the section's title) once the score has two values; the
     // choice and the axes are this browser's, as MIDI assignments are.
     let _dynPadOn = null;                            // read from the prefs on the first render
@@ -8810,21 +8836,16 @@
       if (!pad || pad.hidden) return;
       const vx = dynPadAxisDef('x'), vy = dynPadAxisDef('y');
       if (!vx || !vy) return;
-      const x = dynPadPos(vx, _dynVals[vx.name]) * 100;
-      const y = (1 - dynPadPos(vy, _dynVals[vy.name])) * 100;
+      const x = dynPadPos(vx, ctlShown(`val:${vx.name}`, vx.init)) * 100;
+      const y = (1 - dynPadPos(vy, ctlShown(`val:${vy.name}`, vy.init))) * 100;
       pad.querySelector('.dyn-pad-v').style.left = `${x}%`;
       pad.querySelector('.dyn-pad-h').style.top = `${y}%`;
       const dot = pad.querySelector('.dyn-pad-dot');
       dot.style.left = `${x}%`;
       dot.style.top = `${y}%`;
     }
-    // Writes a value the way its slider does, so the slider, its number and
-    // the player all follow.
     function setDynVal(name, val) {
-      const el = document.querySelector(`#dynParamBody input[type=range][data-midi-key="val:${CSS.escape(name)}"]`);
-      if (!el || Number(el.value) === val) return;
-      el.value = String(val);
-      onDynParam(name, el);
+      if (ctlShown(`val:${name}`) !== val) panelHold(`val:${name}`, val);
     }
     function dynPadPoint(e) {
       const vx = dynPadAxisDef('x'), vy = dynPadAxisDef('y');
@@ -8850,7 +8871,7 @@
       const release = (e) => {
         if (e.pointerId !== _dynPadPointer) return;
         _dynPadPointer = null;
-        for (const axis of ['x', 'y']) { const v = dynPadAxisDef(axis); if (v) player?.releaseVal?.(v.name); }
+        for (const axis of ['x', 'y']) { const v = dynPadAxisDef(axis); if (v) panelRelease(`val:${v.name}`); }
       };
       surface?.addEventListener('pointerup', release);
       surface?.addEventListener('pointercancel', release);
@@ -8919,35 +8940,6 @@
       }
     }
 
-    function onDynParam(name, el) {
-      const v = Number(el.value);
-      _dynVals[name] = v;
-      const disp = document.getElementById('dynval-' + name);
-      if (disp) disp.textContent = v;
-      player?.holdVal?.(name, v);
-      if (name === _dynPadAxes?.x || name === _dynPadAxes?.y) refreshDynPad();
-      midiOutReplan();
-    }
-
-    // The sliders follow the slots as the score writes them; the one in hand
-    // shows the player's value, which is its own then.
-    function syncDynParams() {
-      if (!player?.getVal) return;
-      let moved = false;
-      for (const v of _dynValDefs) {
-        const val = player.getVal(v.name);
-        // The MMLispDRV reference knows a slot by name only when it is :public.
-        if (val == null || _dynVals[v.name] === val) continue;
-        _dynVals[v.name] = val;
-        moved = true;
-        const el = document.querySelector(`#dynParamBody input[type=range][data-midi-key="val:${CSS.escape(v.name)}"]`);
-        if (el) el.value = String(val);
-        const disp = document.getElementById('dynval-' + v.name);
-        if (disp) disp.textContent = val;
-      }
-      if (moved) refreshDynPad();
-    }
-
     // A strip's mute / solo onto the player: a voice strip's (the YM2608's
     // sample voices) by voice, the rest by track.
     // (stems.js: the stems solo a strip by the same rule.)
@@ -8972,30 +8964,86 @@
       renderChStrips();
     }
 
-    // A strip's knob shows its :vol as the score plays it (player.volOf).
-    // Moved, the knob's value is the strip's :vol and the score's :vol there
-    // goes unheard (IRPlayer.holdVol); let go, it stays until the score
-    // writes :vol on the strip's tracks again. Nothing is written to the score.
-    function holdStripVol(entry, vol) {
+    // -----------------------------------------------------------------------
+    // The panel's controls
+    // -----------------------------------------------------------------------
+    // A control is one thing the panel shows and the hand can take: a
+    // song-wide word (MASTER, TEMPO, the LFO's), a strip's :vol, a value slot.
+    // Each is a descriptor the players answer hold / release / read for
+    // (IRPlayer "the panel's controls"), and here one entry: how its value is
+    // shown, and what it shows with nothing playing. Every input — a slider
+    // (its data-ctl), a knob, the XY pad, a typed value, a MIDI CC — moves a
+    // control through panelHold and lets go through panelRelease; every
+    // display follows through syncPanelControls. Shown, a control's value is
+    // the score's as it plays; moved, it is the control's and the score's
+    // writes of it wait; let go, it stays until the score writes it again.
+    // Stopped, the keys play on a player of their own at unity
+    // (initParamOnlyPlayer): the panel shows what a key sounds at, and moving
+    // a control moves the keys' sound. Nothing is written to the score.
+    function panelControl(c, show, idle) {
+      _panelCtl.set(c.id, { c, show, idle, shown: _panelCtl.get(c.id)?.shown, held: false });
+    }
+    function ctlShown(id, fallback) {
+      return _panelCtl.get(id)?.shown ?? fallback;
+    }
+    function showControl(pc, v) {
+      pc.shown = v;
+      pc.show(v);
+    }
+    function panelHold(id, v) {
+      const pc = _panelCtl.get(id);
+      if (!pc) return;
       if (!player) initParamOnlyPlayer();
-      if (!player) return;
-      player.holdVol?.(entry.strip, vol);
-    }
-    function releaseStripVol(entry) {
-      player?.releaseVol?.(entry.strip);
-    }
-    // The knobs follow the player, the one in hand too (its value is the
-    // player's then).
-    function syncStripKnobs() {
-      if (!player?.volOf) return;
-      for (const entry of _chStripModel) {
-        const v = player.volOf(entry.strip)?.v;
-        if (v == null || _stripVolShown.get(entry.head) === v) continue;
-        _stripVolShown.set(entry.head, v);
-        const knob = document.querySelector(`#chStrips .ch-knob[data-head="${entry.head}"]`);
-        if (knob) setKnobVisual(knob, v);
+      pc.held = true;
+      showControl(pc, v);
+      player?.hold(pc.c, v);
+      if (pc.c.kind === 'val') midiOutReplan();
+      // A level moved is the selected FM channel's TL too (the live loop
+      // shows it only while playing).
+      else if (player && !_fmPanelDragging && isFmSlot(selectedCh) && getFmParamMode() === 'channel') {
+        applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
       }
     }
+    function panelRelease(id) {
+      const pc = _panelCtl.get(id);
+      if (!pc) return;
+      pc.held = false;
+      player?.release(pc.c);
+    }
+    // The displays follow the player; a control the hand holds is the hand's.
+    function syncPanelControls() {
+      if (!player) return;
+      for (const pc of _panelCtl.values()) {
+        if (pc.held) continue;
+        const v = player.read(pc.c)?.v;
+        if (v != null && v !== pc.shown) showControl(pc, v);
+      }
+    }
+    // A control's value now, for what plays beside the score (the keys, a
+    // sample's audition, the VU).
+    function ctlNow(c, fallback) {
+      return (c && player?.read?.(c)?.v) ?? fallback;
+    }
+    function stripVolNow(head) {
+      return ctlNow(_chStripModel.find((e) => e.head === head)?.ctl, VOL_UNITY);
+    }
+    function masterNow() {
+      return ctlNow(_panelCtl.get('MASTER').c, VOL_UNITY);
+    }
+
+    document.addEventListener('input', (e) => {
+      const id = e.target?.dataset?.ctl;
+      if (id) panelHold(id, Number(e.target.value));
+    });
+    // A slider let go (its change), or set in one step (a typed value, a CC).
+    function letGoOf(el) {
+      if (el?.dataset?.ctl) panelRelease(el.dataset.ctl);
+      else if (el?.closest?.('#fmParamSection')) {
+        for (const c of _heldRegs.values()) player?.release(c);
+        _heldRegs.clear();
+      }
+    }
+    document.addEventListener('change', (e) => letGoOf(e.target));
 
     // Map vol 0-31 to the knob indicator angle (-135°…+135°).
     function volToKnobAngle(vol) {
@@ -9018,21 +9066,18 @@
       const entry = _chStripModel.find((x) => x.head === knob.dataset.head);
       if (!entry) return;
       e.preventDefault();
-      _knobDrag = { entry, knob, startY: e.clientY, startVol: _stripVolShown.get(entry.head) ?? VOL_UNITY };
+      _knobDrag = { entry, startY: e.clientY, startVol: ctlShown(entry.ctl.id, VOL_UNITY) };
       knob.setPointerCapture?.(e.pointerId);
     });
     window.addEventListener('pointermove', (e) => {
       if (!_knobDrag) return;
-      const { entry, knob } = _knobDrag;
+      const { entry } = _knobDrag;
       const dy = _knobDrag.startY - e.clientY; // up = louder
       const vol = Math.max(0, Math.min(31, Math.round(_knobDrag.startVol + dy * 0.2)));
-      if (vol === (_stripVolShown.get(entry.head) ?? VOL_UNITY)) return;
-      _stripVolShown.set(entry.head, vol);
-      setKnobVisual(knob, vol);
-      holdStripVol(entry, vol);
+      if (vol !== ctlShown(entry.ctl.id, VOL_UNITY)) panelHold(entry.ctl.id, vol);
     });
     const endKnobDrag = () => {
-      if (_knobDrag) releaseStripVol(_knobDrag.entry);
+      if (_knobDrag) panelRelease(_knobDrag.entry.ctl.id);
       _knobDrag = null;
     };
     window.addEventListener('pointerup', endKnobDrag);
@@ -9043,76 +9088,6 @@
     document.getElementById('chStrips')?.addEventListener('touchstart', (e) => {
       if (e.target.closest('.ch-knob')) e.preventDefault();
     }, { passive: false });
-
-    // LFO rate is global ($22), not a channel parameter: it writes whatever the
-    // FM panel's mode is, and its thumb follows the player, not the panel regs.
-    // The song-wide sliders show the score's value as it plays. Moved, the
-    // slider's value is the word's and the score's writes of it wait
-    // (IRPlayer.holdWord); let go, it stays until the score writes the word
-    // again. Nothing is written to the score.
-    const HAND_SLIDERS = {
-      'sl-master': 'MASTER', 'sl-tempo': 'tempo', 'sl-lfo': 'LFO_RATE',
-      'sl-lfo-freq': 'LFO_FREQ', 'sl-lfo-pmd': 'LFO_PMD', 'sl-lfo-amd': 'LFO_AMD', 'sl-lfo-wave': 'LFO_WAVE',
-    };
-    function holdWord(word, val) {
-      if (!player) initParamOnlyPlayer();
-      player?.holdWord?.(word, val);
-    }
-    // A slider let go (its change), or set in one step (a typed value, a CC).
-    function letGoOf(el) {
-      const word = HAND_SLIDERS[el?.id];
-      if (word) player?.releaseWord?.(word);
-      else if (el?.closest?.('#fmParamSection')) player?.releaseParams?.();
-      else if (el?.dataset?.midiKey?.startsWith('val:') && el.closest('#dynParamBody')) player?.releaseVal?.(el.dataset.midiKey.slice(4));
-    }
-    document.addEventListener('change', (e) => letGoOf(e.target));
-
-    function onLfo(slider) {
-      const val = parseInt(slider.value, 10);
-      setSliderDisplayValue(slider, val);
-      holdWord('LFO_RATE', val);
-    }
-    window.onLfo = onLfo;
-    // The OPM LFO's waveform names (language.md §19 x68k, :lfo-wave).
-    const LFO_WAVES = ['saw', 'square', 'triangle', 'noise'];
-    function syncLfoSlider() {
-      const regs = player?.getChRegs?.(0);
-      setSliderCached('sl-lfo', 'val-lfo', regs?.lfoRate ?? 0);
-      const opm = regs?.opmLfo ?? { freq: 0, pmd: 0, amd: 0, wave: 0 };
-      const wave = regs?.waveLfo;
-      if (wave) {
-        opm.freq = wave.lfoFreq ?? 0;
-        opm.pmd = wave.lfoPmd ?? 0;
-      }
-      setSliderCached('sl-lfo-freq', 'val-lfo-freq', opm.freq);
-      setSliderCached('sl-lfo-pmd', 'val-lfo-pmd', opm.pmd);
-      setSliderCached('sl-lfo-amd', 'val-lfo-amd', opm.amd);
-      if (_fmSliderCache['sl-lfo-wave'] !== opm.wave) {
-        _fmSliderCache['sl-lfo-wave'] = opm.wave;
-        setSlider('sl-lfo-wave', 'val-lfo-wave', opm.wave);
-        setValueTextById('val-lfo-wave', LFO_WAVES[opm.wave] ?? opm.wave);
-      }
-    }
-
-    // The machine's LFO, song-wide: a knob writes its word live, as :lfo-freq
-    // … written on a track would.
-    window.onOpmLfo = function(word, slider) {
-      const val = parseInt(slider.value, 10);
-      setSliderDisplayValue(slider, val);
-      if (word === 'LFO_WAVE') setValueTextById('val-lfo-wave', LFO_WAVES[val] ?? val);
-      holdWord(word, val);
-    };
-
-    function onMaster(slider) {
-      const val = parseInt(slider.value, 10);
-      setSliderDisplayValue(slider, val);
-      holdWord('MASTER', val);
-      // Reflect the new master on the selected FM channel's TL immediately (the
-      // live refresh loop only runs while playing).
-      if (player && isFmSlot(selectedCh) && getFmParamMode() === 'channel') {
-        applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
-      }
-    }
 
     // Push the strips' mute and solo (kept by channel name) onto a freshly
     // loaded player, names → track indices from the model. Levels are not
@@ -9129,8 +9104,6 @@
     window.toggleMute = toggleMute;
     window.toggleSolo = toggleSolo;
     window.selectCh   = selectCh;
-    window.onDynParam = onDynParam;
-    window.onMaster = onMaster;
 
     // -----------------------------------------------------------------------
     // Horizontal divider drag
@@ -9935,13 +9908,9 @@
     // (initParamOnlyPlayer): the panel shows those values — what a key sounds
     // at — and a Play then shows the score's.
     function showIdleValues() {
-      setSliderCached('sl-master', 'val-master', VOL_UNITY);
-      syncLfoSlider();
-      _stripVolShown.clear();
-      renderChStrips();
-      if (_lastGoodIR) {
-        updateTempoDisplay(irInitialBpm(_lastGoodIR));
-        renderDynParams(_lastGoodIR);
+      for (const pc of _panelCtl.values()) {
+        pc.held = false;
+        showControl(pc, pc.idle());
       }
     }
 
@@ -12846,7 +12815,7 @@
       // 0 = loudest attenuation, 15 = silent
       // The lane's :vol and the master as the panel shows them (a strip's
       // knob, MASTER): what is shown is what the key plays at.
-      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, player._psgVol?.[psgCh] ?? VOL_UNITY, player.getMaster?.() ?? VOL_UNITY), when);
+      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, player._psgVol?.[psgCh] ?? VOL_UNITY, masterNow()), when);
     }
 
     function previewPsgNoteOff(psgCh) {
@@ -13025,8 +12994,8 @@
         const machine = targetProfile(ir.metadata?.target);
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
         // The picked strip's :vol and the master, as the panel shows them.
-        const stripVol = (part && player?.volOf?.({ heads: [part] })?.v) ?? VOL_UNITY;
-        const master = player?.getMaster?.() ?? VOL_UNITY;
+        const stripVol = part ? stripVolNow(part) : VOL_UNITY;
+        const master = masterNow();
         const faders = levelGain({ faders: [stripVol, master] });
         const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
@@ -13690,7 +13659,7 @@
       const ch = midiKeyChannel();
       // Stopped, a key plays at the level the panel shows for its strip.
       const entry = _chStripModel.find((e) => e.head === selectedChannel) ?? _chStripModel.find((e) => channelVoice(e.head)?.voice === ch);
-      const level = { vol: (entry && player?.volOf?.(entry.strip)?.v) ?? VOL_UNITY, master: player?.getMaster?.() ?? VOL_UNITY };
+      const level = { vol: ctlNow(entry?.ctl, VOL_UNITY), master: masterNow() };
       _midiOutRun.keyOn(_lastGoodIR, ch, note, vel, audioCtx?.currentTime ?? 0, level);
       return { midiCh: ch, note };
     }
@@ -13971,10 +13940,11 @@
         // MASTER), which the output sends in place of the plan's.
         levelOf: (ti) => {
           const entry = _chStripModel.find((e) => e.strip?.tracks.includes(ti));
-          const r = entry && player?.volOf?.(entry.strip);
-          if (!r?.hand && !player?.handOn?.('MASTER')) return null;
-          const score = player.scoreLevelOf?.(entry?.strip) ?? { vol: VOL_UNITY, master: VOL_UNITY };
-          return { vol: r?.v ?? score.vol, master: player.getMaster(), scoreVol: score.vol, scoreMaster: score.master };
+          const vol = entry && player?.read?.(entry.ctl);
+          const master = player?.read?.(_panelCtl.get('MASTER').c);
+          if (!vol?.hand && !master?.hand) return null;
+          return { vol: vol?.v ?? VOL_UNITY, master: master?.v ?? VOL_UNITY,
+            scoreVol: vol?.score ?? VOL_UNITY, scoreMaster: master?.score ?? VOL_UNITY };
         },
       });
       _midiOutTimer = setInterval(midiOutTick, 25);
@@ -14407,17 +14377,18 @@
     // the score under the last top-level import — a local def of the same name
     // wins (language.md §9.2), so the tracks keep their name — with the edit
     // already in it. One change, so one undo takes the copy back out.
-    // The selected FM channel's register, in the panel's hand while the
-    // slider moves (IRPlayer.holdParam): the score's writes of it wait, and
-    // once let go it stays until the score writes it again.
+    // The selected FM channel's register is a control too, in the panel's
+    // hand while its slider moves (letGoOf lets go): the score's writes of it
+    // wait, and once let go it stays until the score writes it again. What
+    // the sliders show is the channel's registers whole (applyRegsToFmSliders).
     function setLiveChannelParam(paramName, value) {
       const ch = selectedCh?.ch;
       if (!player) initParamOnlyPlayer();
-      if (player?.holdParam) {
-        player.holdParam(ch, paramName, value);
-        return true;
-      }
-      return setLiveParamForChannel(paramName, value, ch);
+      if (!player) return false;
+      const c = { id: `reg:${ch}:${paramName}`, kind: 'reg', ch, word: paramName };
+      _heldRegs.set(c.id, c);
+      player.hold(c, value);
+      return true;
     }
 
     function setLiveOperatorEnabled(op, enabled) {
@@ -14645,7 +14616,6 @@
       const maskCh = (mode === 'cursor-def' ? CURSOR_DEF_PREVIEW_CH : selectedCh)?.ch;
       const mask = mode !== 'disabled' && player ? player.getOpMask(maskCh) : 0xf0;
       applyRegsToFmSliders(regs, mask, repaint);
-      syncLfoSlider();
     }
 
     // Apply a register snapshot to the FM panel sliders/checkboxes. Change-detected
@@ -14715,17 +14685,12 @@
       if (ts - _fmLiveLast < 50) return; // ~20 fps
       _fmLiveLast = ts;
       if (!player) return;
-      updateTempoDisplay(player.getBpm());
-      // A held slider's value is the player's then: following it never fights the drag.
-      if (player.getMaster) setSliderCached('sl-master', 'val-master', player.getMaster());
-      syncStripKnobs();
-      syncDynParams();
+      syncPanelControls();
       if (player instanceof IRPlayer && player.isPlaying()) {
         refreshTimeBar(player._ir); // a hot-swapped edit is a new song to measure
         showTime(player.positionSec());
       }
       updateChannelVu();
-      syncLfoSlider();
       refreshSeLit();
       if (_fmPanelDragging || !isFmSlot(selectedCh) || getFmParamMode() !== 'channel') return;
       applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
@@ -14900,13 +14865,11 @@
       // On a touch screen the range itself takes no touches; its .knob-wrap does.
       const el = e.target.closest?.('.knob-wrap')?.querySelector('input[type=range]');
       if (!el) return;
-      // Only an FM-panel slider blocks the FM live refresh; only the tempo slider
-      // blocks the tempo thumb. master/vol/lfo drags block neither, so e.g.
-      // dragging MASTER still live-updates the FM TL sliders.
+      // Only an FM-panel slider blocks the FM live refresh: a MASTER or a
+      // strip's drag still live-updates the FM TL sliders.
       if (el.closest('#fmParamSection')) _fmPanelDragging = true;
-      if (el.id === 'sl-tempo') _tempoDragging = true;
     });
-    window.addEventListener('pointerup', () => { _fmPanelDragging = false; _tempoDragging = false; });
+    window.addEventListener('pointerup', () => { _fmPanelDragging = false; });
 
     // Touch sliders. A native range is fiddly under a finger — only its small
     // thumb grabs, and a drag that wanders off horizontal scrolls the panel
@@ -14963,25 +14926,6 @@
     document.addEventListener('pointerup', endRangeTouch);
     document.addEventListener('pointercancel', endRangeTouch);
 
-    // TEMPO control: slider is limited to a common BPM range, but the number shows
-    // the actual tempo (which the score may push beyond that range).
-    function updateTempoDisplay(bpm) {
-      const r = Math.round(bpm);
-      if (_tempoShown === r) return;
-      _tempoShown = r;
-      const valEl = document.getElementById('val-tempo');
-      if (valEl) valEl.textContent = r;
-      if (!_tempoDragging) {
-        const sl = document.getElementById('sl-tempo');
-        if (sl) sl.value = Math.max(20, Math.min(400, r));
-      }
-    }
-    function onTempo(slider) {
-      const val = parseInt(slider.value, 10);
-      _tempoShown = null; // force the number to refresh to the dragged value
-      updateTempoDisplay(val);
-      holdWord('tempo', val);
-    }
     function irInitialBpm(ir) {
       for (const t of ir?.tracks ?? []) {
         for (const ev of t.events ?? []) {
@@ -14993,7 +14937,6 @@
       }
       return 120;
     }
-    window.onTempo = onTempo;
 
     // =====================================================================
     // Playback visualizers. The piano roll (a pane under the editor) is driven
@@ -15091,7 +15034,7 @@
       _vuNotes.set(head, n);
       if (!n || player.isTrackAudible?.(cell.trackIndex) === false) return 0;
       const fader = (v) => (v <= 0 ? -Infinity : (Math.min(31, v) - 31) * 2);
-      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(player?.volOf?.(_chStripModel.find((e) => e.head === head)?.strip ?? {})?.v ?? VOL_UNITY) + fader(player?.getMaster?.() ?? VOL_UNITY);
+      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(stripVolNow(head)) + fader(masterNow());
       const level = Math.max(0, Math.min(1, 1 + db / VU_RANGE_DB));
       return fresh ? level : n.sample ? 0 : level * NOTE_VU_HELD;
     }

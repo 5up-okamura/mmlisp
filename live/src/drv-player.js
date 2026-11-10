@@ -450,7 +450,7 @@ export class DrvPlayer {
     this._frame = 0;
     this._sub = 0; // which sub-tick of the frame is dispatching (§3.5)
     // Song increment; TEMPO_SET replaces it. A run starts with the score's
-    // own values: the panel's hands go (holdWord).
+    // own values: the panel's hands go (hold).
     this._increment = bpmToTickIncrement(120, this._frameHz);
     this._hands = new Map();
     this._diagnostics = [];
@@ -1339,10 +1339,10 @@ export class DrvPlayer {
         }
         case OPCODE.TEMPO_SET: {
           // The panel's tempo, while it holds it, waits the score's out
-          // (holdWord). An effect's part sets its own clock, the same in
+          // (hold). An effect's part sets its own clock, the same in
           // every song.
           if (trk.flags & TRACK_FLAG.isSe) trk.inc = u16(s, trk.pc + 1);
-          else if (this._scoreMayWrite("tempo")) this._increment = u16(s, trk.pc + 1);
+          else if (this._scoreWrites("tempo")) this._increment = u16(s, trk.pc + 1);
           trk.pc += 3;
           break;
         }
@@ -1382,7 +1382,7 @@ export class DrvPlayer {
           const len = u16(s, trk.pc + 5);
           const curve = s[trk.pc + 7];
           trk.pc += 8;
-          if (!this._scoreMayWrite("tempo")) break; // the panel holds the tempo
+          if (!this._scoreWrites("tempo")) break; // the panel holds the tempo
           this._tempoSweep = {
             curveId: curve,
             from,
@@ -1715,11 +1715,11 @@ export class DrvPlayer {
 
   _paramSet(channelId, target, value, force = false) {
     // A word in the panel's hand: the score's write waits while it is held,
-    // and takes it back once let go (holdWord).
+    // and takes it back once let go (hold).
     if (this._hands?.size && !this._panelWrite) {
       const key = target === TARGET_ID.MASTER || target === TARGET_ID.LFO_RATE ? TARGET_NAME[target]
         : VAL_TARGET_IDS.has(target) ? `val:${target - TARGET_ID.VAL0}` : `${channelId}:${target}`;
-      if (!this._scoreMayWrite(key)) return;
+      if (!this._scoreWrites(key)) return;
     }
     const name = TARGET_NAME[target];
     if (!name) {
@@ -3431,103 +3431,108 @@ export class DrvPlayer {
     if (this._opMasks && ch >= 0 && ch < 6) this._opMasks[ch] = mask & 0xf0;
   }
 
-  // ── The panel's hands (same interface as IRPlayer) ─────────────────────
-  // A word the panel moves sounds at its value at once; while it is held the
-  // score's writes of it are skipped, and once let go it stays until the
-  // score next writes it. A run starts with the score's own values (_reset).
-  // Every score write of a word goes through _paramSet (a value, a sweep's
-  // step, a macro's sample, a relative write) or the tempo opcodes.
+  // ── The panel's controls (IRPlayer has the same three calls) ───────────
+  // A control — { id, kind: "word" | "vol" | "reg" | "val", … } — is one
+  // thing the panel shows and can take in hand: its value sounds at once;
+  // while it is held the score's writes of it are skipped, and once let go
+  // it stays until the score next writes it. A run starts with the score's
+  // own values (_reset). Here every score write of a word goes through
+  // _paramSet (a value, a sweep's step, a macro's sample, a relative write)
+  // or the tempo opcodes, so one gate carries every hand: a control is the
+  // keys of the writes it stands for.
+
+  // The gate's keys for a control, each with the panel's write of it.
+  _handKeys(c, value) {
+    if (c.kind === "val") {
+      const slot = this._valNameToSlot?.get(c.name);
+      return slot === undefined ? [] : [[`val:${slot}`, () => this.setVal(c.name, value)]];
+    }
+    if (c.kind === "vol") {
+      const v = Math.max(0, Math.min(31, Math.round(value)));
+      return this._stripChannels(c.strip).map((id) => [`${id}:${TARGET_ID.VOL}`, () => this._paramSet(id, TARGET_ID.VOL, v)]);
+    }
+    if (c.kind === "reg") {
+      const id = TARGET_ID[c.word];
+      return id === undefined ? [] : [[`${c.ch}:${id}`, () => this.setParam(c.word, value, c.ch)]];
+    }
+    if (c.word === "tempo") {
+      return [["tempo", () => {
+        if (!Number.isFinite(value) || value <= 0) return;
+        this._tempoSweep = null;
+        this._increment = bpmToTickIncrement(value, this._frameHz);
+      }]];
+    }
+    return TARGET_ID[c.word] === undefined ? [] : [[c.word, () => this.setParam(c.word, value)]];
+  }
+
+  /** The panel takes `c` in hand at `value`. */
+  hold(c, value) {
+    this._hands ??= new Map();
+    for (const [key, write] of this._handKeys(c, value)) {
+      this._hands.set(key, { held: true });
+      this._panelWrite = true;
+      try {
+        write();
+      } finally {
+        this._panelWrite = false;
+      }
+    }
+  }
+
+  /** The panel lets go of `c`: its value stays until the score writes it. */
+  release(c) {
+    for (const [key] of this._handKeys(c)) {
+      const h = this._hands?.get(key);
+      if (h) h.held = false;
+    }
+  }
+
+  /**
+   * `c` now, as the panel shows it; `hand`: the panel's value is in force.
+   * @returns {{ v: number, hand: boolean } | null}
+   */
+  read(c) {
+    const key = this._handKeys(c)[0]?.[0];
+    if (key === undefined) return null;
+    const hand = !!this._hands?.has(key);
+    if (c.kind === "val") {
+      const v = this.getVal(c.name);
+      return v == null ? null : { v, hand };
+    }
+    if (!this._fm) return null; // never reset: nothing to read yet
+    if (c.kind === "vol") {
+      const id = this._stripChannels(c.strip)[0];
+      const op = this._fm3OpFor(id);
+      const v = op ? this._fm3OpVol[op - 1]
+        : id < 6 ? this._fm[id].vol : id < 10 ? this._psg[id - 6].vol
+        : id >= 20 && id <= 22 ? this._pcmVoices[id - 20]?.vol ?? VOL_UNITY : VOL_UNITY;
+      return { v, hand };
+    }
+    if (c.kind === "reg") return { v: this._readParam(c.ch, TARGET_ID[c.word]), hand };
+    if (c.word === "tempo") return { v: this.getBpm(), hand };
+    if (c.word === "MASTER") return { v: this._master ?? VOL_UNITY, hand };
+    return { v: this._lfoRate ?? 0, hand };
+  }
+
+  /** The value slots whose value is the panel's now, name → value. */
+  valsInHand() {
+    const out = {};
+    for (const [name, slot] of this._valNameToSlot ?? []) if (this._hands?.has(`val:${slot}`)) out[name] = this.getVal(name);
+    return out;
+  }
 
   // A score write of `key`: skipped while held; let go, it takes it back.
-  _scoreMayWrite(key) {
+  _scoreWrites(key) {
     const h = this._hands?.get(key);
     if (!h) return true;
     if (h.held) return false;
     this._hands.delete(key);
     return true;
   }
-  _panelSet(key, write) {
-    (this._hands ??= new Map()).set(key, { held: true });
-    this._panelWrite = true;
-    try {
-      write();
-    } finally {
-      this._panelWrite = false;
-    }
-  }
-
-  /** "tempo" (bpm), "MASTER" or "LFO_RATE", in the panel's hand (IRPlayer.holdWord). */
-  holdWord(word, value) {
-    if (word === "tempo") {
-      if (!Number.isFinite(value) || value <= 0) return;
-      this._panelSet("tempo", () => {
-        this._tempoSweep = null;
-        this._increment = bpmToTickIncrement(value, this._frameHz);
-      });
-    } else if (TARGET_ID[word] !== undefined) this._panelSet(word, () => this.setParam(word, value));
-  }
-  releaseWord(word) {
-    const h = this._hands?.get(word);
-    if (h) h.held = false;
-  }
-  handOn(word) {
-    return !!this._hands?.has(word);
-  }
-  getMaster() {
-    return this._master ?? VOL_UNITY;
-  }
 
   // A strip's channels, as the MMB numbers them.
   _stripChannels(strip) {
     return (strip.heads ?? []).map(resolveChannelId).filter((id) => id != null);
-  }
-  /** A strip's :vol in the panel's hand (IRPlayer.holdVol). */
-  holdVol(strip, value) {
-    const v = Math.max(0, Math.min(31, Math.round(value)));
-    for (const id of this._stripChannels(strip))
-      this._panelSet(`${id}:${TARGET_ID.VOL}`, () => this._paramSet(id, TARGET_ID.VOL, v));
-  }
-  releaseVol(strip) {
-    for (const id of this._stripChannels(strip)) {
-      const h = this._hands?.get(`${id}:${TARGET_ID.VOL}`);
-      if (h) h.held = false;
-    }
-  }
-  /** A strip's :vol now, its macro's included (IRPlayer.volOf). */
-  volOf(strip) {
-    const id = this._stripChannels(strip)[0];
-    if (id == null || !this._fm) return null;
-    const op = this._fm3OpFor(id);
-    const v = op ? this._fm3OpVol[op - 1]
-      : id < 6 ? this._fm[id].vol : id < 10 ? this._psg[id - 6].vol
-      : id >= 20 && id <= 22 ? this._pcmVoices[id - 20]?.vol ?? VOL_UNITY : VOL_UNITY;
-    return { v, hand: !!this._hands?.has(`${id}:${TARGET_ID.VOL}`) };
-  }
-
-  /** An FM channel's register word in the panel's hand (IRPlayer.holdParam). */
-  holdParam(ch, target, value) {
-    const id = TARGET_ID[target];
-    if (id === undefined) return;
-    this._panelSet(`${ch}:${id}`, () => this.setParam(target, value, ch));
-  }
-  releaseParams() {
-    for (const [key, h] of this._hands ?? []) if (/^\d+:/.test(key)) h.held = false;
-  }
-
-  /** A value slot in the panel's hand (IRPlayer.holdVal). */
-  holdVal(name, value) {
-    const slot = this._valNameToSlot?.get(name);
-    if (slot === undefined) return;
-    this._panelSet(`val:${slot}`, () => this.setVal(name, value));
-  }
-  releaseVal(name) {
-    const h = this._hands?.get(`val:${this._valNameToSlot?.get(name)}`);
-    if (h) h.held = false;
-  }
-  valsInHand() {
-    const out = {};
-    for (const [name, slot] of this._valNameToSlot ?? []) if (this._hands?.has(`val:${slot}`)) out[name] = this.getVal(name);
-    return out;
   }
 
   /**

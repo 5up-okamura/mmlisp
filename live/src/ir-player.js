@@ -93,8 +93,8 @@ const SAMPLE_HANDLERS = {
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
 const WAVE_LFO_WORDS = { LFO_FREQ: "lfoFreq", LFO_PMD: "lfoPmd", LFO_WAVE: "lfoTable" };
-// The song-wide words the panel can take in hand (IRPlayer.holdWord): a
-// score event's word, or null.
+// The song-wide words the panel can take in hand (IRPlayer.hold): a score
+// event's word, or null.
 const HAND_PARAMS = new Set(["MASTER", ...LFO_TARGETS]);
 // A score event that writes a track's :vol: the word, or a note's :vol macro.
 const writesVol = (ev) => (ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() === "VOL"
@@ -277,7 +277,7 @@ export class IRPlayer {
     this._ppqn = 96; // the IR's own (ir.md §2)
     this._bpm = 120;
     this._tempoSweep = null;
-    this._hands = new Map(); // word → { held }: the panel's value is the word's (holdWord)
+    this._hands = new Map(); // a control's id → { held }: the panel's value is its word's (hold)
     this._schedGen = 0; // bumped whenever a track's next event moves
     this._startAudioTime = 0;
     this._frameOrigin = 0; // audio time of frame 0 (the sweep frame grid)
@@ -390,10 +390,8 @@ export class IRPlayer {
     // ("bd" … "rim") and the ADPCM-B ("adpcm"), whichever track keys them.
     this._mutedVoices = new Set();
     this._soloVoices = new Set();
-    this._valHands = new Map(); // value slot name → { held }: the panel's value is the slot's (holdVal)
-    this._paramHands = new Map(); // "ch:FM_TL1" → { held }: the panel's value is the channel's register (holdParam)
     this._panelWrite = false; // the panel's own write, which no hand stops
-    this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (holdVol)
+    this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (_holdVol)
 
     // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
     // channel id → the track that keyed it.
@@ -523,7 +521,7 @@ export class IRPlayer {
       this._valUnits[v.name] = v.unit ?? "frame";
       this._valNames[v.slot] = v.name;
       // An edit swapped in keeps a slot the panel has in hand.
-      if (this._valHands?.has(v.name) && kept && v.name in kept) this._vals[v.name] = kept[v.name];
+      if (this._hands?.has(`val:${v.name}`) && kept && v.name in kept) this._vals[v.name] = kept[v.name];
     }
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -645,8 +643,6 @@ export class IRPlayer {
   _resetRunState() {
     this._hands.clear(); // a run starts with the score's own values
     this._volHands.clear();
-    this._paramHands.clear();
-    this._valHands.clear();
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
     this._pcm8State = this._ddaState = this._dpcmState = null;
@@ -1115,28 +1111,102 @@ export class IRPlayer {
       if (!this._isVoiceTrackAudible(ti, "dpcm")) for (const [p, a, d] of dmc.stop()) this._write(p, a, d, when);
   }
 
-  /**
-   * The panel's hand on an FM channel's register word (FM_TL1, FM_ALG …):
-   * `value` sounds now, and while held the score's writes of it on the
-   * channel (a value, a sweep, a note's macro, a voice's burst) are skipped;
-   * let go (releaseParams), it stays until the score next writes the word there.
-   */
-  holdParam(ch, target, value) {
-    this._paramHands.set(`${ch}:${target}`, { held: true });
+  // ---- the panel's controls ----
+  // A control is one thing the panel shows and can take in hand:
+  //   { id: "tempo" | "MASTER" | "LFO_RATE" …, kind: "word", word }   a song-wide word
+  //   { id: "vol:fm1", kind: "vol", strip }                            a strip's :vol
+  //   { id: "reg:0:FM_TL1", kind: "reg", ch, word }                    an FM channel's register word
+  //   { id: "val:cutoff", kind: "val", name }                          a value slot
+  // The players answer three calls for any of them (DrvPlayer has the same):
+  // hold — `value` sounds now and is the control's while it is held; release
+  // — let go, it stays until the score next writes it; read — what it is
+  // now. A run starts with the score's own values (play, seek).
+  //
+  // Two mechanisms carry a hand here. A word, a register and a slot are
+  // gated: the score's writes of one in hand are skipped (_scoreWrites), so
+  // the state is the panel's until the score takes it back. A strip's :vol
+  // is laid over: the score's :vol runs on unheard, and the level is composed
+  // with the panel's value wherever a :vol goes in (_handVol).
+
+  /** The panel takes `c` in hand at `value`. */
+  hold(c, value) {
+    if (c.kind === "vol") return this._holdVol(c.strip, value);
+    const h = this._hands.get(c.id);
+    if (h) h.held = true;
+    else this._hands.set(c.id, { held: true });
     this._panelWrite = true;
     try {
-      this.setParam(target, value, ch);
+      if (c.kind === "val") this.setVal(c.name, value);
+      else if (c.kind === "reg") this.setParam(c.word, value, c.ch);
+      else if (c.word === "tempo") this._setTempoNow(value);
+      else {
+        if (c.word === "MASTER") this._masterSweep = null;
+        this.setParam(c.word, value);
+      }
     } finally {
       this._panelWrite = false;
     }
   }
 
-  /** The panel lets go of the registers it holds. */
-  releaseParams() {
-    for (const h of this._paramHands.values()) h.held = false;
+  /** The panel lets go of `c`: its value stays until the score writes it. */
+  release(c) {
+    if (c.kind === "vol") return this._releaseVol(c.strip);
+    const h = this._hands.get(c.id);
+    if (h) h.held = false;
   }
 
-  // ---- the panel's hand on a strip's :vol (holdVol) ----
+  /**
+   * `c` now, as the panel shows it. `hand`: the panel's value is in force
+   * (held, or let go and not yet written over); `score`, where the player
+   * keeps the score's value under a hand (a strip's :vol; `:target midi`'s
+   * master), is that value.
+   * @returns {{ v: number, hand: boolean, score?: number } | null}
+   */
+  read(c) {
+    if (c.kind === "vol") return this._volOf(c.strip);
+    const hand = this._hands.has(c.id);
+    if (c.kind === "val") {
+      const v = this.getVal(c.name);
+      return v == null ? null : { v, hand };
+    }
+    if (c.kind === "reg") return { v: this._readParam(c.ch, c.word), hand };
+    const when = this._audioContext?.currentTime ?? 0;
+    switch (c.word) {
+      case "tempo": return { v: this._bpm, hand };
+      case "MASTER": {
+        if (this._target?.name !== "midi") return { v: this._masterVol ?? VOL_UNITY, hand };
+        const score = Math.round(this._chipPcmParamAt("master", "vol", when));
+        return { v: hand ? this._masterVol ?? VOL_UNITY : score, hand, score };
+      }
+      case "LFO_RATE": return { v: this._lfoRate ?? 0, hand };
+      default: {
+        // The machine's LFO words: a wave chip's own where it has one, else the OPM's.
+        const wave = this._toneEnc.some((l) => l?.enc.lfoFreq) ? WAVE_LFO_WORDS[c.word] : null;
+        const opm = { LFO_FREQ: "freq", LFO_PMD: "pmd", LFO_AMD: "amd", LFO_WAVE: "wave" }[c.word];
+        if (wave && wave !== "lfoTable") return { v: this._waveLfo[wave] ?? 0, hand };
+        return opm ? { v: this._opmLfo?.[opm] ?? 0, hand } : null;
+      }
+    }
+  }
+
+  /** The value slots whose value is the panel's now, name → value. */
+  valsInHand() {
+    const out = {};
+    for (const id of this._hands.keys()) if (id.startsWith("val:")) out[id.slice(4)] = this.getVal(id.slice(4));
+    return out;
+  }
+
+  // A score write of the control `id`: skipped while it is held; let go, the
+  // score takes it back.
+  _scoreWrites(id) {
+    const h = this._hands.get(id);
+    if (!h) return true;
+    if (h.held) return false;
+    this._hands.delete(id);
+    return true;
+  }
+
+  // ---- a strip's :vol in the panel's hand ----
   // A strip is its channels (`heads`) and the tracks on them, and for a
   // chip's sound several tracks share (the YM2608's rhythm) that sound, its
   // `voice`. Its level's site comes from the channels, so a player with no
@@ -1146,12 +1216,9 @@ export class IRPlayer {
   // back to; let go, the value stays until the score writes :vol (a value, a
   // sweep, a note's :vol macro) on one of the strip's tracks.
 
-  /**
-   * The panel's hand on a strip's :vol: `value` (0-31) sounds now, the
-   * score's :vol unheard while held.
-   * @param {{ heads: string[], tracks: number[], voice?: string }} strip
-   */
-  holdVol(strip, value) {
+  // `value` (0-31) sounds now, the score's :vol unheard while held.
+  // strip: { heads: string[], tracks: number[], voice?: string }
+  _holdVol(strip, value) {
     const sites = this._volSites(strip);
     if (!sites.length) return;
     let hand = this._volHands.get(sites[0]);
@@ -1166,32 +1233,28 @@ export class IRPlayer {
     for (const site of sites) this._levelNow(site);
   }
 
-  /** The panel lets go of a strip's :vol: it stays until the score writes :vol there. */
-  releaseVol(strip) {
+  // Let go: it stays until the score writes :vol there.
+  _releaseVol(strip) {
     const hand = this._volHands.get(this._volSites(strip)[0]);
     if (hand) hand.held = false;
   }
 
-  /**
-   * A strip's :vol now, as the panel shows it: the panel's while in hand
-   * (`hand`), else the score's, its :vol macro's included.
-   * @returns {{ v: number, hand: boolean } | null}
-   */
-  volOf(strip) {
+  // A strip's :vol now: the panel's while in hand, else the score's, its
+  // :vol macro's included — and the score's either way (`score`).
+  _volOf(strip) {
     const site = this._volSites(strip)[0];
     if (!site) return null;
-    const hand = this._volHands.get(site);
-    if (hand) return { v: hand.v, hand: true };
     const when = this._audioContext?.currentTime ?? 0;
     const [kind, at] = site.split(":");
     const n = Number(at);
-    const v = kind === "fm" ? this._fmScoreVolAt(n, when)
+    const score = Math.round(kind === "fm" ? this._fmScoreVolAt(n, when)
       : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3OpVolAtTime(n, when)
       : kind === "psg" ? this._psgVolAtTime(n, when)
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
       : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
-      : this._chipPcmParamAt(strip.tracks[0], "vol", when);
-    return { v: Math.round(v), hand: false };
+      : this._chipPcmParamAt(strip.tracks[0], "vol", when));
+    const hand = this._volHands.get(site);
+    return { v: hand ? hand.v : score, hand: !!hand, score };
   }
 
   // Where a strip's level is composed: an FM channel, a PSG lane, a Mega
@@ -1261,62 +1324,6 @@ export class IRPlayer {
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
   getBpm() {
     return this._bpm;
-  }
-
-  /**
-   * The panel's hand on a song-wide word: "tempo" (bpm), "MASTER", or an LFO
-   * word (LFO_RATE, LFO_FREQ, LFO_PMD, LFO_AMD, LFO_WAVE). `value` sounds now,
-   * and while the word is held the score's writes of it are skipped; let go
-   * (releaseWord), the value stays until the score next writes the word.
-   * A run starts with the score's own values (play, seek).
-   */
-  holdWord(word, value) {
-    this._hands.set(word, { held: true });
-    if (word === "tempo") this._setTempoNow(value);
-    else {
-      if (word === "MASTER") this._masterSweep = null;
-      this.setParam(word, value);
-    }
-  }
-
-  /** Whether the panel's value is `word`'s now: held, or let go and not yet written over. */
-  handOn(word) {
-    return this._hands.has(word);
-  }
-
-  /** The master level as last scheduled, 0-31: what the panel shows. */
-  getMaster() {
-    if (this._target?.name === "midi" && !this._hands.has("MASTER"))
-      return Math.round(this._chipPcmParamAt("master", "vol", this._audioContext?.currentTime ?? 0));
-    return this._masterVol ?? VOL_UNITY;
-  }
-
-  /**
-   * `:target midi`: a strip's :vol and the master as the score has them now,
-   * under any hand of the panel's — what the MIDI output's plan already says.
-   */
-  scoreLevelOf(strip) {
-    const when = this._audioContext?.currentTime ?? 0;
-    return {
-      vol: Math.round(this._lineAt(this._midiVolLines?.get(strip?.tracks?.[0]), when) ?? this._chipPcmParamAt(strip?.tracks?.[0], "vol", when)),
-      master: Math.round(this._chipPcmParamAt("master", "vol", when)),
-    };
-  }
-
-  /** The panel lets go of `word`: its value stays until the score writes the word. */
-  releaseWord(word) {
-    const h = this._hands.get(word);
-    if (h) h.held = false;
-  }
-
-  // A score event's write of a word in the panel's hand: skipped while held;
-  // let go, it takes the word back.
-  _scoreMayWrite(word) {
-    const h = this._hands.get(word);
-    if (!h) return true;
-    if (h.held) return false;
-    this._hands.delete(word);
-    return true;
   }
 
   // The tempo, now: a running sweep ends. While playing, applied at the
@@ -2670,10 +2677,10 @@ export class IRPlayer {
     ev = this._relativeLevel(ev, when);
     // `:target midi`: its sound is the output's, which the plan writes; what
     // the panel shows of its levels is the score's, kept here — before the
-    // panel's hand, which the output reads beside it (scoreLevelOf).
+    // panel's hand, which the output reads beside it (read's `score`).
     if (this._target?.name === "midi") this._midiLevel(ev, when);
     const hand = handWordOf(ev);
-    if (hand && !this._scoreMayWrite(hand)) return;
+    if (hand && !this._scoreWrites(hand)) return;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -4059,28 +4066,6 @@ export class IRPlayer {
     this._vals[name] = v;
   }
 
-  /**
-   * The panel's hand on a value slot: `value` is the slot's now, and while
-   * held the score's writes of it (`:name …`, a value, a sweep, `+` / `*`)
-   * are skipped; let go (releaseVal), it stays until the score next writes
-   * the slot. A run starts from the def-vals' inits. A game's write is setVal.
-   */
-  holdVal(name, value) {
-    this._valHands.set(name, { held: true });
-    this.setVal(name, value);
-  }
-
-  /** The panel lets go of a value slot: it stays until the score writes it. */
-  releaseVal(name) {
-    const h = this._valHands.get(name);
-    if (h) h.held = false;
-  }
-
-  /** The slots whose value is the panel's now, name → value. */
-  valsInHand() {
-    return Object.fromEntries([...this._valHands.keys()].map((name) => [name, this.getVal(name)]));
-  }
-
   // The score writing a value slot (`:name …`, language.md §8): a song-wide
   // target, so it is handled here whichever track carries it. A sweep runs in
   // the slot's own sweep slot, as on the driver — a write ends it only where
@@ -4089,9 +4074,7 @@ export class IRPlayer {
   _writeVal(ev, name, when) {
     if (name == null) return;
     // A slot in the panel's hand: skipped while held, taken back once let go.
-    const hand = this._valHands.get(name);
-    if (hand?.held) return;
-    if (hand) this._valHands.delete(name);
+    if (!this._scoreWrites(`val:${name}`)) return;
     const a = ev.args ?? {};
     const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
     const cur = this._resolveSrc(name, when);
@@ -4250,12 +4233,7 @@ export class IRPlayer {
     const target = (ev.args?.target ?? "").toUpperCase();
     // A register in the panel's hand: the score's write waits while it is
     // held, and takes it back once let go.
-    if (this._paramHands.size && !this._panelWrite) {
-      const key = `${ch}:${target}`;
-      const hand = this._paramHands.get(key);
-      if (hand?.held) return;
-      if (hand) this._paramHands.delete(key);
-    }
+    if (this._hands.size && !this._panelWrite && !this._scoreWrites(`reg:${ch}:${target}`)) return;
     const value = ev.args?.value ?? 0;
 
     // Helper to round, clamp and apply. All hardware register targets are integers;

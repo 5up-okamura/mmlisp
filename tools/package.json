@@ -41,6 +41,7 @@
     "check:export-midi": "node scripts/check-export-midi.mjs",
     "check:stems": "node scripts/check-stems.mjs",
     "check:midi-out": "node scripts/check-midi-out.mjs",
+    "check:panel": "node scripts/check-panel.mjs",
     "check:gm-output": "node scripts/check-gm-output.mjs",
     "check:import-tracker": "node scripts/check-import-tracker.mjs",
     "snapshot:imports": "node scripts/import-snapshot.mjs",
