@@ -175,6 +175,22 @@
   "vgm": "6036c18c344d21cd",
   "mid": "381112f7c5b51558"
  },
+ "drv/tests/m2-vol-every-track.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "ae15206101601b8a",
+  "regs": "99e11ba4654aacaf",
+  "mmb": "9dc4badc4de431c9",
+  "vgm": "fb28cfbcf882cc55",
+  "mid": "f8680883453817e2"
+ },
+ "drv/tests/m2-vol-every-track.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "442f87f26d66c235",
+  "regs": "99e11ba4654aacaf",
+  "mmb": "d0218aecf605d5d5",
+  "vgm": "a732d87bde5e396f",
+  "mid": "8d7f9fb610f01314"
+ },
  "drv/tests/m2b-pitch.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "63a187219d0d6d1b",
@@ -226,17 +242,17 @@
  "drv/tests/m3-dynval.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "27c35313a2855861",
-  "regs": "5d3c01d3f747a8cf",
+  "regs": "2a9ce122e4769c32",
   "mmb": "e856ce5ae62a436b",
-  "vgm": "4931283b0c116b8b",
+  "vgm": "e8700b82cb65611b",
   "mid": "0b3f88543c5231ab"
  },
  "drv/tests/m3-dynval.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "59b01481882feab5",
-  "regs": "5d3c01d3f747a8cf",
+  "regs": "2a9ce122e4769c32",
   "mmb": "f7e02218cac33dd8",
-  "vgm": "4931283b0c116b8b",
+  "vgm": "e8700b82cb65611b",
   "mid": "0b3f88543c5231ab"
  },
  "drv/tests/m3-fm3op.mmlisp": {

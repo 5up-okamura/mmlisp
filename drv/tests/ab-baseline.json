@@ -65,6 +65,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m2-vol-every-track.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m2b-pitch.mmlisp": {
     "ok": false,
     "mismatches": 30,
@@ -85,9 +91,9 @@
   },
   "m3-dynval.mmlisp": {
     "ok": false,
-    "mismatches": 8,
+    "mismatches": 1,
     "compileErrors": 0,
-    "digest": "a2453b30"
+    "digest": "c85dbef4"
   },
   "m3-fm3op.mmlisp": {
     "ok": true,

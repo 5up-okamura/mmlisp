@@ -1,0 +1,12 @@
+; :vol written every way on every kind of track: a sweep from where the
+; fader is (no :from), a `+`, a `*` and a `$slot` while it runs or after —
+; the driver's slot steps on through a relative write and leaves the fader
+; at its last frame (driver.md §4 step 3). An fm3 operator's :vol is its
+; own (§13.4).
+
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-val m 12 0..31 :public)
+(fm1 :tempo 120 :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)
+(fm3-1 :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)
+(sqr1 :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)
+(pcm1 pad :mode loop :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)

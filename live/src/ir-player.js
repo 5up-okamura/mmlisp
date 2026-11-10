@@ -2542,7 +2542,8 @@ export class IRPlayer {
   // instantaneous value here, exactly as a channel's does (_fmVolAtTime).
   _fm3OpVolAtTime(op, when) {
     const st = this._fm3Op[op - 1];
-    return st.volSweep ? this._sweepVolAtTime(st.volSweep, when) : st.vol;
+    const F = this._eventFrame(when);
+    return st.volSweep && F < st.volSweep.startFrame + st.volSweep.frames ? this._sweepVolAtFrame(st.volSweep, F) : st.vol;
   }
   // `when` given: the operator's LIVE level then — its note's :vel/:vol macro
   // samples (_fm3LevelLines), else its velocity and fader. `over` pins any of
@@ -3228,7 +3229,7 @@ export class IRPlayer {
         const value = this._resolveSrc(ev.args?.src, when);
         this._applyParam(
           ch,
-          { args: { target: ev.args?.target, value }, _trackIndex: ev._trackIndex },
+          { cmd: ev.cmd, args: { target: ev.args?.target, value }, _trackIndex: ev._trackIndex },
           when,
         );
         break;
@@ -3236,8 +3237,8 @@ export class IRPlayer {
       case "PARAM_ADD":
       case "PARAM_MUL": {
         const target = ev.args?.target;
-        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev)), when);
-        this._applyParam(ch, { args: { target, value }, _trackIndex: ev._trackIndex }, when);
+        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev), when), when);
+        this._applyParam(ch, { cmd: ev.cmd, args: { target, value }, _trackIndex: ev._trackIndex }, when);
         break;
       }
 
@@ -4414,11 +4415,14 @@ export class IRPlayer {
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
-  _readParam(ch, target, fm3Op = 0) {
+  _readParam(ch, target, fm3Op = 0, when = undefined) {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
     if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
+    // :vol at a time is the fader where a running sweep has it (the slot's).
+    if (t === "VOL" && when !== undefined)
+      return fm3Op ? this._fm3OpVolAtTime(fm3Op, when) : this._fmVolAtTime(ch, when);
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
@@ -4788,9 +4792,12 @@ export class IRPlayer {
         // (driver.md §13.4).
         const vol = Math.max(0, Math.min(31, value));
         const volOp = this._fm3OpOf(ev);
+        // A value ends a running sweep; a `+`, a `*` or a `$slot` moves the
+        // fader and the sweep steps on (SLOT_FREEING).
+        const frees = SLOT_FREEING.has(ev.cmd ?? "PARAM_SET");
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
-          st.volSweep = null; // a PARAM_SET overrides a running sweep
+          if (frees) st.volSweep = null;
           st.vol = vol;
           this._writeFm3OpTl(volOp, when);
           break;
@@ -4800,7 +4807,7 @@ export class IRPlayer {
           this._recomposeFm3Ops(when);
           break;
         }
-        this._fmVolSweep[ch] = null; // a PARAM_SET overrides a running sweep
+        if (frees) this._fmVolSweep[ch] = null;
         regs.vol = vol;
         this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
         break;
@@ -5739,7 +5746,7 @@ export class IRPlayer {
     const from = df.from != null
       ? Number(df.from)
       : target === "VOL"
-        ? this._fmVolAtTime(ch, when)
+        ? this._readParam(ch, "VOL", this._fm3OpOf(ev), when)
         : target === "MASTER"
           ? this._masterAt(when)
           : this._readParam(ch, target, this._fm3OpOf(ev));
@@ -5850,32 +5857,28 @@ export class IRPlayer {
         frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
         frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
       };
+      // The fader's slot (_slotKey): a value, a sweep or a stop on it ends
+      // the sweep; its last frame leaves the fader there.
+      const slot = this._slotKey(ev, "VOL");
+      this._slots.set(slot, sw);
+      const st = volOp ? this._fm3Op[volOp - 1] : null;
       for (let i = 0; i < iterFrames; i++) {
         const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
         const frameWhen = this._sweepFrameTime(sw, i);
         const master = this._masterAtFrame(sw.startFrame + i);
-        if (volOp) {
-          this._writeFm3OpTl(volOp, frameWhen, { vol, master });
-          continue;
-        }
-        if (groupSweep) {
-          for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
-          continue;
-        }
-        this._writeFmLevel(ch, frameWhen, { vol, master });
+        const last = i === iterFrames - 1;
+        this._at(frameWhen, () => {
+          if (this._slots.get(slot) !== sw) return;
+          if (volOp) this._writeFm3OpTl(volOp, frameWhen, { vol, master });
+          else if (groupSweep) for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
+          else this._writeFmLevel(ch, frameWhen, { vol, master });
+          if (!last) return;
+          if (st) st.vol = vol;
+          else regs.vol = vol;
+        });
       }
-      if (volOp) {
-        const st = this._fm3Op[volOp - 1];
-        st.volSweep = sw;
-        st.vol = to; // final value, for a later MASTER/group recompose
-        return;
-      }
-      if (groupSweep) {
-        regs.vol = to;
-        return;
-      }
-      this._fmVolSweep[ch] = sw;
-      regs.vol = to;
+      if (st) st.volSweep = sw;
+      else if (!groupSweep) this._fmVolSweep[ch] = sw;
       return;
     }
 
@@ -6323,7 +6326,7 @@ export class IRPlayer {
 
   _fmVolAtFrame(ch, F) {
     const sweep = this._fmVolSweep?.[ch];
-    return sweep ? this._sweepVolAtFrame(sweep, F) : (this._chRegs[ch].vol ?? VOL_UNITY);
+    return sweep && F < sweep.startFrame + sweep.frames ? this._sweepVolAtFrame(sweep, F) : (this._chRegs[ch].vol ?? VOL_UNITY);
   }
 
   _psgVolAtTime(psgCh, when) {
