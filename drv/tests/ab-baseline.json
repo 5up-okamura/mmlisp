@@ -73,9 +73,9 @@
   },
   "m2b-pitch.mmlisp": {
     "ok": false,
-    "mismatches": 30,
+    "mismatches": 25,
     "compileErrors": 0,
-    "digest": "5766cfdc"
+    "digest": "3220f2ca"
   },
   "m3-callret.mmlisp": {
     "ok": true,

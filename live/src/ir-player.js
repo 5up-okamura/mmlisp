@@ -91,6 +91,9 @@ const SAMPLE_HANDLERS = {
 };
 // A frame's order (driver.md §4): the places work takes in it (IRPlayer._at).
 const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3, AFTER = 4; // (AFTER: what follows a frame's steps — a PCM retrigger)
+// The words that are the song's, not a channel's: one slot each, stepped
+// after every channel's in a frame (SONG).
+const SONG_WORDS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
 // The writes that free a sweep's slot (driver.md §4 step 3).
 const SLOT_FREEING = new Set(["PARAM_SET", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
@@ -343,7 +346,6 @@ export class IRPlayer {
     // note's NOTE_ON (same tick), so that note must start from the sweep's
     // FIRST value instead — else its onset write lands on the target pitch for
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
-    this._pitchSweepOnset = new Map(); // key → { when, offset }
     this._psgVol = new Array(PSG_LANES).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLive = new Array(PSG_LANES).fill(null); // each lane's note: { vel, vol } as they are (_psgRecompose)
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
@@ -677,7 +679,6 @@ export class IRPlayer {
     this._psgCurrentMidi.fill(60);
     this._psgPitchOffset.fill(0);
     this._psgSnap.fill(0);
-    this._pitchSweepOnset.clear();
     this._psgVol.fill(VOL_UNITY);
     this._psgLive.fill(null);
     this._psgNoiseMode = 0b1_00;
@@ -2704,12 +2705,34 @@ export class IRPlayer {
     );
   }
 
-  // The cent offset a note starting at `when` sounds with: the first value of
-  // a NOTE_PITCH sweep that began at that same instant (a glide), else the
-  // channel's standing offset `fallback`.
-  _onsetPitchOffset(key, when, fallback) {
-    const onset = this._pitchSweepOnset.get(key);
-    return onset && Math.abs(onset.when - when) < 1e-9 ? onset.offset : fallback;
+  // The cent offset a note of `ev`'s track starts with: where a pitch sweep
+  // running in its slot is about to step to — the driver's onset_pitch, so a
+  // glide's note starts on the glide's first value — else the standing
+  // offset `fallback`.
+  _onsetPitchOffset(ev, fallback) {
+    const sw = this._slots.get(this._slotKey(ev, "NOTE_PITCH"));
+    if (!sw || sw.next == null || sw.next >= sw.steps) return fallback;
+    return Math.round(this._sweepAt(sw, sw.frameOffset + sw.next));
+  }
+
+  // A pitch sweep (a glide, a bend across notes) in its slot: each step, in
+  // its frame (SWEEP), moves the offset and writes the pitch of the note
+  // sounding then (`write(cents, t)`). A bounded glide lands exactly on its
+  // target one step past its last frame — the frames can stop a fraction
+  // short, and the offset left would be every later note's.
+  _pitchSweep(ev, sw, budgetFrames, endTick, write) {
+    const slot = this._slotKey(ev, "NOTE_PITCH");
+    sw.next = 0;
+    sw.steps = budgetFrames;
+    this._slots.set(slot, sw);
+    const step = (i, cents, t) => this._step(sw.startFrame + i, SWEEP, t, () => {
+      if (this._slots.get(slot) !== sw) return;
+      sw.next = i + 1;
+      write(cents, t);
+    });
+    for (let i = 0; i < budgetFrames; i++)
+      step(i, Math.round(this._sweepAt(sw, sw.frameOffset + i)), this._sweepFrameTime(sw, i));
+    if (ev.args?.bounded && !this._glideCut(ev, endTick)) step(budgetFrames, sw.to, sw.startWhen + budgetFrames / 60);
   }
 
   // Every pitch write passes its whole-semitone note through the channel's
@@ -3001,11 +3024,11 @@ export class IRPlayer {
       const a = ev.args ?? {};
       if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
       else if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP")
-        this._writeSongRate(ev, when, cur, (v, t) => this._at(t, () => {
-          // A frame ahead is a score write of the word at its own time.
-          if (t > when && !this._scoreWrites(String(ev.args.target).toUpperCase())) return;
+        this._writeSongRate(ev, when, cur, (v, t) => {
+          // A sweep's step is a score write of the word at its own time.
+          if (ev.cmd === "PARAM_SWEEP" && !this._scoreWrites(String(ev.args.target).toUpperCase())) return;
           write((this._waveLfo[lfoWord] = v), t);
-        }));
+        });
       else {
         const v = this._writeValue(ev, cur, when);
         if (v != null) write((this._waveLfo[lfoWord] = Math.round(v)), when);
@@ -3039,11 +3062,7 @@ export class IRPlayer {
         const fm3Op = Number(ev.args?.fm3Op);
         const isFm3OpNote =
           ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
-        const centOffset = this._onsetPitchOffset(
-          `fm:${ch}`,
-          when,
-          this._chRegs[ch]?.pitchOffset ?? 0,
-        );
+        const centOffset = this._onsetPitchOffset(ev, this._chRegs[ch]?.pitchOffset ?? 0);
         const baseLengthTicks = ev.args.length;
         const lengthTicks = this._resolveTiedLength(ev, baseLengthTicks);
         const gateTicks = this._frameGate(when, this._resolveGateTicks(ev.args?.gate, lengthTicks), lengthTicks);
@@ -3364,7 +3383,7 @@ export class IRPlayer {
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const st = this._fm3Op[op - 1];
         st.midi = midi;
-        const offset = this._onsetPitchOffset(`op:${op}`, when, st.offset);
+        const offset = this._onsetPitchOffset(ev, st.offset);
         this._writeFm3OpPitch(op, midi, offset, when);
         break;
       }
@@ -3441,14 +3460,20 @@ export class IRPlayer {
       params: df.params, baseFrames, loop: !!a.loop, startFrame: this._eventFrame(when), startWhen: when,
     };
     const budget = this._resolveSweepBudgetFrames(ev);
-    let last = null;
+    // Each step in its frame, while the sweep holds the fader's slot: the
+    // fader moves, and the voice hears of it when it changes.
+    const slot = this._slotKey(ev, "VOL");
+    this._slots.set(slot, sw);
     for (let f = 0; f < budget; f++) {
       const v = Math.round(this._sweepAt(sw, f));
-      if (v !== last) this._pcmEv(this._sweepFrameTime(sw, f), { kind: "vol", voice, value: v });
-      last = v;
+      const t = this._sweepFrameTime(sw, f);
+      this._step(sw.startFrame + f, SWEEP, t, () => {
+        if (this._slots.get(slot) !== sw) return;
+        if (this._pcmVolNow?.[voice] !== v) this._pcmEv(t, { kind: "vol", voice, value: v });
+        (this._pcmVolNow ??= [])[voice] = v;
+      });
       if (!sw.loop && f >= baseFrames - 1) break;
     }
-    (this._pcmVolNow ??= [])[voice] = last;
   }
 
   _applyPcmParam(voice, args, when) {
@@ -3480,10 +3505,21 @@ export class IRPlayer {
     const loop = !!a.loop;
     const budget = this._resolveSweepBudgetFrames(ev);
     const id = curveId(a.curve);
+    // Each step in its frame, while the sweep holds its word's slot.
+    const target = String(a.target ?? "").toUpperCase();
+    const slot = this._slotKey(ev, target);
+    const sw = {};
+    this._slots.set(slot, sw);
+    const F0 = this._eventFrame(when);
     let last = null;
     for (let f = 0; f < budget; f++) {
       const v = sweepFrameValue(id, from, to, len, loop, f) / scale;
-      if (v !== last) write(v, when + f / 60);
+      if (v !== last) {
+        const t = when + f / 60;
+        this._step(F0 + f, SONG_WORDS.has(target) ? SONG : SWEEP, t, () => {
+          if (this._slots.get(slot) === sw) write(v, t);
+        });
+      }
       last = v;
       if (!loop && f >= len - 1) break;
     }
@@ -4159,15 +4195,19 @@ export class IRPlayer {
     const budget = this._resolveSweepBudgetFrames(ev);
     const id = curveId(a.curve);
     const step16 = sweepStep(len, loop);
+    const slot = this._slotKey(ev, target), sw = {}, F0 = this._eventFrame(when);
+    this._slots.set(slot, sw);
     let phase16 = 0;
     for (let f = 0; f < budget; f++) {
       const last = !loop && f >= len - 1;
       const value = last ? to : sweepValue(from, to, curveUnit8(id, phase16 >> 8));
       phase16 = (phase16 + step16) & 0xffff;
-      // + PCM_SWEEP_AFTER: the driver steps its sweeps AFTER the frame's
-      // dispatch (driver.md §4 step 3), so a sweep that starts with a note
-      // moves that note's loop, not the one before it.
-      this._pcmEv(when + f / 60 + PCM_SWEEP_AFTER, { kind: "point", voice, target, value });
+      // A step in its frame, after that frame's dispatch: a sweep that
+      // starts with a note moves that note's loop, not the one before it.
+      const t = when + f / 60 + PCM_SWEEP_AFTER;
+      this._step(F0 + f, SWEEP, t, () => {
+        if (this._slots.get(slot) === sw) this._pcmEv(t, { kind: "point", voice, target, value });
+      });
       if (last) break;
     }
   }
@@ -5805,76 +5845,24 @@ export class IRPlayer {
     const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset, endTick } =
       this._sweepFrameParams(ev, baseFrames, loop, when);
 
-    // NOTE_PITCH: must track future NOTE_ON base pitches so per-frame frequency
-    // writes use the correct note at each point in time.
+    // NOTE_PITCH: the channel's offset — on an fm3-N track that operator's
+    // alone (driver.md §13.4) — stepped in its frames on the note sounding then.
     if (target === "NOTE_PITCH") {
-      const track =
-        ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-      const framesPerTick = secsPerTick * 60;
-      // On an fm3-N track the sweep bends that operator's F-number alone,
-      // from the operator's own note (driver.md §13.4).
-      const op = track?.fm3Op ?? 0;
+      const op = this._fm3OpOf(ev);
       const opState = op ? this._fm3Op[op - 1] : null;
-      let baseMidi = opState ? opState.midi : (this._chRegs[ch]?.currentMidi ?? 60);
-      let cursor = track ? track.flatIndex + 1 : 0;
-      let nextNoteTick = Infinity;
-      let nextNoteMidi = baseMidi;
-      const advance = () => {
-        if (!track) {
-          nextNoteTick = Infinity;
-          return;
-        }
-        while (cursor < track.events.length) {
-          const ne = track.events[cursor++];
-          if (ne.cmd !== "NOTE_ON" || ne._route.core === "psg") continue;
-          nextNoteTick = ne.tick;
-          nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
-          return;
-        }
-        nextNoteTick = Infinity;
-      };
-      advance();
       const sw = {
         from, to, curve, params, baseFrames, loop,
         frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
       };
-      for (let frame = 0; frame < budgetFrames; frame++) {
-        const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-        while (frameTick >= nextNoteTick) {
-          baseMidi = nextNoteMidi;
-          advance();
-        }
-        const centOffset = Math.round(this._sweepAt(sw, loopPhaseOffset + frame));
-        const frameWhen = this._sweepFrameTime(sw, frame);
-        if (frame === 0)
-          this._pitchSweepOnset.set(opState ? `op:${op}` : `fm:${ch}`, {
-            when,
-            offset: centOffset,
-          });
+      this._pitchSweep(ev, sw, budgetFrames, endTick, (cents, t) => {
         if (opState) {
-          opState.offset = centOffset;
-          this._writeFm3OpPitch(op, baseMidi, centOffset, frameWhen);
-          continue;
+          opState.offset = cents;
+          this._writeFm3OpPitch(op, opState.midi, cents, t);
+        } else {
+          this._chRegs[ch].pitchOffset = cents;
+          this._writeFmNote(ch, this._chRegs[ch].currentMidi ?? 60, cents, t);
         }
-        this._chRegs[ch].pitchOffset = centOffset;
-        this._writeFmNote(ch, baseMidi, centOffset, frameWhen);
-      }
-      // A bounded glide must land exactly on its target `to`. The frame loop can
-      // stop a fraction short (budgetFrames is floored while the phase divides by
-      // baseFrames), so a short glide ends mid-slope — leaving a residual pitch
-      // offset that the note holds and every later NOTE_ON inherits (glide never
-      // resets pitchOffset; `(glide none)` only stops future glides). Snap to the
-      // final value so the note reaches true pitch and nothing leaks past it.
-      if (ev.args?.bounded && !this._glideCut(ev, endTick)) {
-        const endWhen = when + budgetFrames / 60;
-        if (opState) {
-          opState.offset = to;
-          this._writeFm3OpPitch(op, baseMidi, to, endWhen);
-          return;
-        }
-        this._chRegs[ch].pitchOffset = to;
-        this._writeFmNote(ch, baseMidi, to, endWhen);
-      }
+      });
       return;
     }
 
@@ -5948,7 +5936,7 @@ export class IRPlayer {
     for (let i = 0; i < iterFrames; i++) {
       const t = this._sweepFrameTime(sw, i);
       const set = { cmd: "PARAM_SET", args: { target, value: this._sweepAt(sw, sw.frameOffset + i) }, _trackIndex: ev._trackIndex };
-      this._at(t, () => {
+      this._step(sw.startFrame + i, SONG_WORDS.has(target) ? SONG : SWEEP, t, () => {
         if (this._slots.get(slot) === sw) this._applyParam(ch, set, t);
       });
     }
@@ -6480,7 +6468,7 @@ export class IRPlayer {
   // frames still waiting for their time (_at) stop there; a `+`, a `*` or a
   // `$slot` moves the word and the sweep steps on.
   _slotKey(ev, target) {
-    if (target === "MASTER" || LFO_TARGETS.has(target)) return `song:${target}`;
+    if (SONG_WORDS.has(target)) return `song:${target}`;
     const r = ev._route;
     return `${r?.core}${r?.lane}:${this._fm3OpOf(ev)}:${target}`;
   }
@@ -6582,11 +6570,7 @@ export class IRPlayer {
         if (!isNoise) {
           const midi = pitchToMidi(ev.args?.pitch ?? "c4");
           this._psgCurrentMidi[psgCh] = midi;
-          const psgCentOffset = this._onsetPitchOffset(
-            `psg:${psgCh}`,
-            when,
-            this._psgPitchOffset[psgCh] ?? 0,
-          );
+          const psgCentOffset = this._onsetPitchOffset(ev, this._psgPitchOffset[psgCh] ?? 0);
           // Pitch macros first, as on FM: a first sample on the note is the
           // pitch it sounds from (the driver's onset_pitch).
           let onsetWritten = false;
@@ -6835,67 +6819,17 @@ export class IRPlayer {
             ev.cmd === "PARAM_SWEEP"
               ? this._sweepFrameParams(ev, baseFrames, loop, when)
               : { budgetFrames: 1, loopPhaseOffset: 0, endTick: undefined };
-          const track =
-            ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-          let baseMidi = this._psgCurrentMidi[psgCh] ?? 60;
-          let cursor = track ? track.flatIndex + 1 : 0;
-          let nextNoteTick = Infinity;
-          let nextNoteMidi = baseMidi;
-
-          const advance = () => {
-            if (!track) {
-              nextNoteTick = Infinity;
-              return;
-            }
-            while (cursor < track.events.length) {
-              const ne = track.events[cursor++];
-              if (ne.cmd !== "NOTE_ON" || ne._route.core !== "psg") continue;
-              if ((ne._psgCh ?? 0) !== psgCh) continue;
-              nextNoteTick = ne.tick;
-              nextNoteMidi = pitchToMidi(ne.args?.pitch ?? "c4");
-              return;
-            }
-            nextNoteTick = Infinity;
+          const pitch = (cents, t) => {
+            this._psgPitchOffset[psgCh] = cents;
+            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, cents, t);
           };
-          advance();
-
-          // Store final pitch offset (used when no active sweep)
-          this._psgPitchOffset[psgCh] = ev.cmd === "PARAM_SET" ? from : to;
+          if (ev.cmd === "PARAM_SET") pitch(from, when);
           // Stepped as the FM path steps it: the driver's integer curve and
-          // its frame grid (_sweepAt / _sweepFrameTime), so a PSG glide writes
-          // the periods the driver writes, on its frames.
-          const sw = {
+          // its frame grid, on the note sounding then.
+          else this._pitchSweep(ev, {
             from, to, curve, params: ev.args?.params, baseFrames, loop,
             frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
-          };
-          for (let frame = 0; frame < budgetFrames; frame++) {
-            const frameTick = ev.tick + frame / Math.max(1e-9, framesPerTick);
-            while (frameTick >= nextNoteTick) {
-              baseMidi = nextNoteMidi;
-              advance();
-            }
-            const centOffset = ev.cmd === "PARAM_SWEEP"
-              ? Math.round(this._sweepAt(sw, loopPhaseOffset + frame))
-              : from;
-            this._psgPitchOffset[psgCh] = centOffset;
-            if (frame === 0)
-              this._pitchSweepOnset.set(`psg:${psgCh}`, {
-                when,
-                offset: centOffset,
-              });
-            this._psgSetPitch(
-              psgCh,
-              baseMidi,
-              centOffset,
-              ev.cmd === "PARAM_SWEEP" ? this._sweepFrameTime(sw, frame) : when,
-            );
-          }
-          // Bounded glide: snap to the exact target so a short glide that ends
-          // mid-slope leaves no residual offset for later notes (see the FM path).
-          if (ev.args?.bounded && !this._glideCut(ev, endTick)) {
-            this._psgPitchOffset[psgCh] = to;
-            this._psgSetPitch(psgCh, baseMidi, to, when + budgetFrames / 60);
-          }
+          }, budgetFrames, endTick, pitch);
         }
         break;
       }
