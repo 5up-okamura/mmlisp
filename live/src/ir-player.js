@@ -660,8 +660,7 @@ export class IRPlayer {
     this._lfoRate = 0;
     this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 };
     this._masterVol = VOL_UNITY;
-    this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
-    this._midiVolLines = null; // :target midi: each track's note :vol macro (_midiLevel)
+    this._chipPcm = null; // the chips' own sample voices (_chipPcmState)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._psgPan?.fill(0);
     this._psgDuty?.fill(8);
@@ -1093,10 +1092,9 @@ export class IRPlayer {
     if (this._reg27 & 0x80) this._writeReg27(when);
     // The chips' own sample voices: dump a rhythm sound, stop the ADPCM-B.
     const adpcm = this._target?.chipFor?.("adpcm-b")?.adpcm;
-    for (const [voice, hits] of this._chipPcm?.hits ?? []) {
+    for (const [voice, h] of this._chipPcm?.owner ?? []) {
       if (this._isVoiceAudible(voice)) continue;
       // A PCM8 voice is cut from the mix.
-      const h = hits.at(-1);
       if (h?.pcm8 != null) { this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 }); continue; }
       // A DDA channel stops, and its hit is fed no more frames.
       if (h?.dda != null) {
@@ -1182,10 +1180,7 @@ export class IRPlayer {
     if (c.kind === "vol") return this._volOf(c.strip);
     const when = this._audioContext?.currentTime ?? 0;
     if (c.word === "MASTER") {
-      // `:target midi` keeps its master as a line (_midiLevel).
-      const score = this._target?.name === "midi"
-        ? Math.round(this._chipPcmParamAt("master", "vol", when))
-        : this._masterVol ?? VOL_UNITY;
+      const score = this._masterVol ?? VOL_UNITY;
       return { v: this._masterHand ? this._masterHand.v : score, hand: !!this._masterHand, score };
     }
     const hand = this._hands.has(c.id);
@@ -1289,8 +1284,8 @@ export class IRPlayer {
     const [kind, at] = site.split(":");
     const n = Number(at);
     const score = Math.round(kind === "fm" || kind === "fm3op" || kind === "psg" || kind === "pcm" ? this._lvScoreVol(this._lv(site))
-      : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
-      : this._chipPcmParamAt(strip.tracks[0], "vol", when));
+      : kind === "midi" ? this._lvScoreVol(this._lv(`mtrk:${strip.tracks[0]}`))
+      : this._lv(`strk:${strip.tracks[0]}`).vol);
     const hand = this._lv(site).hand;
     return { v: hand ? hand.v : score, hand: !!hand, score };
   }
@@ -1341,7 +1336,7 @@ export class IRPlayer {
 
   // A level recomposed at `when` (now when absent), after the panel moved
   // it: an FM channel, a keyed PSG lane, a Mega Drive PCM voice; a chip's
-  // sample voice follows as its frames are written (_chipPcmFrames).
+  // sample voice its sounding hit's (_chipPcmWrite).
   _levelNow(site, when) {
     const [kind, at] = site.split(":");
     const n = Number(at);
@@ -1357,6 +1352,7 @@ export class IRPlayer {
       if (this._playing && !this._lv(site).key && !(when != null && when >= this._writeCursor - 1e-9)) return;
       if (this._psgKeyed(n, when)) this._psgRecompose(n, when);
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
+    else if (kind === "voice") this._chipPcmWrite(at, when ?? this._audioContext?.currentTime ?? 0, true);
   }
 
   // ---- the keys ----
@@ -2973,41 +2969,20 @@ export class IRPlayer {
   }
 
   // `:target midi`'s levels as the score writes them, for the panel: a
-  // track's :vol and the song's :master (a value or a sweep), and a note's
-  // :vol macro, which takes the fader's place until the next note (the
-  // output's plan does the same, export-midi.js).
+  // track's :vol (a value, a sweep, `+` `*` `$slot`), and a note's :vol
+  // macro, which takes the fader's place until the next note (the output's
+  // plan does the same, export-midi.js); the song's :master is every
+  // machine's (_masterEvent).
   _midiLevel(ev, when) {
     const ti = ev._trackIndex;
-    if (ev.cmd.startsWith("PARAM_")) {
-      const t = String(ev.args?.target ?? "").toUpperCase();
-      if (t === "MASTER") this._chipPcmParam({ ...ev, _trackIndex: "master" }, when, "vol");
-      else if (t === "VOL" && ti != null) this._chipPcmParam(ev, when, "vol");
-    } else if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ti != null) {
-      const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
-      const line = ev.args?.vol ? this._levelMacroLines(ev.args, when, gateTicks, this._nextNote(ev).secs).vol : null;
-      (this._midiVolLines ??= new Map()).set(ti, line?.length ? line : null);
+    if (ti == null) return;
+    const site = `mtrk:${ti}`;
+    if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "VOL")
+      this._word(ev, when, { read: () => this._lv(site).vol, write: (v) => this._lvSetVol(site, v) });
+    else if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
+      this._lvNoteOn(site, Number(ev.args?.vel ?? 15));
+      if (ev.args?.vol) this._lvMacros(site, { vol: ev.args.vol }, when, this._resolveGateTicks(ev.args?.gate, ev.args?.length), Infinity);
     }
-  }
-
-  // A sample or MIDI track's `:vol+` / `:vol*` / `:master+` …: a value from
-  // the one in force (its fader, as the driver's read_param reads it), then
-  // played as that value's write. FM and PSG tracks read theirs in their own
-  // dispatch (_readParam).
-  _relativeLevel(ev, when) {
-    if (ev.cmd !== "PARAM_ADD" && ev.cmd !== "PARAM_MUL") return ev;
-    const core = ev._route?.core;
-    if (core !== "sample" && core !== "none") return ev;
-    const target = String(ev.args?.target ?? "").toUpperCase();
-    const midiMaster = target === "MASTER" && this._target?.name === "midi"; // its drums are sample tracks too
-    if (target !== "VOL" && !midiMaster) return ev;
-    const cur = midiMaster ? this._chipPcmParamAt("master", "vol", when)
-      // A chip's sample track and a MIDI track keep a line (_chipPcmParam);
-      // the Mega Drive's DAC voices read their own (_pcmWord).
-      : ev._route.part?.name === "dac" ? null
-        : this._chipPcmParamAt(ev._trackIndex, "vol", when);
-    if (cur == null) return ev;
-    const value = this._writeValue(ev, cur, when);
-    return { ...ev, cmd: "PARAM_SET", args: { target: ev.args.target, value: Math.max(0, Math.min(31, value)) } };
   }
 
   // A sample note's place in its def's points (setOnPosition): a `gate` or
@@ -3020,11 +2995,6 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
-    ev = this._relativeLevel(ev, when);
-    // `:target midi`: its sound is the output's, which the plan writes; what
-    // the panel shows of its levels is the score's, kept here — before the
-    // panel's hand, which the output reads beside it (read's `score`).
-    if (this._target?.name === "midi") this._midiLevel(ev, when);
     const hand = handWordOf(ev);
     if (hand && !this._scoreWrites(hand)) return;
     // A score write of MASTER takes it back from a hand let go; under one
@@ -3033,10 +3003,14 @@ export class IRPlayer {
       && String(ev.args?.target ?? "").toUpperCase() === "MASTER") this._masterHand = null;
     if (ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._freeSlot(ev);
+    // `:target midi`: its sound is the output's, which the plan writes; what
+    // the panel shows of its levels is the score's, kept here (the output
+    // reads the panel's hand beside it: read's `score`).
+    if (this._target?.name === "midi") this._midiLevel(ev, when);
     // MASTER is the song's, written on any track: one handler, whatever the
-    // track's kind (`:target midi` keeps its own, _midiLevel).
+    // track's kind.
     if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "MASTER") {
-      if (this._target?.name !== "midi") this._masterEvent(ev, when);
+      this._masterEvent(ev, when);
       return;
     }
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -3506,143 +3480,158 @@ export class IRPlayer {
     this._dmcRates = null; // the DMC's rate a sample, from the bank and the score
   }
 
-  // The YM2608's sample voices — the ADPCM-B and the six rhythm sounds — and
-  // their levels, which move while they sound: a track's :vol (a value, a
-  // sweep, a $slot), the note's :vel / :vol macros and :master. A track's
-  // level lines and each voice's hits are kept here as they are dispatched;
-  // _chipPcmFrames writes a sounding voice's level a frame at a time where
-  // it moves. A voice belongs to the track that last keyed it. A rhythm
-  // sound's IL stops 23 dB down, so one fading below it (or a :vol 0) is
-  // dumped instead.
+  // The chips' own sample voices — the YM2608's ADPCM-B and rhythm, PCM8,
+  // the DDA, the OPLL's rhythm — and their levels, which move while they
+  // sound: the track's :vol and :pitch (a value, a sweep, a $slot), the
+  // note's :vel / :vol / :pitch / :semi macros, :master and the panel's
+  // strip. A voice belongs to the hit that last keyed it (`owner`); each of
+  // those moves writes the owner's level, pitch and tune as they are then,
+  // where they moved (_chipPcmWrite), as an FM channel's and a tone lane's
+  // are. A rhythm sound's IL stops 23 dB down, so one fading below it (or
+  // a :vol 0) is dumped instead.
   _chipPcmState() {
     return (this._chipPcm ??= {
-      vol: new Map(), // track → [{ t, v } | { t, sweep }]
-      pitch: new Map(), // the same, in cents
-      pan: new Map(), // track → pan
-      hits: new Map(), // voice ("adpcm" or a rhythm sound) → [hit]
-      master: [{ t: -Infinity, v: this._masterVol ?? VOL_UNITY }],
-      doneUntil: -Infinity, // frames are written up to here
-      frames: false, // a frame of theirs is waiting (_chipPcmFrame)
+      cents: new Map(), // track → its :pitch, in cents (its :vol is _lv(`strk:…`)'s)
+      owner: new Map(), // voice ("adpcm", a rhythm sound, "pcm8-0", "dda-0" …) → the hit sounding on it
+      lane: new Map(), // a kit's channel → the hit that last keyed it (a pair's tune, _chipPcmWrite)
+      frames: false, // a DDA frame is waiting (_chipPcmFrame)
     });
   }
 
-  // A pc88 sample track's :vol or :pitch event, onto its line: a value, or
-  // a sweep from where it is (or its :from). :vol is 0-31, :pitch cents.
-  _chipPcmParam(ev, when, key) {
-    const lines = this._chipPcmState()[key];
+  // A sample track's word: its fader and its pitch, which its sounding hits
+  // follow, and the words of its part (`own`: { WORD: { read, write } }).
+  _sampleWord(ev, own = {}) {
     const ti = ev._trackIndex;
-    if (!lines.has(ti)) lines.set(ti, []);
-    const fit = CHIP_PCM_PARAM[key].fit;
-    if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_FROM_VAL") {
-      const v = ev.cmd === "PARAM_SET" ? ev.args?.value : this._resolveSrc(ev.args?.src, when);
-      insertLine(lines.get(ti), when, fit(Number(v ?? CHIP_PCM_PARAM[key].rest)));
-    } else if (ev.cmd === "PARAM_SWEEP") {
-      const df = this._curveFields(ev.args ?? {}, when);
-      const from = fit(Number(df.from ?? this._chipPcmParamAt(ti, key, when)));
-      const baseFrames = ev.args?.lenFrames
-        ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-        : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * this._secsPerTick * 60));
-      const sweep = {
-        from, to: fit(Number(df.to ?? from)), curve: ev.args?.curve ?? "linear",
-        params: df.params, baseFrames, loop: !!ev.args?.loop, startFrame: this._eventFrame(when),
-      };
-      const l = lines.get(ti);
-      const at = l.findIndex((e) => e.t > when);
-      l.splice(at < 0 ? l.length : at, 0, { t: when, sweep });
-    }
-  }
-
-  _chipPcmParamAt(ti, key, when) {
-    const e = lineEntryAt(this._chipPcm?.[key].get(ti), when);
-    if (!e) return CHIP_PCM_PARAM[key].rest;
-    return e.sweep ? CHIP_PCM_PARAM[key].fit(this._sweepAtFrame(e.sweep, this._eventFrame(when))) : e.v;
-  }
-
-  // A hit (or an ADPCM-B note) keyed on `voice`: its own :vel / :vol macros
-  // run from it, to the track's next note, and each :keyon step re-keys the
-  // voice — a hit of its own, the level envelopes starting over with it, as
-  // on FM and PSG (a gate or loop note's only inside its gate). `key(t, hit)`
-  // writes a key: the first, then each step's.
-  _chipPcmHit(voice, ev, when, end, fields, key) {
+    const target = String(ev.args?.target ?? "").toUpperCase();
     const st = this._chipPcmState();
-    const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
-    const hit = { t: when, end, voice, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), velLine: null, volLine: null, ...fields };
-    const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    const { secs: nextNote } = this._nextNote(ev);
-    const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
-    const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
-    const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? []).filter((t) => !held || t < gateSecs);
-    this._envRetrigs = retrigs;
-    this._macroDry = true; // the hit's lines are read as its frames are written (_chipPcmFrames)
-    // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
-    // the channel keeps moving through the sound's release.
-    const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
-    for (const [spec, k, target] of [[velMacro, "velLine", "VEL"], [volMacro, "volLine", "VOL"],
-      [pitchMacro, "pitchLine", "NOTE_PITCH"], [semiMacro, "semiLine", "NOTE_SEMI"]]) {
-      if (!spec) continue;
-      const line = (hit[k] = []); // [value, time], as _lineAt reads
-      const span = slot && (target === "NOTE_PITCH" || target === "NOTE_SEMI") ? slot : { noteFrames, gateSecs };
-      this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when,
-        (v, t) => line.push([clampForTarget(target, v), t]), this._stepSecs(spec.step), limit);
-    }
-    this._macroDry = false;
-    this._envRetrigs = null;
-    if (!st.hits.has(voice)) st.hits.set(voice, []);
-    const hits = st.hits.get(voice);
-    for (const h of [hit, ...retrigs.map((t) => ({ ...hit, t, end: end + (t - when) }))]) {
-      let i = hits.length;
-      while (i > 0 && hits[i - 1].t > h.t) i--;
-      hits.splice(i, 0, h);
-      key(h.t, h);
-    }
-    if (!st.frames) {
-      st.frames = true;
-      this._chipPcmNext(this._eventFrame(when));
-    }
-    return hit;
+    const moved = (t) => { for (const [voice, h] of st.owner) if (h.ti === ti) this._chipPcmWrite(voice, t); };
+    if (target === "VOL" && !own.noVol) return {
+      read: () => this._lv(`strk:${ti}`).vol,
+      write: (v, t) => { this._lvSetVol(`strk:${ti}`, v); moved(t); },
+    };
+    if (target === "NOTE_PITCH" && own.pitch) return {
+      read: () => st.cents.get(ti) ?? 0,
+      write: (v, t) => { st.cents.set(ti, v); moved(t); },
+    };
+    return own[target] ?? null;
   }
 
-  // The hit that holds `voice` at `when`, if it is `ti`'s: a gate's end
-  // stops only the track's own sound.
-  _chipPcmOwnHit(voice, ti, when) {
-    const hits = this._chipPcm?.hits.get(voice) ?? [];
-    for (let i = hits.length - 1; i >= 0; i--)
-      if (hits[i].t <= when + 1e-9) return hits[i].ti === ti ? hits[i] : null;
-    return null;
-  }
-
-  // A hit's level at `when`: { vel, vol, master }.
-  _chipPcmLevelAt(hit, when) {
+  // A part's words that set where its next notes play: their range and
+  // loop (seconds as heard), each a value of the track's state `st`.
+  static _rangeWords(st, loop = true) {
+    const w = (o, k, other) => ({
+      read: () => st[o]?.[k] ?? 0,
+      write: (v) => { (st[o] ??= {})[k] = Number(v); if (other) st[o][other] = null; },
+    });
     return {
-      vel: this._lineAt(hit.velLine, when) ?? hit.vel,
-      vol: this._handVol(`voice:${hit.voice}`) ?? this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
-      master: this._handMaster() ?? lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
+      RANGE_START: w("range", "start"), RANGE_END: w("range", "end", "len"), RANGE_LEN: w("range", "len", "end"),
+      ...(loop ? { LOOP_START: w("loop", "start"), LOOP_END: w("loop", "end", "len"), LOOP_LEN: w("loop", "len", "end") } : {}),
     };
   }
 
-  // Has the sound sharing `voice`'s channel (the kit's lane) been hit since
-  // `hit`, by `t`?
-  _pairHitSince(voice, hit, t) {
-    const lanes = this._routes.get(hit.ti)?.part?.kitLane;
-    if (!lanes) return false;
-    for (const [v, hits] of this._chipPcm.hits)
-      if (v !== voice && lanes[v] === lanes[voice] && hits.some((x) => x.t > hit.t && x.t <= t + 1e-9)) return true;
-    return false;
+  // A macro's first sample, on the note itself (`when`), or null: what a
+  // key composes from, as the driver's note-on does (driver.md §7.2).
+  _macroOnset(spec, when, gateTicks, target) {
+    if (!spec) return null;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const mark = this._markStep;
+    this._markStep = null;
+    let v = null;
+    try {
+      this._scheduleMacroImpl(spec, noteFrames, gateSecs, when,
+        (x, t) => { if (v === null && t <= when + 1e-9) v = clampForTarget(target, x); }, this._stepSecs(spec.step));
+    } finally {
+      this._markStep = mark;
+    }
+    return v;
   }
 
-  // A hit's pitch move at `when`, in cents: the track's :pitch and the
-  // note's :pitch / :semi macros.
-  _hitCents(hit, when) {
-    return this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
-      100 * (this._lineAt(hit.semiLine, when) ?? 0);
+  // A hit (or an ADPCM-B note) keyed on `voice`: its own :vel / :vol /
+  // :pitch / :semi macros run from it a step at a time, and each :keyon
+  // step re-keys the voice — a hit of its own, its level envelopes starting
+  // over with it, as on FM and PSG (a gate or loop note's only inside its
+  // gate). `key(t, hit)` writes a key: the first, then each step's.
+  _chipPcmHit(voice, ev, when, end, fields, key) {
+    const st = this._chipPcmState();
+    const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
+    const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
+    const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks) ?? []).filter((t) => !held || t < gateSecs);
+    // The note's macros as they are now, shared by its retriggers' hits.
+    const macros = [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"], [pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
+    const onset = {};
+    for (const [spec, k, target] of macros) onset[k] = this._macroOnset(spec, when, gateTicks, target);
+    const mac = { ...onset };
+    // A note under a running :pitch sweep sounds from the sweep's value on
+    // its frame, as an FM or tone note does (_onsetPitchOffset).
+    const sw = this._slots.get(this._slotKey(ev, "NOTE_PITCH"));
+    if (sw) st.cents.set(ev._trackIndex, this._sweepAt(sw, sw.next));
+    const hit = { t: when, end, voice, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), mac, ...fields };
+    // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
+    // the channel keeps moving through the sound's release.
+    const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
+    this._envRetrigs = retrigs;
+    for (const [spec, k, target] of macros) {
+      if (!spec) continue;
+      const span = slot && (k === "cents" || k === "semi") ? slot : { noteFrames, gateSecs };
+      this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when, (v, t) => {
+        mac[k] = clampForTarget(target, v);
+        if (st.owner.get(voice)?.mac === mac) this._chipPcmWrite(voice, t);
+      }, this._stepSecs(spec.step));
+    }
+    this._envRetrigs = null;
+    const keyHit = (h) => {
+      st.owner.set(voice, h);
+      const lane = this._routes.get(h.ti)?.part?.kitLane?.[voice];
+      if (lane != null) st.lane.set(lane, h);
+      key(h.t, h);
+      if (h.dda != null && !st.frames) {
+        st.frames = true;
+        this._chipPcmNext(this._eventFrame(h.t));
+      }
+    };
+    const fresh = { ...hit }; // a retrigger's hit starts as the note's did
+    keyHit(hit);
+    // A retrigger keys at its time, before its frame's steps: its level
+    // envelopes start over there, from their first samples.
+    const scope = this._noteScope;
+    for (const t of retrigs)
+      this._at(t, () => {
+        if (scope && this._noteOf[scope.ti] !== scope.note) return; // the track's next note took over
+        for (const k of ["vel", "vol"]) if (onset[k] != null) mac[k] = onset[k];
+        keyHit({ ...fresh, t, end: end + (t - when) });
+      }, KEYED);
+    return hit;
   }
 
-  // The ADPCM-B's Delta-N for a hit at `when`: its note and its pitch move
-  // over the sample's rate.
-  _adpcmDeltaN(hit, when) {
+  // The hit that holds `voice` now, if it is `ti`'s: a gate's end stops
+  // only the track's own sound.
+  _chipPcmOwnHit(voice, ti) {
+    const h = this._chipPcm?.owner.get(voice);
+    return h?.ti === ti ? h : null;
+  }
+
+  // A hit's level now: { vel, vol, master }.
+  _chipPcmLevelAt(hit) {
+    return {
+      vel: hit.mac.vel ?? hit.vel,
+      vol: this._handVol(`voice:${hit.voice}`) ?? hit.mac.vol ?? this._lv(`strk:${hit.ti}`).vol,
+      master: this._handMaster() ?? this._masterVol ?? VOL_UNITY,
+    };
+  }
+
+  // A hit's pitch move now, in cents: the track's :pitch and the note's
+  // :pitch / :semi macros.
+  _hitCents(hit) {
+    return (this._chipPcm.cents.get(hit.ti) ?? 0) + (hit.mac.cents ?? 0) + 100 * (hit.mac.semi ?? 0);
+  }
+
+  // The ADPCM-B's Delta-N for a hit now: its note and its pitch move over
+  // the sample's rate.
+  _adpcmDeltaN(hit) {
     const enc = this._target.chipFor("adpcm-b").adpcm;
-    return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + this._hitCents(hit, when) / 1200));
+    return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + this._hitCents(hit) / 1200));
   }
 
   // A chip-own sample voice's level from vel + vol + master + its strip, on
@@ -3659,97 +3648,78 @@ export class IRPlayer {
     return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master] }));
   }
 
-  // The sample voices' frame `k`, as work of the frame once its steps are
-  // done (VOICES). The frames go on while a voice may still write: finite
-  // while a hit is still to key or a voice's sound (or its samples) has an
-  // end to reach, endless while one only rings on (a loop, a tuned hit's
-  // release) — written while the run goes on, never keeping it alive.
+  // The DDA's frame `k`, as work of the frame once its steps are done
+  // (VOICES): each sounding hit's samples on the CPU's timer, and its end.
+  // The frames go on while a hit has samples to write.
   _chipPcmNext(k) {
     const st = this._chipPcm;
+    let more = false;
+    for (const h of st.owner.values()) if (h.dda != null && !h.dumped) more = true;
+    if (!more) { st.frames = false; return; }
     const t = this._frameOrigin + k / 60;
-    let finite = false, more = false;
-    for (const hits of st.hits.values()) {
-      if (hits.at(-1).t > t + 1e-9) { finite = true; break; }
-      const h = hits.at(-1);
-      if (h.dumped) { if (h.tune) more = true; continue; }
-      if (h.dda != null || (t < h.end && Number.isFinite(h.end))) { finite = true; break; }
-      if (t < h.end || h.tune) more = true;
-    }
-    if (!finite && !more) { st.frames = false; return; }
     this._step(k, VOICES, t, () => {
       if (this._chipPcm !== st) return;
-      this._chipPcmFrame(k);
+      for (const h of st.owner.values()) if (h.dda != null && !h.dumped) this._ddaFrame(h, t + 1 / 60);
       this._chipPcmNext(k + 1);
-    }, null, !finite);
+    });
   }
 
-  // Write each sounding voice's level in frame `k`, where it moved since
-  // the last write.
-  _chipPcmFrame(k) {
+  // `voice`'s sounding hit's level, pitch and tune at `t`, where they moved
+  // since its last write (`force`: written whatever — the panel's move,
+  // over what was sent ahead of it).
+  _chipPcmWrite(voice, t, force = false) {
     const st = this._chipPcm;
-    const chip = this._target.chipFor("adpcm-b");
-    const t = this._frameOrigin + k / 60;
-    st.doneUntil = Math.max(st.doneUntil, t);
-    for (const [voice, hits] of st.hits) {
-      // A hit is done with once a later one owns the voice.
-      while (hits.length > 1 && hits[1].t <= st.doneUntil) hits.shift();
-      {
-        // The voice's owner: its last hit at or before this frame (a hit on
-        // the frame wrote its own level with its key).
-        let h = null;
-        for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t <= t + 1e-9) { h = hits[i]; break; }
-        // An OPLL rhythm hit's pitch moves its channel while the sound rings
-        // and on through its release, to the next hit on the channel: its
-        // own or its pair's (SD with HH, TOM with the cymbal), which tunes it.
-        if (h?.tune && !this._pairHitSince(voice, h, t)) {
-          const midi = h.midi + this._hitCents(h, t) / 100;
-          if (midi !== h.tuned) {
-            h.tuned = midi;
-            for (const [p, a, d] of this._rhythmEnc.tune(voice, midi, t)) this._write(p, a, d, t);
-          }
-        }
-        // A DDA hit's samples of this frame, as far as the horizon (a note
-        // another name starts at the horizon is not dispatched yet), and its end.
-        if (h?.dda != null && !h.dumped) this._ddaFrame(h, t + 1 / 60);
-        if (!h || h.dumped || t >= h.end) continue;
-        const lv = this._chipPcmLevelAt(h, t);
-        if (h.dda != null) {
-          const att = levelSteps(this._routes.get(h.ti).part.level, this._ddaLevel(h, t));
-          if (att !== h.att) { h.att = att; for (const [p, a, d] of this._ddaEncoder().level(h.dda, att)) this._write(p, a, d, t); }
-        } else if (h.pcm8 != null) {
-          const gain = IRPlayer._pcm8Gain(lv);
-          if (gain !== h.gain) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
-          const step = this._pcm8Step(h, t);
-          if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
-        } else if (voice === "adpcm") {
-          const level = IRPlayer._adpcmLevel(this._routes.get(h.ti).part.level, lv);
-          if (level !== h.level) {
-            h.level = level;
-            for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
-          }
-          const deltaN = this._adpcmDeltaN(h, t);
-          if (deltaN !== h.deltaN) {
-            h.deltaN = deltaN;
-            for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
-          }
-        } else {
-          const level = this._routes.get(h.ti).part.level;
-          const top = level.steps - 1;
-          const att = IRPlayer._rhythmAtt(level, lv);
-          // Turned off, or falling below what the level reaches: the sound stops.
-          const falling = att > (h.lastAtt ?? h.att);
-          h.lastAtt = att;
-          if (lv.vol <= 0 || lv.master <= 0 || (att > top && falling)) {
-            h.dumped = true;
-            for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
-            continue;
-          }
-          const il = top - Math.min(top, att);
-          if (il === h.il) continue;
-          h.il = il;
-          for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
-        }
+    const h = st?.owner.get(voice);
+    if (!h) return;
+    // An OPLL rhythm hit's pitch moves its channel while the sound rings
+    // and on through its release, to the next hit on the channel: its own
+    // or its pair's (SD with HH, TOM with the cymbal), which tunes it.
+    const lane = this._routes.get(h.ti)?.part?.kitLane?.[voice];
+    if (h.tune && (lane == null || st.lane.get(lane) === h)) {
+      const midi = h.midi + this._hitCents(h) / 100;
+      if (midi !== h.tuned || force) {
+        h.tuned = midi;
+        for (const [p, a, d] of this._rhythmEnc.tune(voice, midi, t)) this._write(p, a, d, t);
       }
+    }
+    if (h.dumped || t >= h.end) return;
+    const lv = this._chipPcmLevelAt(h);
+    if (h.dda != null) {
+      const att = levelSteps(this._routes.get(h.ti).part.level, { vel: lv.vel, faders: [lv.vol, lv.master] });
+      if (att !== h.att || force) { h.att = att; for (const [p, a, d] of this._ddaEncoder().level(h.dda, att)) this._write(p, a, d, t); }
+    } else if (h.pcm8 != null) {
+      const gain = IRPlayer._pcm8Gain(lv);
+      if (gain !== h.gain || force) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
+      const step = this._pcm8Step(h);
+      if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
+    } else if (voice === "adpcm") {
+      const chip = this._target.chipFor("adpcm-b");
+      const level = IRPlayer._adpcmLevel(this._routes.get(h.ti).part.level, lv);
+      if (level !== h.level || force) {
+        h.level = level;
+        for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
+      }
+      const deltaN = this._adpcmDeltaN(h);
+      if (deltaN !== h.deltaN) {
+        h.deltaN = deltaN;
+        for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
+      }
+    } else {
+      const level = this._routes.get(h.ti).part.level;
+      const top = level.steps - 1;
+      const att = IRPlayer._rhythmAtt(level, lv);
+      // Turned off, or falling below what the level reaches: the sound stops.
+      const falling = att > (h.lastAtt ?? h.att);
+      h.lastAtt = att;
+      if (lv.vol <= 0 || lv.master <= 0 || (att > top && falling)) {
+        h.dumped = true;
+        for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
+        return;
+      }
+      const il = top - Math.min(top, att);
+      if (il === h.il && !force) return;
+      h.il = il;
+      for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
     }
   }
 
@@ -3795,26 +3765,27 @@ export class IRPlayer {
       case "PCM_NOTE_OFF":
         // Only the track that keyed the voice last stops it.
         if (ev.args?.mode === "gate" || ev.args?.mode === "loop") {
-          const h = this._chipPcmOwnHit("adpcm", ti, when);
-          if (!cp.hits.get("adpcm")?.length || h) out(enc.stop());
+          const h = this._chipPcmOwnHit("adpcm", ti);
+          if (!cp.owner.has("adpcm") || h) out(enc.stop());
           if (h) h.end = Math.min(h.end, when);
         }
         break;
+      // A word, every way it is written (_word): the track's fader and
+      // pitch, its pan, and the range the next notes play (seconds as
+      // heard; a loop is the range itself on this chip, the compiler holds
+      // it to that).
       case "PARAM_SET":
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
       case "PARAM_SWEEP":
-      case "PARAM_FROM_VAL": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
-        else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
-        if (ev.cmd !== "PARAM_SET") break;
-        if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
-        // The range the next notes play (seconds as heard); a loop is the
-        // range itself on this chip (the compiler holds it to that).
-        else if (target === "RANGE_START") (st.range ??= {}).start = Number(ev.args?.value);
-        else if (target === "RANGE_END") { (st.range ??= {}).end = Number(ev.args?.value); st.range.len = null; }
-        else if (target === "RANGE_LEN") { (st.range ??= {}).len = Number(ev.args?.value); st.range.end = null; }
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._sampleWord(ev, {
+          pitch: true,
+          PAN: { read: () => st.pan, write: (v) => { st.pan = this._snapMacroOutput("PAN", v); } },
+          ...IRPlayer._rangeWords(st, false),
+        }));
         break;
-      }
       default:
         break;
     }
@@ -3827,15 +3798,14 @@ export class IRPlayer {
   // A PCM8 voice's step through its sample a mix sample: the note's pitch,
   // the track's :pitch and the note's :pitch / :semi macros, over the rate
   // the sample plays C4 at.
-  _pcm8Step(hit, when) {
-    const cents = this._chipPcmParamAt(hit.ti, "pitch", when) + (this._lineAt(hit.pitchLine, when) ?? 0) +
-      100 * (this._lineAt(hit.semiLine, when) ?? 0);
+  _pcm8Step(hit) {
+    const cents = this._hitCents(hit);
     return (hit.rate * 2 ** ((hit.midi - 60) / 12 + cents / 1200)) / PCM8_RATE;
   }
 
   // The X68000's PCM8 (chips/msm6258.js): a note plays its sample from the
   // range's start at its pitch's step, its gain vel + vol + master moving
-  // with them while it sounds (_chipPcmFrames); `shot` plays to the range's
+  // with them while it sounds (_chipPcmWrite); `shot` plays to the range's
   // end, `gate` is cut at the note's end, `loop` repeats the loop until then
   // and plays the rest out. A point the track writes (:pcm-start …) is time
   // as heard, read at the key-on, so it reaches into the sample by the
@@ -3873,28 +3843,22 @@ export class IRPlayer {
       }
       case "PCM_NOTE_OFF": {
         // Only the track that keyed the voice last stops it.
-        const h = this._chipPcmOwnHit(key, ti, when);
+        const h = this._chipPcmOwnHit(key, ti);
         if (!h) break;
         if (ev.args?.mode === "gate") { this._pcm8Ev(when, { kind: "cut", voice }); h.end = Math.min(h.end, when); }
         else if (ev.args?.mode === "loop") this._pcm8Ev(when, { kind: "off", voice });
         break;
       }
+      // A word, every way it is written (_word): the track's fader and
+      // pitch, the range and loop the next notes play.
       case "PARAM_SET":
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
       case "PARAM_SWEEP":
-      case "PARAM_FROM_VAL": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
-        else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
-        if (ev.cmd !== "PARAM_SET") break;
-        const v = Number(ev.args?.value);
-        if (target === "RANGE_START") (st.range ??= {}).start = v;
-        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
-        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
-        else if (target === "LOOP_START") (st.loop ??= {}).start = v;
-        else if (target === "LOOP_END") { (st.loop ??= {}).end = v; st.loop.len = null; }
-        else if (target === "LOOP_LEN") { (st.loop ??= {}).len = v; st.loop.end = null; }
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._sampleWord(ev, { pitch: true, ...IRPlayer._rangeWords(st) }));
         break;
-      }
       default:
         break;
     }
@@ -3912,7 +3876,7 @@ export class IRPlayer {
   // sample's, the track's next note's, a gate's or loop's at its gate, or
   // the next note of any of the channel's names (wave5 under pcm5, which
   // ends it where it starts: _dispatchPsgEvent). The bytes go out a frame
-  // at a time with its level (_chipPcmFrames, _ddaFrame), then the channel
+  // at a time with its level (_chipPcmWrite, _ddaFrame), then the channel
   // off; its pan is written at its key-on.
   _dispatchDdaEvent(ev, when) {
     const ti = ev._trackIndex;
@@ -3967,22 +3931,19 @@ export class IRPlayer {
         });
         break;
       }
+      // A word, every way it is written (_word): the track's fader, its
+      // pan, the range and loop the next notes play.
       case "PARAM_SET":
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
       case "PARAM_SWEEP":
-      case "PARAM_FROM_VAL": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
-        if (ev.cmd !== "PARAM_SET") break;
-        const v = Number(ev.args?.value);
-        if (target === "PAN") st.pan = Math.max(-1, Math.min(1, v || 0));
-        else if (target === "RANGE_START") (st.range ??= {}).start = v;
-        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
-        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
-        else if (target === "LOOP_START") (st.loop ??= {}).start = v;
-        else if (target === "LOOP_END") { (st.loop ??= {}).end = v; st.loop.len = null; }
-        else if (target === "LOOP_LEN") { (st.loop ??= {}).len = v; st.loop.end = null; }
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._sampleWord(ev, {
+          PAN: { read: () => st.pan, write: (v) => { st.pan = Math.max(-1, Math.min(1, Number(v) || 0)); } },
+          ...IRPlayer._rangeWords(st),
+        }));
         break;
-      }
       default:
         break;
     }
@@ -4024,12 +3985,10 @@ export class IRPlayer {
         // The level at key-on: the note's vel (or its macro's first step),
         // the track's :vol (or its macro's), the master, the strip.
         const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
-        const lines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, Infinity);
-        const cp = this._chipPcmState();
         const gain = levelGain({
-          vel: this._lineAt(lines.vel, when) ?? Number(ev.args?.vel ?? 15),
-          faders: [this._handVol("voice:dpcm") ?? this._lineAt(lines.vol, when) ?? this._chipPcmParamAt(ti, "vol", when),
-            lineEntryAt(cp.master, when)?.v ?? VOL_UNITY],
+          vel: this._macroOnset(ev.args?.velMacro, when, gateTicks, "VEL") ?? Number(ev.args?.vel ?? 15),
+          faders: [this._handVol("voice:dpcm") ?? this._macroOnset(ev.args?.vol, when, gateTicks, "VOL") ?? this._lv(`strk:${ti}`).vol,
+            this._handMaster() ?? this._masterVol ?? VOL_UNITY],
         });
         const rate = this._dmcRateOf(name);
         const levels = dmcLevels(entry, perSec, rate, gain, start, end);
@@ -4060,18 +4019,16 @@ export class IRPlayer {
         }
         break;
       }
+      // A word, every way it is written (_word): the track's fader (read
+      // at the next key-on), the range the next notes play.
       case "PARAM_SET":
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
       case "PARAM_SWEEP":
-      case "PARAM_FROM_VAL": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
-        if (ev.cmd !== "PARAM_SET") break;
-        const v = Number(ev.args?.value);
-        if (target === "RANGE_START") (st.range ??= {}).start = v;
-        else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
-        else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._sampleWord(ev, IRPlayer._rangeWords(st, false)));
         break;
-      }
       default:
         break;
     }
@@ -4120,7 +4077,7 @@ export class IRPlayer {
   // level and pan, then keys it; vel + vol + master fold into the level as
   // an FM carrier's do, on the part's ladder (the YM2608's IL 0.75 dB a
   // step, the OPLL's volume 3 dB), and move it while the sound plays
-  // (_chipPcmFrames), and `:mode gate` dumps it at the note's end. On the
+  // (_chipPcmWrite), and `:mode gate` dumps it at the note's end. On the
   // OPLL a hit's note tunes its channel.
   _dispatchRhythmEvent(ev, when) {
     const ti = ev._trackIndex;
@@ -4151,23 +4108,26 @@ export class IRPlayer {
       case "PCM_NOTE_OFF":
         // Only the track that keyed the sound last dumps it.
         if (sound && ev.args?.mode === "gate") {
-          const h = this._chipPcmOwnHit(sound, ti, when);
+          const h = this._chipPcmOwnHit(sound, ti);
           if (h) {
             for (const [p, a, d] of enc.dump(sound, when)) this._write(p, a, d, when);
             h.end = Math.min(h.end, when);
           }
         }
         break;
+      // A word, every way it is written (_word): the track's fader, its
+      // pitch where the rhythm tunes (the OPLL's), its pan.
       case "PARAM_SET":
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
       case "PARAM_SWEEP":
-      case "PARAM_FROM_VAL": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") this._chipPcmParam(ev, when, "vol");
-        else if (target === "NOTE_PITCH" && enc.tune) this._chipPcmParam(ev, when, "pitch");
-        if (ev.cmd !== "PARAM_SET") break;
-        if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._sampleWord(ev, {
+          pitch: !!enc.tune,
+          PAN: { read: () => st.pan, write: (v) => { st.pan = this._snapMacroOutput("PAN", v); } },
+        }));
         break;
-      }
       default:
         break;
     }
@@ -4916,7 +4876,6 @@ export class IRPlayer {
   _applyMasterChange(value, when) {
     this._masterVol = Math.max(0, Math.min(31, Math.round(value)));
     this._recomposeLevels(when);
-    if (this._chipPcm) insertLine(this._chipPcm.master, when ?? -Infinity, this._masterVol);
   }
 
   // Every level composed again from what it is now, after the master moved
@@ -4930,8 +4889,10 @@ export class IRPlayer {
     // (A lane the level has silenced stays so until its note's own level
     // moves: the driver re-applies the master to sounding lanes.)
     for (let lane = 0; lane < PSG_LANES; lane++) if (this._psgSounding[lane]) this._psgRecompose(lane, when);
-    // PCM voices ride master too: the voice model recomposes every voice.
+    // PCM voices ride master too: the voice model recomposes every voice;
+    // the chips' own sample voices, each sounding hit.
     this._pcmEv(when, { kind: "master", value: this._masterVol });
+    for (const voice of this._chipPcm?.owner.keys() ?? []) this._chipPcmWrite(voice, when);
   }
 
   // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
@@ -6024,45 +5985,6 @@ export class IRPlayer {
     return levelSteps(level, { vel, faders: [vol, master] });
   }
 
-  // A note's :vel and :vol macros are scheduled ahead, one after the other,
-  // but on the driver each frame composes the LIVE values of both (driver.md
-  // §7). So before either is written, the note-on samples both into timelines
-  // — [value, time] pairs, nothing written — and each write reads the other's
-  // value at its own time. Null where the note has no such macro.
-  _levelMacroLines(noteArgs, when, gateTicks, limitSecs) {
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    const line = (spec, target) => {
-      if (!spec) return null;
-      const out = [];
-      const onSeq = this._onSeq;
-      this._onSeq = null; // a dry run: no UI callbacks
-      this._macroDry = true;
-      try {
-        // ...and when the level is done: after the last release write, else
-        // at the gate (a CSM operator falls silent there, driver.md §9).
-        out.end = this._scheduleMacro(spec, noteFrames, gateSecs, when,
-          (v, t) => out.push([clampForTarget(target, v), t]),
-          this._stepSecs(spec.step), limitSecs);
-      } finally {
-        this._onSeq = onSeq;
-        this._macroDry = false;
-      }
-      return out;
-    };
-    return { vel: line(noteArgs.velMacro, "VEL"), vol: line(noteArgs.vol, "VOL") };
-  }
-
-  // The latest sample at or before `t`, or null when the line has none yet.
-  _lineAt(line, t) {
-    if (t === undefined) return null; // no time: the standing values
-    let v = null;
-    for (const [value, at] of line ?? []) {
-      if (at > t + 1e-9) break;
-      v = value;
-    }
-    return v;
-  }
-
   // A sweep's value on its `frame`-th frame (0 = the frame it starts). The
   // curves the driver computes (driver.md §8) step the driver's integers
   // exactly; the rest (the wider easing families, the stochastic curves, a
@@ -6094,23 +6016,6 @@ export class IRPlayer {
   _sweepFrameTime(sw, k) {
     return Math.max(sw.startWhen, this._frameOrigin + (sw.startFrame + k) / 60);
   }
-
-  // The sweep's value in driver frame F (held past a cut-short last frame),
-  // and at an event's time.
-  _sweepAtFrame(sw, F) {
-    let f = Math.max(0, F - sw.startFrame);
-    if (sw.frames != null) f = Math.min(f, sw.frames - 1);
-    return this._sweepAt(sw, (sw.frameOffset ?? 0) + f);
-  }
-
-  _sweepAtTime(sw, when) {
-    return this._sweepAtFrame(sw, this._eventFrame(when));
-  }
-
-  // Put each running inline sweep's shadow state back to its value at `when`
-  // (its frames were all scheduled up front, leaving the state at `to`), so an
-  // event composing from it — a NOTE_ON's carrier TL, a PARAM_ADD — reads what
-  // the chip holds then. The re-write is the value that frame writes anyway.
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
@@ -6270,6 +6175,8 @@ export class IRPlayer {
   _slotKey(ev, target) {
     if (SONG_WORDS.has(target)) return `song:${target}`;
     const r = ev._route;
+    // A chip's sample track keeps its words (_sampleWord), and so its slots.
+    if (r?.core === "sample" && r.part?.name !== "dac") return `strk${ev._trackIndex}:${target}`;
     return `${r?.core}${r?.lane}:${this._fm3OpOf(ev)}:${target}`;
   }
   _freeSlot(ev) {
@@ -6334,9 +6241,8 @@ export class IRPlayer {
         // A DDA note on this channel (another of its names) still sounding
         // ends here, its channel off a key-order lead before this key-on.
         if (this._toneEnc[psgCh]?.part?.sharePrio != null && this._ddaEncoder()) {
-          const hits = this._chipPcm?.hits.get(`dda-${this._toneEnc[psgCh].ch}`);
-          const h = hits?.findLast((x) => x.t < when - 1e-9 && x.end > when + 1e-9 && !x.dumped);
-          if (h) { h.end = when; h.cut = true; }
+          const h = this._chipPcm?.owner.get(`dda-${this._toneEnc[psgCh].ch}`);
+          if (h && h.t < when - 1e-9 && h.end > when + 1e-9 && !h.dumped) { h.end = when; h.cut = true; }
         }
 
         // The PSG's noise lane — but for a noise whose note is its rate (the
@@ -6724,26 +6630,3 @@ export class IRPlayer {
   }
 }
 
-// The pc88 sample voices' moving parameters: their range, and their value
-// before the track writes one.
-const CHIP_PCM_PARAM = {
-  vol: { fit: (v) => Math.max(0, Math.min(31, v)), rest: VOL_UNITY },
-  pitch: { fit: (v) => v, rest: 0 },
-};
-
-// A level line, [{ t, v }] by time: the entry in force at `t`.
-function lineEntryAt(line, t) {
-  if (!line) return undefined;
-  let e;
-  for (const x of line) {
-    if (x.t > t + 1e-9) break;
-    e = x;
-  }
-  return e;
-}
-
-function insertLine(line, t, v) {
-  let i = line.length;
-  while (i > 0 && line[i - 1].t > t) i--;
-  line.splice(i, 0, { t, v });
-}

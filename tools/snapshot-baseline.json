@@ -2192,8 +2192,8 @@
  "tools/tests/fc/dpcm-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "25cfeec8bf3d92bb",
-  "regs": "addc283aedea422b",
-  "vgm": "e1a8fc2f81cafb31",
+  "regs": "16d65f4f4c8681ab",
+  "vgm": "2ae9ca18d8a109ba",
   "mid": "c17060157d7a0995"
  },
  "tools/tests/fc/dpcm.mmlisp": {
@@ -2302,8 +2302,8 @@
  "tools/tests/msx/fm-pac-rhythm-pitch.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1f4571424fa1ac6a",
-  "regs": "793b4cbb8ec9562f",
-  "vgm": "1db7426aae373b69",
+  "regs": "b7a717ed9393e5f4",
+  "vgm": "12a007616a51555e",
   "mid": "e5b1090db34f61c7"
  },
  "tools/tests/msx/fm-pac-rhythm.mmlisp": {
@@ -2337,8 +2337,8 @@
  "tools/tests/msx/rhythm-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef18a9383d8cd02c",
-  "regs": "3aada7aa5af1d896",
-  "vgm": "5c7289f403f62676",
+  "regs": "a53156ad34708aea",
+  "vgm": "ec076e35ee219fe6",
   "mid": "a132e91750aa73d7"
  },
  "tools/tests/msx/rhythm-share.mmlisp": {
@@ -2386,8 +2386,8 @@
  "tools/tests/pc88/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b12072693edf8dcb",
-  "regs": "616cc88a34122bb8",
-  "vgm": "11b05c3bac69fff5",
+  "regs": "3a0feb533e174ced",
+  "vgm": "2d520b3d4d59b379",
   "mid": "0ef759049f2b0f69"
  },
  "tools/tests/pc88/ssg-macro.mmlisp": {
@@ -2407,8 +2407,8 @@
  "tools/tests/pce/dda-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "8424027b031371ae",
-  "regs": "3403f491b503ecbb",
-  "vgm": "5395002ce5346330",
+  "regs": "4baeead353f5afe1",
+  "vgm": "00270cbcfca9f6ac",
   "mid": "bcb779751258f60a"
  },
  "tools/tests/pce/dda.mmlisp": {
@@ -2488,15 +2488,15 @@
  "tools/tests/x68k/pcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "31f48b9564112a42",
-  "regs": "1af3691b89e1d263",
+  "regs": "cce2b82ed4aced2b",
   "vgm": "5d33e6b3c558d2b4",
   "mid": "9324b44005989653"
  },
  "tools/tests/x68k/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5f3d9cff4ba81e27",
-  "regs": "0b6e30db9c824cb2",
-  "vgm": "67ace96594407f84",
+  "regs": "4e505a1b6fe48e38",
+  "vgm": "67752774ca1d866f",
   "mid": "9f27e8fd18e5cdc4"
  }
 }

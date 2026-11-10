@@ -106,13 +106,21 @@ Open, in the order worth taking:
    (`_lv(site)`: vel, vol, liveVel / liveVol, note, key, hand; `_lvWrite`
    is the only part that differs by kind). A Mega Drive PCM voice's
    fader and :vel are its record's too (`pcm:n`; the worklet's model
-   composes them). Still outside it: the chips' sample voices and
-   `:target midi` — a timeline of their own (`_chipPcmParam`'s lines, a
-   sweep read by formula, `_levelMacroLines`), read as their frames are
-   written after the fact (`_chipPcmFrames`, up to `_settled`); they have
-   only the panel's hand in the record, so `_volOf` still switches on
-   them. Making them live means writing those frames as frame work — five
-   dispatchers, no driver to hold them to: only the snapshot. The other
+   composes them). The chips' own sample voices
+   are live too: a sample track's fader is `strk:<track>`'s record, its
+   :pitch `_chipPcm.cents`, a hit's macros live values on the hit (`mac`,
+   its key composing from their first samples, `_macroOnset`), each voice's
+   sounding hit its `owner`; any of them moving writes that hit's level,
+   pitch and tune then (`_chipPcmWrite`), as FM and tone lanes do. Only the
+   DDA's sample stream is per-frame work (VOICES). `:target midi`'s levels
+   are `mtrk:<track>`'s record (`_midiLevel` through `_word`, a note's :vol
+   macro by `_lvMacros`), its :master every machine's. The timelines
+   (`_chipPcmParam`, `_levelMacroLines`, `_lineAt`, `insertLine`) are gone.
+   Moved (tools/tests/*/sample-levels etc., no oracle): `+` / `*` under a
+   running sweep keep it running (the driver's rule); on pc88 / x68k a
+   move lands at its own time, not the next frame's start; a frame with a
+   :vel and a :vol step writes once a step. A DDA frame's samples past a
+   pass's horizon used to be lost when the next frame was a new hit's. The other
    words a sample track writes (`:pan`, `:pitch`) are still per dispatcher;
    probe each against the driver as MASTER and :vol were.
 5. Bounds of the lookahead, as they are: a hand has the chip within it
@@ -153,6 +161,7 @@ Open, in the order worth taking:
    a sweep (only :vol and :pitch did), and a PCM voice's :vol sweep runs
    on through a `+` as the driver's does (it stopped; `check:loops` holds
    the voice's fader to the driver now — the A/B gate does not see it).
-   Still on their own: the chips' sample tracks and `:target midi`
-   (`_chipPcmParam`'s lines, `_relativeLevel`) — they go with the level
-   component — and value slots (`_writeVal`, a sweep read by formula).
+   The chips' sample tracks and `:target midi` are on it too
+   (`_sampleWord`, `_midiLevel`; a sample track's slots are its own,
+   `strk<track>`). Still on its own: value slots (`_writeVal`, a sweep
+   read by formula).

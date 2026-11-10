@@ -289,6 +289,34 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
   }
 }
 
+// A chip's own sample strip and a MIDI channel (the preview's alone, no
+// driver plays them): the strip reads its track's :vol as the score writes
+// it — a value, `+`, a sweep — and a MIDI channel its note's :vol macro too.
+{
+  const strip = (head, voice) => ({ id: `vol:${head}`, kind: "vol", strip: { heads: [head], tracks: [0], voice } });
+  for (const [name, src, s, macro] of [
+    ["a pc88 ADPCM-B strip", `(def-score :target pc88)
+(def-pcm blip :file "wav/blip.wav")
+(pcm1 blip :tempo 120 :len 4 :vol 20 c :vol+ 4 c :vol (linear 31..11 :len 1/1) c c c c (macro :vol [10 5]) c c)`, strip("pcm1", "adpcm"), false],
+    ["a MIDI channel", `(def-score :target midi)
+(ch1 gm-piano :tempo 120 :len 4 :vol 20 c :vol+ 4 c :vol (linear 31..11 :len 1/1) c c c c (macro :vol [10 5]) c c)`, strip("ch1"), true],
+  ]) {
+    try {
+      const r = RIGS.ir(compile(src));
+      const at = (sec) => { r.to(sec); return r.player.read(s).v; };
+      assert.equal(at(0.25), 20, "a value");
+      assert.equal(at(0.75), 24, "a +");
+      const a = at(1.3), b = at(1.8);
+      assert.ok(a < 31 && b < a && b > 11, `a sweep, a step at a time (${a} → ${b})`);
+      if (macro) assert.equal(at(3.3), 5, "a note's :vol macro");
+      r.player.stop();
+    } catch (e) {
+      failed++;
+      console.error(`FAIL ${name}: ${e.message}`);
+    }
+  }
+}
+
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);
 console.log(`check:panel ok${open.length ? ` (${open.length} open)` : ""}`);
