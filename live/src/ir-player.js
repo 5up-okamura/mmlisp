@@ -385,8 +385,6 @@ export class IRPlayer {
     this._ssgMacroed = new Array(PSG_LANES).fill(null); // { mix, rate }
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
-    this._fmLevelLines = new Array(FM_CHANNELS).fill(null); // a note's :vel/:vol macro timelines
-    this._fm3LevelLines = new Array(FM_OPS).fill(null); // ...an FM3 operator note's
 
     // Mute / solo state keyed by track index (a track == one sounding channel,
     // e.g. fm3-1, pcm1). Solo overrides mute: when any track is soloed, only
@@ -1298,7 +1296,7 @@ export class IRPlayer {
     const [kind, at] = site.split(":");
     const n = Number(at);
     const score = Math.round(kind === "fm" ? this._fmScoreVolAt(n, when)
-      : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3Op[n - 1].vol
+      : kind === "fm3op" ? this._fm3Op[n - 1].liveVol ?? this._fm3Op[n - 1].vol
       : kind === "psg" ? (this._psgKeyed(n, when) ? this._psgLive[n].vol : null) ?? this._psgVol[n] ?? VOL_UNITY
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
       : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
@@ -2621,9 +2619,9 @@ export class IRPlayer {
   // under the current algorithm is not consulted: on alg 7 — four independent
   // voices, the reason the mode exists — this is its volume, and on a
   // modulator it is its modulation depth, which is a level too (§13.4).
-  // `when` given: the operator's LIVE level then — its note's :vel/:vol macro
-  // samples (_fm3LevelLines), else its velocity and fader. `over` pins any of
-  // vel / vol / group / master for a caller that has its own value.
+  // The operator's level as it is: its note's :vel / :vol macro where one
+  // has stepped (liveVel, liveVol), else its velocity and fader. `over` pins
+  // vel / vol / group for a caller that has its own value.
   _fm3OpTl(op, when, over = {}) {
     const st = this._fm3Op[op - 1];
     // CSM (driver.md §9): Timer A keys CH3, so an operator's key is its level —
@@ -2631,10 +2629,8 @@ export class IRPlayer {
     if (this._reg27 & 0x80 && when !== undefined && st.csmOn !== undefined
       && (when < st.csmOn - 1e-6 || when >= st.csmOff - 1e-6)) return 127;
     const regs = this._chRegs[2];
-    const lines = when === undefined ? null : this._fm3LevelLines[op - 1];
-    const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
-    const vol = this._handVol(`fm3op:${op}`) ?? over.vol ?? this._lineAt(lines?.vol, when)
-      ?? st.vol;
+    const vel = over.vel ?? st.liveVel ?? st.vel;
+    const vol = this._handVol(`fm3op:${op}`) ?? over.vol ?? st.liveVol ?? st.vol;
     return levelSteps(this._fmLevel, {
       base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
       faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, this._handMaster() ?? this._masterVol ?? VOL_UNITY],
@@ -3086,7 +3082,7 @@ export class IRPlayer {
           // FM3 independent-OP: the note's velocity is THIS operator's, and it
           // composes into that operator's own TL — not the channel's carriers,
           // which belong to the other operators too (driver.md §13.4).
-          this._fm3LevelLines[fm3Op - 1] = null;
+          this._fm3Op[fm3Op - 1].liveVel = this._fm3Op[fm3Op - 1].liveVol = null;
           this._fm3Op[fm3Op - 1].vel = ev.args?.vel ?? 15;
           // The note's span, CSM's level key (_fm3OpTl); its end is set once
           // the gate is resolved below.
@@ -3094,9 +3090,9 @@ export class IRPlayer {
           this._fm3Op[fm3Op - 1].csmOff = Infinity;
           this._writeFm3OpTl(fm3Op, when);
         } else {
-          this._fmLevelLines[ch] = null;
-          regs.vel = ev.args?.vel ?? 15; // track sticky vel for later VOL/MASTER recalcs
-          this._writeFmLevel(ch, when, { master: this._masterVol ?? VOL_UNITY });
+          regs.liveVel = regs.liveVol = null;
+          regs.vel = ev.args?.vel ?? 15; // the note's velocity, for later :vol / :master recomposes
+          this._writeFmLevel(ch, when);
         }
 
         // An encoder that reads whether a write is inside a note (the
@@ -3167,10 +3163,7 @@ export class IRPlayer {
         // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
         // :pan run on.
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
-        const levelLines = this._levelMacroLines(ev.args ?? {}, when, gateTicks, macroLimit);
-        if (isFm3OpNote) this._fm3LevelLines[fm3Op - 1] = levelLines;
-        else this._fmLevelLines[ch] = levelLines;
-        this._scheduleFmLevelMacros(ch, fm3Op, levelLines);
+        this._fmNoteLevel(ch, isFm3OpNote ? fm3Op : 0, ev.args ?? {}, when, gateTicks, macroLimit);
         this._scheduleFmOpMacros(
           ch,
           ev.args ?? {},
@@ -3234,8 +3227,7 @@ export class IRPlayer {
             // (a tail the next note cuts leaves the level to that note); a
             // hold note is released by triggerKeyOff. A :keyon retrigger is
             // moot: every Timer A overflow is one.
-            const lines = this._fm3LevelLines[fm3Op - 1];
-            const ends = [lines?.vel?.end, lines?.vol?.end].filter((e) => e != null);
+            const ends = this._fm3Op[fm3Op - 1].levelEnds ?? [];
             const muteAt = offWhen == null ? null : Math.max(offWhen, ...ends);
             this._fm3Op[fm3Op - 1].csmOff = muteAt ?? Infinity;
             if (muteAt == null) this._fm3Held |= keyMask & 0xf0;
@@ -4912,6 +4904,7 @@ export class IRPlayer {
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
           st.vol = vol;
+          st.liveVol = null; // over a :vol macro's, until its next step
           this._writeFm3OpTl(volOp, when);
           break;
         }
@@ -4921,7 +4914,8 @@ export class IRPlayer {
           break;
         }
         regs.vol = vol;
-        this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
+        regs.liveVol = null; // over a :vol macro's, until its next step
+        this._writeFmLevel(ch, when);
         break;
       }
 
@@ -5648,16 +5642,25 @@ export class IRPlayer {
   // either, the note's level is recomposed from both lines' live values (the
   // driver composes both every frame, §7). An FM3 operator's note writes that
   // operator's TL; a channel's, its carriers.
-  _scheduleFmLevelMacros(ch, fm3Op, lines) {
-    const times = [...(lines.vel ?? []), ...(lines.vol ?? [])].map(([, t]) => t);
-    times.sort((a, b) => a - b);
-    let last = null;
-    for (const t of times) {
-      if (last !== null && t - last < 1e-9) continue;
-      last = t;
-      if (fm3Op) this._writeFm3OpTl(fm3Op, t);
+  // A note's :vel and :vol macros on an FM channel, or (`op`) an fm3
+  // operator: each step, in its frame (MACRO), moves the note's live value
+  // and the level is composed with the other's as it is then — the driver's
+  // one level path (driver.md §7). Returns when each macro's level is done.
+  _fmNoteLevel(ch, op, args, when, gateTicks, limitSecs) {
+    const level = op ? this._fm3Op[op - 1] : this._chRegs[ch];
+    const note = (level.note = {});
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const run = (spec, target, key) => !spec ? null : this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
+      if (level.note !== note) return; // the channel's next note took it over
+      level[key] = clampForTarget(target, v);
+      if (op) this._writeFm3OpTl(op, t);
       else this._writeFmLevel(ch, t);
-    }
+    }, this._stepSecs(spec.step), limitSecs);
+    // In bind order: which of the two steps first in a frame.
+    const keys = Object.keys(args);
+    const pair = [[args.velMacro, "VEL", "liveVel"], [args.vol, "VOL", "liveVol"]];
+    if (args.vol && keys.indexOf("vol") < keys.indexOf("velMacro")) pair.reverse();
+    level.levelEnds = pair.map(([spec, target, key]) => run(spec, target, key)).filter((e) => e != null);
   }
 
   // Schedule a pitch macro for any channel (FM or PSG).
@@ -5893,9 +5896,11 @@ export class IRPlayer {
           if (this._slots.get(slot) !== sw) return;
           if (st) {
             st.vol = vol;
+            st.liveVol = null;
             this._writeFm3OpTl(volOp, t);
           } else {
             regs.vol = vol;
+            regs.liveVol = null;
             if (groupSweep) this._recomposeFm3Ops(t);
             else this._writeFmLevel(ch, t);
           }
@@ -6320,16 +6325,16 @@ export class IRPlayer {
     return v;
   }
 
-  _fmLiveVelAt(ch, t) {
-    return this._lineAt(this._fmLevelLines[ch]?.vel, t) ?? this._chRegs[ch].vel ?? 15;
+  _fmLiveVelAt(ch) {
+    return this._chRegs[ch].liveVel ?? this._chRegs[ch].vel ?? 15;
   }
 
   _fmLiveVolAt(ch, t) {
     return this._handVol(`fm:${ch}`) ?? this._fmScoreVolAt(ch, t);
   }
 
-  _fmScoreVolAt(ch, t) {
-    return this._lineAt(this._fmLevelLines[ch]?.vol, t) ?? this._chRegs[ch].vol ?? VOL_UNITY;
+  _fmScoreVolAt(ch) {
+    return this._chRegs[ch].liveVol ?? this._chRegs[ch].vol ?? VOL_UNITY;
   }
 
   // A sweep's value on its `frame`-th frame (0 = the frame it starts). The

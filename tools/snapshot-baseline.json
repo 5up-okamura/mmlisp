@@ -370,17 +370,17 @@
  "drv/tests/m3-macro-keyon.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b9d997b8f6e3346c",
-  "regs": "2dd66321c9dfe65a",
+  "regs": "2a35b5061f3e5796",
   "mmb": "c17abb448fcc8350",
-  "vgm": "e67a04d2c819ccae",
+  "vgm": "fc2c18415a209ba5",
   "mid": "256b6b0623b3a0a6"
  },
  "drv/tests/m3-macro-keyon.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "a3d38c20b4f4444b",
-  "regs": "2dd66321c9dfe65a",
+  "regs": "2a35b5061f3e5796",
   "mmb": "d3805710f87ce297",
-  "vgm": "e67a04d2c819ccae",
+  "vgm": "fc2c18415a209ba5",
   "mid": "b4f9d0587cf51a75"
  },
  "drv/tests/m3-macro-multi.mmlisp": {
@@ -1042,17 +1042,17 @@
  "drv/tests/m4-fm3op-level-macros.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "39a8964971ee61f4",
-  "regs": "13355f1f2f9bfcf0",
+  "regs": "e670494b5b15ea46",
   "mmb": "eebe874b8b8e1758",
-  "vgm": "ac08dadb55c49d89",
+  "vgm": "8d366da7dad93edc",
   "mid": "cb099b3c77ecf919"
  },
  "drv/tests/m4-fm3op-level-macros.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "fcab007db3868f9c",
-  "regs": "13355f1f2f9bfcf0",
+  "regs": "e670494b5b15ea46",
   "mmb": "be8964b381985b29",
-  "vgm": "ac08dadb55c49d89",
+  "vgm": "8d366da7dad93edc",
   "mid": "bfdbe74febf2b3bc"
  },
  "drv/tests/m4-fm3op-level.mmlisp": {
@@ -1250,17 +1250,17 @@
  "drv/tests/m4-level-macros.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "9b0af9537adf4010",
-  "regs": "986621f7f0c5f794",
+  "regs": "7a3036dd145cbeee",
   "mmb": "838fa0c94b4b17cc",
-  "vgm": "0dd49a2e6d0ac07f",
+  "vgm": "27bf8bb8f1f8bb5f",
   "mid": "9cdb4ba7607745b1"
  },
  "drv/tests/m4-level-macros.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "1a519701d47f9322",
-  "regs": "986621f7f0c5f794",
+  "regs": "7a3036dd145cbeee",
   "mmb": "1175ed18f1a52849",
-  "vgm": "0dd49a2e6d0ac07f",
+  "vgm": "27bf8bb8f1f8bb5f",
   "mid": "131d61710544e07d"
  },
  "drv/tests/m4-level-sweeps.mmlisp": {
@@ -1362,17 +1362,17 @@
  "drv/tests/m4-macro-tick.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ffaa4c6442aa3703",
-  "regs": "b8320d6125c7ec1f",
+  "regs": "6ef2a731d6873dfa",
   "mmb": "480f7a5557293160",
-  "vgm": "06d932dd5fdb69b8",
+  "vgm": "aa3688de09756c33",
   "mid": "196335c041e5bf6c"
  },
  "drv/tests/m4-macro-tick.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "df6a7428897ef4fe",
-  "regs": "b8320d6125c7ec1f",
+  "regs": "6ef2a731d6873dfa",
   "mmb": "b1d4decdccaa728a",
-  "vgm": "06d932dd5fdb69b8",
+  "vgm": "aa3688de09756c33",
   "mid": "196335c041e5bf6c"
  },
  "drv/tests/m4-mul-slot.mmlisp": {

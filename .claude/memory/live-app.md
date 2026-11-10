@@ -85,11 +85,12 @@ Open, in the order worth taking:
    `_psgLevelAhead`, `_syncMasterSweep`) are gone. Mega Drive A/B: no score
    worse, 118 of 134 clean (was 113). **Not listened to; the other seven
    machines' register logs moved (48 scores) with no oracle.**
-   Still dispatched whole, to move the same way: pitch sweeps and glides
-   (`_applyParamSweep`'s NOTE_PITCH loops, the PSG's), `_writeSongRate`,
-   the PCM :vol sweep and point sweeps, FM level lines
-   (`_levelMacroLines`' dry run stays: a note's :vel and :vol read each
-   other's line).
+   Every sweep steps in its frames too (pitch and glides, register words,
+   the song's words, a PCM voice's :vol and points), and an FM note's
+   :vel / :vol macros are live values (`liveVel`, `liveVol`,
+   `_fmNoteLevel`) as a tone lane's are. `_levelMacroLines` / `_lineAt`
+   stay only for the chips' sample voices and `:target midi`, which keep
+   lines of their own.
 2. **Five queues of their own** that write "up to the horizon"
    (`_fm3TlQueue` / `_flushFm3Keys`, `_flushEncoders`, `_chipPcmFrames`,
    `_waveExprFrames`, `_tempoChangesAhead`) — fold into the frame queue.
