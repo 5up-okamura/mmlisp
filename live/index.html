@@ -8998,11 +8998,6 @@
       showControl(pc, v);
       player?.hold(pc.c, v);
       if (pc.c.kind === 'val') midiOutReplan();
-      // A level moved is the selected FM channel's TL too (the live loop
-      // shows it only while playing).
-      else if (player && !_fmPanelDragging && isFmSlot(selectedCh) && getFmParamMode() === 'channel') {
-        applyRegsToFmSliders(player.getChRegs(selectedCh.ch), player.getOpMask(selectedCh.ch));
-      }
     }
     function panelRelease(id) {
       const pc = _panelCtl.get(id);
@@ -14632,7 +14627,9 @@
       }
       for (let op = 1; op <= 4; op++) {
         const o = regs.ops[op - 1];
-        for (const pp of OP_REG_PARAMS) setSliderCached(`sl-op${op}-${pp.key}`, `val-op${op}-${pp.key}`, o[pp.key] ?? 0);
+        // A row shows the word it writes: TL the voice's :tl, not the level
+        // the note composes from it (vel, :vol, MASTER — the strip shows those).
+        for (const pp of OP_REG_PARAMS) setSliderCached(`sl-op${op}-${pp.key}`, `val-op${op}-${pp.key}`, (pp.key === 'tl' ? o.voicedTl ?? o.tl : o[pp.key]) ?? 0);
         // A voice that does not set it shows the role's own: 1 on a carrier, 0 on a modulator.
         const velK = o.velK ?? ((ALG_CARRIERS[shownAlg(regs.algorithm ?? 0)] ?? []).includes(op) ? 16 : 0);
         if (_fmSliderCache[`sl-op${op}-vel`] !== velK) {
@@ -14641,7 +14638,7 @@
           setValueTextById(`val-op${op}-vel`, velSensText(velK));
         }
         // Redraw the envelope only when one of its parameters changed.
-        const envSig = `${o.tl},${o.ar},${o.dr},${o.sl},${o.d2r},${o.rr}`;
+        const envSig = `${o.voicedTl ?? o.tl},${o.ar},${o.dr},${o.sl},${o.d2r},${o.rr}`;
         if (_fmSliderCache[`_env${op}`] !== envSig) {
           _fmSliderCache[`_env${op}`] = envSig;
           drawOpEnvelope(op);
@@ -14649,9 +14646,10 @@
       }
     }
 
-    // Live monitor while playing: reflect the live tempo always, and the selected
-    // FM channel's registers (vel/vol/master/macro). Change-detected (idle songs
-    // write nothing); slider thumbs are not moved while the user drags one.
+    // Live monitor while playing: the panel's controls, and the selected FM
+    // channel's words as the score writes them (a sweep, a macro).
+    // Change-detected (idle songs write nothing); slider thumbs are not moved
+    // while the user drags one.
     function liveTick(ts) {
       _fmLiveRaf = requestAnimationFrame(liveTick);
       drawPlayMarks(); // every frame: a step lasts one

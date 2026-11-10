@@ -1295,7 +1295,9 @@ The values the panel shows — MASTER, TEMPO and the LFO under Global, each
 Channels strip's knob, a selected FM channel's registers, the Dynamic
 Parameters' sliders and pad — are the score's
 as it plays: a strip's knob is its tracks' `:vol` (a `:vol` macro moves it
-note by note), MASTER the song's `:master`. Moving one takes it in hand:
+note by note), MASTER the song's `:master`, an operator's TL its voice's
+`:tl` (the level a note makes of it with `:vel`, `:vol` and `:master` is the
+strip's to show). Moving one takes it in hand:
 while you hold it, its value is the one heard and the score's writes of it
 go unheard; let go, it stays where you left it until the score next writes
 that word (a value, a sweep, a note's macro), and from there follows the
