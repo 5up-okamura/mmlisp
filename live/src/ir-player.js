@@ -95,8 +95,11 @@ const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3, AFTER = 4; // (AFTER: what foll
 // frame's edges once every write to them is known (_scheduleFm3OpKey), each
 // at its own time.
 const FM3_KEYS = 5, FM3_TL = 6;
+// The chips' own sample voices (_chipPcmFrame): each frame's level, pitch
+// and samples, once the frame's steps are done, at the frame's start.
+const VOICES = 7;
 // The phases whose writes keep their own time (_runWork).
-const UNSHIFTED = new Set([KEYED, FM3_KEYS, FM3_TL]);
+const UNSHIFTED = new Set([KEYED, FM3_KEYS, FM3_TL, VOICES]);
 // The words that are the song's, not a channel's: one slot each, stepped
 // after every channel's in a frame (SONG).
 const SONG_WORDS = new Set(["MASTER", "LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
@@ -1834,18 +1837,10 @@ export class IRPlayer {
     // Every hit up to there is known now: the chip's sample voices' levels
     // can be written up to it — and once the song is done, on to the end of
     // what still sounds.
-    if (this._chipPcm) {
-      let until = settled;
-      if (done)
-        for (const hits of this._chipPcm.hits.values()) {
-          const end = hits.at(-1)?.end;
-          if (Number.isFinite(end)) until = Math.max(until, end);
-        }
-      this._chipPcmFrames(until);
-      // A rhythm whose registers hold several sounds (the OPLL's) writes its
-      // queue now, in time order (chips/ym2413.js).
-      for (const [p, a, d, t] of this._rhythmEnc?.flush?.(until) ?? []) this._write(p, a, d, t);
-    }
+    // A rhythm whose registers hold several sounds (the OPLL's) writes its
+    // queue up to there, in time order (chips/ym2413.js).
+    if (this._chipPcm)
+      for (const [p, a, d, t] of this._rhythmEnc?.flush?.(done ? Infinity : settled) ?? []) this._write(p, a, d, t);
     return done;
   }
 
@@ -3527,6 +3522,7 @@ export class IRPlayer {
       hits: new Map(), // voice ("adpcm" or a rhythm sound) → [hit]
       master: [{ t: -Infinity, v: this._masterVol ?? VOL_UNITY }],
       doneUntil: -Infinity, // frames are written up to here
+      frames: false, // a frame of theirs is waiting (_chipPcmFrame)
     });
   }
 
@@ -3600,6 +3596,10 @@ export class IRPlayer {
       hits.splice(i, 0, h);
       key(h.t, h);
     }
+    if (!st.frames) {
+      st.frames = true;
+      this._chipPcmNext(this._eventFrame(when));
+    }
     return hit;
   }
 
@@ -3659,17 +3659,41 @@ export class IRPlayer {
     return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master] }));
   }
 
-  // Write each sounding voice's level, a frame at a time, up to `horizon`,
-  // where it moved since the last write.
-  _chipPcmFrames(horizon) {
+  // The sample voices' frame `k`, as work of the frame once its steps are
+  // done (VOICES). The frames go on while a voice may still write: finite
+  // while a hit is still to key or a voice's sound (or its samples) has an
+  // end to reach, endless while one only rings on (a loop, a tuned hit's
+  // release) — written while the run goes on, never keeping it alive.
+  _chipPcmNext(k) {
+    const st = this._chipPcm;
+    const t = this._frameOrigin + k / 60;
+    let finite = false, more = false;
+    for (const hits of st.hits.values()) {
+      if (hits.at(-1).t > t + 1e-9) { finite = true; break; }
+      const h = hits.at(-1);
+      if (h.dumped) { if (h.tune) more = true; continue; }
+      if (h.dda != null || (t < h.end && Number.isFinite(h.end))) { finite = true; break; }
+      if (t < h.end || h.tune) more = true;
+    }
+    if (!finite && !more) { st.frames = false; return; }
+    this._step(k, VOICES, t, () => {
+      if (this._chipPcm !== st) return;
+      this._chipPcmFrame(k);
+      this._chipPcmNext(k + 1);
+    }, null, !finite);
+  }
+
+  // Write each sounding voice's level in frame `k`, where it moved since
+  // the last write.
+  _chipPcmFrame(k) {
     const st = this._chipPcm;
     const chip = this._target.chipFor("adpcm-b");
-    const k0 = Math.max(Math.floor((st.doneUntil - this._frameOrigin) * 60) + 1, 0);
-    const k1 = Math.floor((horizon - this._frameOrigin) * 60);
-    st.doneUntil = Math.max(st.doneUntil, this._frameOrigin + k1 / 60);
+    const t = this._frameOrigin + k / 60;
+    st.doneUntil = Math.max(st.doneUntil, t);
     for (const [voice, hits] of st.hits) {
-      for (let k = k0; k <= k1; k++) {
-        const t = this._frameOrigin + k / 60;
+      // A hit is done with once a later one owns the voice.
+      while (hits.length > 1 && hits[1].t <= st.doneUntil) hits.shift();
+      {
         // The voice's owner: its last hit at or before this frame (a hit on
         // the frame wrote its own level with its key).
         let h = null;
@@ -3686,7 +3710,7 @@ export class IRPlayer {
         }
         // A DDA hit's samples of this frame, as far as the horizon (a note
         // another name starts at the horizon is not dispatched yet), and its end.
-        if (h?.dda != null && !h.dumped) this._ddaFrame(h, Math.min(t + 1 / 60, horizon));
+        if (h?.dda != null && !h.dumped) this._ddaFrame(h, t + 1 / 60);
         if (!h || h.dumped || t >= h.end) continue;
         const lv = this._chipPcmLevelAt(h, t);
         if (h.dda != null) {
@@ -3726,8 +3750,6 @@ export class IRPlayer {
           for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
         }
       }
-      // A hit is done with once a later one owns the voice.
-      while (hits.length > 1 && hits[1].t <= st.doneUntil) hits.shift();
     }
   }
 

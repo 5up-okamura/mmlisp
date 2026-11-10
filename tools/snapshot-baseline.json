@@ -2337,8 +2337,8 @@
  "tools/tests/msx/rhythm-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef18a9383d8cd02c",
-  "regs": "b03f47ddb5be3b10",
-  "vgm": "6725ba9e0181f006",
+  "regs": "3aada7aa5af1d896",
+  "vgm": "5c7289f403f62676",
   "mid": "a132e91750aa73d7"
  },
  "tools/tests/msx/rhythm-share.mmlisp": {
@@ -2407,15 +2407,15 @@
  "tools/tests/pce/dda-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "8424027b031371ae",
-  "regs": "f40455448d9530d3",
-  "vgm": "bf3822871882dc4c",
+  "regs": "3403f491b503ecbb",
+  "vgm": "5395002ce5346330",
   "mid": "bcb779751258f60a"
  },
  "tools/tests/pce/dda.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "600e0bd2f932b140",
-  "regs": "017678920db2cbb3",
-  "vgm": "955f315649558de2",
+  "regs": "1a2e999786010af1",
+  "vgm": "ac70326719fd3f73",
   "mid": "85e2328b3ca93c0f"
  },
  "tools/tests/pce/errors.mmlisp": {
@@ -2446,8 +2446,8 @@
  "tools/tests/pce/share.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "db7929726ae44806",
-  "regs": "e5313606b28140f2",
-  "vgm": "d8a6f466b2c54304",
+  "regs": "86c6a5db44d995c5",
+  "vgm": "d893f55dc723fde4",
   "mid": "175d92b5bcf799b4"
  },
  "tools/tests/pce/wave.mmlisp": {
@@ -2495,8 +2495,8 @@
  "tools/tests/x68k/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5f3d9cff4ba81e27",
-  "regs": "d5b4704c65a619b8",
-  "vgm": "210323b094d64ff1",
+  "regs": "0b6e30db9c824cb2",
+  "vgm": "67ace96594407f84",
   "mid": "9f27e8fd18e5cdc4"
  }
 }
