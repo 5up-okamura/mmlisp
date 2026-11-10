@@ -269,8 +269,6 @@ export class PcmIrVoices {
     });
     this.bank = bank;
     this.master = 31;
-    /** The track each voice last played, for the editor's per-track faders. */
-    this.voiceTrack = new Array(PCM_VOICES).fill(null);
   }
 
   /** One event: {kind: on|off|retrig|vol|vel|master|point, voice, …}. vel is
@@ -295,7 +293,6 @@ export class PcmIrVoices {
         v.vol = ev.vol != null ? clamp(Number(ev.vol), 31) : v.volBase;
         v.started = false; // the START carries the level (driver: pcm_note_on)
         seq.composeShift(vi, this.master);
-        this.voiceTrack[vi] = ev.track ?? null;
         seq.start(vi, entry, PCM_WINDOW + (entry.base & 0x7fff), ev.mode === "loop");
         return true;
       }

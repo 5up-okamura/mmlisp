@@ -946,8 +946,10 @@ smooth changes:
 
 Declare a runtime value with `(def-val ...)` and reference it with `$name`
 anywhere a runtime parameter takes a value. The live app renders a **Dynamic
-Parameters** slider for each one — drag it while the score plays — and marked
-`:public` it is also an input the game writes.
+Parameters** slider for each one — drag it while the score plays, standing
+in for the game — and marked `:public` it is also an input the game writes.
+The slider shows the slot as the score plays it, from its init, and follows
+the score's own writes of it (§22, *The panel's sliders and knobs*).
 
 ```lisp
 (def-val cutoff 30 0..127 :public)
@@ -1112,8 +1114,7 @@ language.md §16 has the rest.
 exactly as an export does and plays them through the driver's own engine: 8-bit,
 at the rate your `pcm-voices` picks, with the same 6 dB level steps and the
 same loop rounding. A sample that sounds dull or stepped in the editor will
-sound that way on the Mega Drive, and the other way round. The mixer's PCM
-faders are the one exception — a preview convenience the driver does not have.
+sound that way on the Mega Drive, and the other way round.
 
 **Drag a `.wav` onto the live editor** and its `def` is written for you at the
 cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
@@ -1287,6 +1288,26 @@ before the point are in place, not just the notes after it.
 the same popup as a panel value — anywhere from 8 to 96, so it can go large for a
 projector or a recording. It is remembered, and holds on touch screens too:
 tapping into the editor does not zoom the page, whatever the size.
+
+### The panel's sliders and knobs
+
+The values the panel shows — MASTER, TEMPO and the LFO under Global, each
+Channels strip's knob, a selected FM channel's registers, the Dynamic
+Parameters' sliders and pad — are the score's
+as it plays: a strip's knob is its tracks' `:vol` (a `:vol` macro moves it
+note by note), MASTER the song's `:master`. Moving one takes it in hand:
+while you hold it, its value is the one heard and the score's writes of it
+go unheard; let go, it stays where you left it until the score next writes
+that word (a value, a sweep, a note's macro), and from there follows the
+score again. A Play starts from the score's own values (a `def-val`'s
+init). Stopped, they show what the keys play at — every level at unity, the
+LFO off — and moving one moves the keys' sound. The MMLispDRV backend
+follows the same rule (its sliders reach a `def-val` only when it is
+`:public`, the names its MMB carries). Nothing is written
+to the score — what writes the text is the editor below, under its pencil —
+so a level you like is one to copy into the score's `:vol`; an export
+says when a held value is off the score's. A typed value or a MIDI knob
+(MIDI Learn) moves it as one touch let go at once.
 
 ### The panel's editor
 

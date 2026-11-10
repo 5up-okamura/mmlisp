@@ -93,6 +93,18 @@ const SAMPLE_HANDLERS = {
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
 const WAVE_LFO_WORDS = { LFO_FREQ: "lfoFreq", LFO_PMD: "lfoPmd", LFO_WAVE: "lfoTable" };
+// The song-wide words the panel can take in hand (IRPlayer.holdWord): a
+// score event's word, or null.
+const HAND_PARAMS = new Set(["MASTER", ...LFO_TARGETS]);
+// A score event that writes a track's :vol: the word, or a note's :vol macro.
+const writesVol = (ev) => (ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() === "VOL"
+  : (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.vol != null);
+function handWordOf(ev) {
+  if (ev.cmd === "TEMPO_SET" || ev.cmd === "TEMPO_SWEEP") return "tempo";
+  if (!ev.cmd.startsWith("PARAM_")) return null;
+  const t = String(ev.args?.target ?? "").toUpperCase();
+  return HAND_PARAMS.has(t) ? t : null;
+}
 // `:lfo-sync`'s reset is the LFO stopped and run again (chips/opn-fm.js,
 // ym2151.js `lfoReset`): each write this far apart, the last this far ahead
 // of the key, so the chip clocks between them — a write lands on an output
@@ -265,7 +277,7 @@ export class IRPlayer {
     this._ppqn = 96; // the IR's own (ir.md §2)
     this._bpm = 120;
     this._tempoSweep = null;
-    this._tempoOverride = false; // set once the tempo is dialled in live
+    this._hands = new Map(); // word → { held }: the panel's value is the word's (holdWord)
     this._schedGen = 0; // bumped whenever a track's next event moves
     this._startAudioTime = 0;
     this._frameOrigin = 0; // audio time of frame 0 (the sweep frame grid)
@@ -378,7 +390,10 @@ export class IRPlayer {
     // ("bd" … "rim") and the ADPCM-B ("adpcm"), whichever track keys them.
     this._mutedVoices = new Set();
     this._soloVoices = new Set();
-    this._voiceUiVol = new Map(); // voice → the mixer's vol 0-31
+    this._valHands = new Map(); // value slot name → { held }: the panel's value is the slot's (holdVal)
+    this._paramHands = new Map(); // "ch:FM_TL1" → { held }: the panel's value is the channel's register (holdParam)
+    this._panelWrite = false; // the panel's own write, which no hand stops
+    this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (holdVol)
 
     // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
     // channel id → the track that keyed it.
@@ -492,12 +507,13 @@ export class IRPlayer {
     this._csmTrack = (irObj.tracks ?? []).findIndex((t) =>
       (t.events ?? []).some((e) => e.cmd === "CSM_ON"));
     this._ppqn = irObj.ppqn;
-    this._bpm = this._resolveInitialTempo(irObj);
+    // An edit swapped in while the panel holds the tempo keeps the panel's.
+    if (!this._hands?.has("tempo")) this._bpm = this._resolveInitialTempo(irObj);
     this._tempoSweep = null;
-    this._tempoOverride = false; // a newly loaded score starts at its own tempo
     // Dynamic value slots (§8): name → current value, seeded from def-val inits.
     // The host (or live UI) mutates these via setVal(); scores read them with
     // $name and PARAM_FROM_VAL / PARAM_ADD / PARAM_MUL.
+    const kept = this._vals;
     this._vals = {};
     this._valUnits = {}; // slot → "frame" | "tick" (for dynamic :len/:step)
     this._valNames = []; // slot index → name, for the VALn write targets
@@ -506,6 +522,8 @@ export class IRPlayer {
       this._vals[v.name] = toSlotValue(v.init) ?? 0;
       this._valUnits[v.name] = v.unit ?? "frame";
       this._valNames[v.slot] = v.name;
+      // An edit swapped in keeps a slot the panel has in hand.
+      if (this._valHands?.has(v.name) && kept && v.name in kept) this._vals[v.name] = kept[v.name];
     }
     this._eventIndex = 0;
     this._currentTick = 0;
@@ -625,6 +643,10 @@ export class IRPlayer {
   // there; sweeps and keyed spans are kept in audio time, so a previous run's
   // would read as running in this one.
   _resetRunState() {
+    this._hands.clear(); // a run starts with the score's own values
+    this._volHands.clear();
+    this._paramHands.clear();
+    this._valHands.clear();
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
     this._pcm8State = this._ddaState = this._dpcmState = null;
@@ -837,8 +859,8 @@ export class IRPlayer {
       this._resetRunState();
       this._pendingSwap = null;
       // The song's own tempo from the top (a run leaves _bpm where its last
-      // tempo change put it); a tempo dialled in live stays.
-      if (!this._tempoOverride) this._bpm = this._resolveInitialTempo(this._ir);
+      // tempo change put it).
+      this._bpm = this._resolveInitialTempo(this._ir);
       this._tempoSweep = null;
       this._audioContext = clock;
       this._playing = true;
@@ -993,10 +1015,6 @@ export class IRPlayer {
     this._applyAudibility();
   }
 
-  setVoiceVol(voice, vol) {
-    this._voiceUiVol.set(voice, Math.max(0, Math.min(31, Math.round(vol))));
-  }
-
   /** Clear all mute and solo state. */
   clearChannelStates() {
     this._mutedTracks.clear();
@@ -1097,42 +1115,142 @@ export class IRPlayer {
   }
 
   /**
-   * Live mixer fader for a PSG channel. vol 0-31 (31=max, 0=silent). Sets the
-   * sticky channel vol and re-applies attenuation immediately.
-   * @param {number} psgCh 0-3 (0=sqr1 … 3=noise)
-   * @param {number} vol   0-31
+   * The panel's hand on an FM channel's register word (FM_TL1, FM_ALG …):
+   * `value` sounds now, and while held the score's writes of it on the
+   * channel (a value, a sweep, a note's macro, a voice's burst) are skipped;
+   * let go (releaseParams), it stays until the score next writes the word there.
    */
-  setPsgVol(psgCh, vol) {
-    if (psgCh < 0 || psgCh >= PSG_LANES) return;
-    const v = Math.max(0, Math.min(31, vol));
-    this._psgVol[psgCh] = v;
-    this._psgVolSweep[psgCh] = null;
-    // Store the fader value; only push a live attenuation if the channel is
-    // actually sounding. Otherwise the next note-on picks up the new vol — a
-    // fader move must never un-silence an idle channel into a tone.
-    if (!this._psgSounding[psgCh]) return;
-    const when = this._audioContext?.currentTime ?? 0;
-    const vel = this._psgLastVel[psgCh] ?? 15;
-    const master = this._masterVol ?? VOL_UNITY;
-    this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, v, master), when);
+  holdParam(ch, target, value) {
+    this._paramHands.set(`${ch}:${target}`, { held: true });
+    this._panelWrite = true;
+    try {
+      this.setParam(target, value, ch);
+    } finally {
+      this._panelWrite = false;
+    }
+  }
+
+  /** The panel lets go of the registers it holds. */
+  releaseParams() {
+    for (const h of this._paramHands.values()) h.held = false;
+  }
+
+  // ---- the panel's hand on a strip's :vol (holdVol) ----
+  // A strip is its channels (`heads`) and the tracks on them, and for a
+  // chip's sound several tracks share (the YM2608's rhythm) that sound, its
+  // `voice`. Its level's site comes from the channels, so a player with no
+  // tracks (the keys' while stopped) takes the hand as well. Held, the strip's level is
+  // composed with the panel's value wherever the score's :vol goes in — the
+  // score's own :vol writes run on unheard, so letting go has them to come
+  // back to; let go, the value stays until the score writes :vol (a value, a
+  // sweep, a note's :vol macro) on one of the strip's tracks.
+
+  /**
+   * The panel's hand on a strip's :vol: `value` (0-31) sounds now, the
+   * score's :vol unheard while held.
+   * @param {{ heads: string[], tracks: number[], voice?: string }} strip
+   */
+  holdVol(strip, value) {
+    const sites = this._volSites(strip);
+    if (!sites.length) return;
+    let hand = this._volHands.get(sites[0]);
+    if (!hand) {
+      hand = { tracks: new Set(strip.tracks), sites };
+      for (const site of sites) this._volHands.set(site, hand);
+    }
+    // Strips that share a site (the fm3 parts on channel 3) share its hand.
+    for (const ti of strip.tracks ?? []) hand.tracks.add(ti);
+    hand.v = Math.max(0, Math.min(31, Math.round(value)));
+    hand.held = true;
+    for (const site of sites) this._levelNow(site);
+  }
+
+  /** The panel lets go of a strip's :vol: it stays until the score writes :vol there. */
+  releaseVol(strip) {
+    const hand = this._volHands.get(this._volSites(strip)[0]);
+    if (hand) hand.held = false;
   }
 
   /**
-   * Live mixer fader for a PCM track, keyed by track index. vol 0-31 → a linear
-   * gain the worklet applies to the voice's samples before its rung — a
-   * preview convenience the driver does not have.
-   * @param {number} trackIndex
-   * @param {number} vol 0-31
+   * A strip's :vol now, as the panel shows it: the panel's while in hand
+   * (`hand`), else the score's, its :vol macro's included.
+   * @returns {{ v: number, hand: boolean } | null}
    */
-  setPcmTrackVol(trackIndex, vol) {
-    if (trackIndex == null) return;
-    // pc88's pcm1 is the chip's ADPCM-B, not a voice of the worklet's engine.
-    if (this._routes.get(trackIndex)?.part.name === "adpcm-b") return this.setVoiceVol("adpcm", vol);
-    this._write({
-      type: "pcm-set-vol",
-      track: trackIndex,
-      gain: levelGain({ faders: [vol] }),
-    });
+  volOf(strip) {
+    const site = this._volSites(strip)[0];
+    if (!site) return null;
+    const hand = this._volHands.get(site);
+    if (hand) return { v: hand.v, hand: true };
+    const when = this._audioContext?.currentTime ?? 0;
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    const v = kind === "fm" ? this._fmScoreVolAt(n, when)
+      : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3OpVolAtTime(n, when)
+      : kind === "psg" ? this._psgVolAtTime(n, when)
+      : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
+      : kind === "midi" ? VOL_UNITY // the output's plan has the score's
+      : this._chipPcmParamAt(strip.tracks[0], "vol", when);
+    return { v: Math.round(v), hand: false };
+  }
+
+  // Where a strip's level is composed: an FM channel, a PSG lane, a Mega
+  // Drive PCM voice, a chip's sample voice.
+  _volSites(strip) {
+    if (strip.voice != null) return [`voice:${strip.voice}`];
+    const sites = new Set();
+    for (const head of strip.heads ?? []) {
+      const c = this._target.channels[head];
+      const core = c && CORE_OF_KIND[c.part.kind];
+      // An fm3 part's :vol is its operator's own (driver.md §13.4).
+      const op = /^fm3-([1-4])$/.exec(head);
+      if (op) sites.add(`fm3op:${op[1]}`);
+      else if (core === "fm") sites.add(`fm:${c.voice}`);
+      else if (core === "psg") sites.add(`psg:${toneLaneOf(c)}`);
+      // A MIDI channel's :vol is its output's (midi-output.js), which reads the hand.
+      else if (core === "none") sites.add(`midi:${head}`);
+      else if (core === "sample") sites.add(c.part.mixVoice ? `voice:${c.part.mixVoice(c.voice)}` : `pcm:${c.voice}`);
+    }
+    return [...sites];
+  }
+
+  // The panel's :vol at a level's site, or null.
+  _handVol(site) {
+    return this._volHands.size ? this._volHands.get(site)?.v ?? null : null;
+  }
+
+  // A score write of :vol on track `ti` takes a strip the panel let go back.
+  // A Mega Drive PCM voice keeps its fader in the engine's model, where the
+  // panel's value went: it gets the score's back (a note's :vol macro would
+  // not say it).
+  _volTakeBack(ti, when) {
+    for (const hand of new Set(this._volHands.values())) {
+      if (hand.held || !hand.tracks.has(ti)) continue;
+      for (const site of hand.sites) {
+        this._volHands.delete(site);
+        const [kind, n] = site.split(":");
+        if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._pcmVolNow?.[Number(n)] ?? VOL_UNITY });
+      }
+    }
+  }
+
+  // A level recomposed now, after the panel moved it: a sounding FM channel,
+  // PSG lane or Mega Drive PCM voice at once; a chip's sample voice from its
+  // next hit.
+  _levelNow(site) {
+    const when = this._playing ? this._audioContext?.currentTime : undefined;
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    if (kind === "fm") {
+      if (n === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
+      else this._writeFmLevel(n, when);
+    } else if (kind === "fm3op") {
+      if (this._fm3Ops) this._writeFm3OpTl(n, when);
+    } else if (kind === "psg") {
+      // A fader move must never un-silence an idle channel into a tone.
+      if (!this._psgSounding[n]) return;
+      const vel = this._psgLastVel[n] ?? 15;
+      this._psgSetAtt(n, this._composePsgAtt(n, vel, this._psgVol[n] ?? VOL_UNITY, this._masterVol ?? VOL_UNITY), when ?? 0);
+    } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
 
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
@@ -1141,16 +1259,51 @@ export class IRPlayer {
   }
 
   /**
-   * Live tempo override. Clears any active tempo sweep. While playing, applies at
-   * the current position so timing stays continuous; otherwise sets the base tempo.
-   * @param {number} bpm
+   * The panel's hand on a song-wide word: "tempo" (bpm), "MASTER", or an LFO
+   * word (LFO_RATE, LFO_FREQ, LFO_PMD, LFO_AMD, LFO_WAVE). `value` sounds now,
+   * and while the word is held the score's writes of it are skipped; let go
+   * (releaseWord), the value stays until the score next writes the word.
+   * A run starts with the score's own values (play, seek).
    */
-  setTempo(bpm) {
+  holdWord(word, value) {
+    this._hands.set(word, { held: true });
+    if (word === "tempo") this._setTempoNow(value);
+    else {
+      if (word === "MASTER") this._masterSweep = null;
+      this.setParam(word, value);
+    }
+  }
+
+  /** Whether the panel's value is `word`'s now: held, or let go and not yet written over. */
+  handOn(word) {
+    return this._hands.has(word);
+  }
+
+  /** The master level as last scheduled, 0-31: what the panel shows. */
+  getMaster() {
+    return this._masterVol ?? VOL_UNITY;
+  }
+
+  /** The panel lets go of `word`: its value stays until the score writes the word. */
+  releaseWord(word) {
+    const h = this._hands.get(word);
+    if (h) h.held = false;
+  }
+
+  // A score event's write of a word in the panel's hand: skipped while held;
+  // let go, it takes the word back.
+  _scoreMayWrite(word) {
+    const h = this._hands.get(word);
+    if (!h) return true;
+    if (h.held) return false;
+    this._hands.delete(word);
+    return true;
+  }
+
+  // The tempo, now: a running sweep ends. While playing, applied at the
+  // current position so timing stays continuous; otherwise the base tempo.
+  _setTempoNow(bpm) {
     if (!Number.isFinite(bpm) || bpm <= 0) return;
-    // Dialled in live: hold it against the score's own tempo events (including
-    // the tick-0 one a loop replays) for the rest of this run. Loading an IR
-    // clears the override, so a fresh score still starts at its written tempo.
-    this._tempoOverride = true;
     this._tempoSweep = null;
     if (this._playing && this._tracks.length > 0 && this._audioContext) {
       const now = this._audioContext.currentTime;
@@ -1410,8 +1563,9 @@ export class IRPlayer {
 
   /**
    * Register a callback fired by play() once the run state is reset and before
-   * the first event is scheduled: where a UI mixer (master, channel vol)
-   * re-applies itself, since the reset returns those levels to unity.
+   * the first event is scheduled: where the UI's mute and solo go back on
+   * (the reset clears them, and the panel's hands: a run starts with the
+   * score's own levels).
    * @param {(() => void) | null} fn
    */
   setOnRunStart(fn) {
@@ -2158,11 +2312,11 @@ export class IRPlayer {
     const regs = this._chRegs[2];
     const lines = when === undefined ? null : this._fm3LevelLines[op - 1];
     const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
-    const vol = over.vol ?? this._lineAt(lines?.vol, when)
+    const vol = this._handVol(`fm3op:${op}`) ?? over.vol ?? this._lineAt(lines?.vol, when)
       ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
     return levelSteps(this._fmLevel, {
       base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
-      faders: [vol, over.group ?? regs.vol ?? VOL_UNITY, over.master ?? this._masterVol ?? VOL_UNITY],
+      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, over.master ?? this._masterVol ?? VOL_UNITY],
     });
   }
   _writeFm3OpTl(op, when, over = {}) {
@@ -2190,7 +2344,7 @@ export class IRPlayer {
   _writeFmLevel(ch, when, over = {}) {
     const regs = this._chRegs[ch];
     const vel = over.vel ?? this._fmLiveVelAt(ch, when);
-    const vol = over.vol ?? this._fmLiveVolAt(ch, when);
+    const vol = this._handVol(`fm:${ch}`) ?? over.vol ?? this._fmLiveVolAt(ch, when);
     const master = over.master ?? this._masterAt(when);
     const carriers = this._carrierOps(regs);
     for (let opIdx = 0; opIdx < 4; opIdx++) {
@@ -2449,6 +2603,9 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    const hand = handWordOf(ev);
+    if (hand && !this._scoreMayWrite(hand)) return;
+    if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
     if (ev.cmd === "PCM_NOTE_ON" && this._onPosition && ev.args?.sample && this._isTrackAudible(ev._trackIndex))
@@ -2904,6 +3061,12 @@ export class IRPlayer {
   }
 
   _pcmEv(when, fields) {
+    // A strip in the panel's hand: its value is the voice's :vol.
+    const hand = this._handVol(`pcm:${fields.voice}`);
+    if (hand != null) {
+      if (fields.kind === "vol") fields = { ...fields, value: hand };
+      else if (fields.kind === "on" || fields.kind === "retrig") fields = { ...fields, vol: hand };
+    }
     this._write({ type: "pcm-ev", when, ...fields });
   }
 
@@ -3096,9 +3259,8 @@ export class IRPlayer {
   // A hit's level at `when`: { vel, vol, master }.
   _chipPcmLevelAt(hit, when) {
     return {
-      ui: this._voiceUiVol.get(hit.voice) ?? VOL_UNITY,
       vel: this._lineAt(hit.velLine, when) ?? hit.vel,
-      vol: this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
+      vol: this._handVol(`voice:${hit.voice}`) ?? this._lineAt(hit.volLine, when) ?? this._chipPcmParamAt(hit.ti, "vol", when),
       master: lineEntryAt(this._chipPcm.master, when)?.v ?? VOL_UNITY,
     };
   }
@@ -3131,14 +3293,14 @@ export class IRPlayer {
   // its part's ladder (chips/parts.js `level`): the rhythm's IL attenuation
   // (unclamped — a sound falling past what the IL reaches is dumped), the
   // ADPCM-B's linear register, PCM8's gain.
-  static _rhythmAtt(level, { vel, vol, master, ui }) {
-    return levelOffset(level, { vel, faders: [vol, master, ui] });
+  static _rhythmAtt(level, { vel, vol, master }) {
+    return levelOffset(level, { vel, faders: [vol, master] });
   }
-  static _pcm8Gain({ vel, vol, master, ui }) {
-    return levelGain({ vel, faders: [vol, master, ui] });
+  static _pcm8Gain({ vel, vol, master }) {
+    return levelGain({ vel, faders: [vol, master] });
   }
-  static _adpcmLevel(level, { vel, vol, master, ui }) {
-    return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master, ui] }));
+  static _adpcmLevel(level, { vel, vol, master }) {
+    return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master] }));
   }
 
   // Write each sounding voice's level, a frame at a time, up to `horizon`,
@@ -3197,7 +3359,7 @@ export class IRPlayer {
           // Turned off, or falling below what the level reaches: the sound stops.
           const falling = att > (h.lastAtt ?? h.att);
           h.lastAtt = att;
-          if (lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0 || (att > top && falling)) {
+          if (lv.vol <= 0 || lv.master <= 0 || (att > top && falling)) {
             h.dumped = true;
             for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
             continue;
@@ -3491,8 +3653,8 @@ export class IRPlayer {
         const cp = this._chipPcmState();
         const gain = levelGain({
           vel: this._lineAt(lines.vel, when) ?? Number(ev.args?.vel ?? 15),
-          faders: [this._lineAt(lines.vol, when) ?? this._chipPcmParamAt(ti, "vol", when),
-            lineEntryAt(cp.master, when)?.v ?? VOL_UNITY, this._voiceUiVol.get("dpcm") ?? VOL_UNITY],
+          faders: [this._handVol("voice:dpcm") ?? this._lineAt(lines.vol, when) ?? this._chipPcmParamAt(ti, "vol", when),
+            lineEntryAt(cp.master, when)?.v ?? VOL_UNITY],
         });
         const rate = this._dmcRateOf(name);
         const levels = dmcLevels(entry, perSec, rate, gain, start, end);
@@ -3574,10 +3736,10 @@ export class IRPlayer {
     }
   }
 
-  // A DDA hit's level terms: vel + vol + master + its strip (levelSteps).
+  // A DDA hit's level terms: vel + vol + master (levelSteps).
   _ddaLevel(h, t) {
     const lv = this._chipPcmLevelAt(h, t);
-    return { vel: lv.vel, faders: [lv.vol, lv.master, lv.ui] };
+    return { vel: lv.vel, faders: [lv.vol, lv.master] };
   }
 
   // A chip's ROM rhythm (the YM2608's, the OPLL's): a hit writes its sound's
@@ -3601,7 +3763,7 @@ export class IRPlayer {
         this._chipPcmHit(sound, ev, when, when + sec, { pan: st.pan, midi, tune: !!enc.tune }, (t, h) => {
           const lv = this._chipPcmLevelAt(h, t);
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
-          const silent = lv.vol <= 0 || lv.master <= 0 || lv.ui <= 0;
+          const silent = lv.vol <= 0 || lv.master <= 0;
           const top = part.level.steps - 1;
           h.dumped = silent;
           h.att = IRPlayer._rhythmAtt(part.level, lv);
@@ -3753,10 +3915,6 @@ export class IRPlayer {
   _dispatchGlobalEvent(ev, when) {
     switch (ev.cmd) {
       case "TEMPO_SET": {
-        // A live tempo (the panel) outranks the score until playback restarts.
-        // A loop re-fires the score's tick-0 TEMPO_SET on every lap, which would
-        // otherwise snap the dialled-in tempo back each time round.
-        if (this._tempoOverride) return true;
         const bpm = drvBpm(Number(ev.args?.bpm));
         if (Number.isFinite(bpm) && bpm > 0) {
           this._tempoSweep = null;
@@ -3768,7 +3926,6 @@ export class IRPlayer {
       }
 
       case "TEMPO_SWEEP": {
-        if (this._tempoOverride) return true;
         this._startTempoSweep(ev.args ?? {}, ev.tick ?? 0, when);
         return true;
       }
@@ -3833,6 +3990,28 @@ export class IRPlayer {
     this._vals[name] = v;
   }
 
+  /**
+   * The panel's hand on a value slot: `value` is the slot's now, and while
+   * held the score's writes of it (`:name …`, a value, a sweep, `+` / `*`)
+   * are skipped; let go (releaseVal), it stays until the score next writes
+   * the slot. A run starts from the def-vals' inits. A game's write is setVal.
+   */
+  holdVal(name, value) {
+    this._valHands.set(name, { held: true });
+    this.setVal(name, value);
+  }
+
+  /** The panel lets go of a value slot: it stays until the score writes it. */
+  releaseVal(name) {
+    const h = this._valHands.get(name);
+    if (h) h.held = false;
+  }
+
+  /** The slots whose value is the panel's now, name → value. */
+  valsInHand() {
+    return Object.fromEntries([...this._valHands.keys()].map((name) => [name, this.getVal(name)]));
+  }
+
   // The score writing a value slot (`:name …`, language.md §8): a song-wide
   // target, so it is handled here whichever track carries it. A sweep runs in
   // the slot's own sweep slot, as on the driver — a write ends it only where
@@ -3840,6 +4019,10 @@ export class IRPlayer {
   // sees what the sweep wrote the frame before (_resolveSrc).
   _writeVal(ev, name, when) {
     if (name == null) return;
+    // A slot in the panel's hand: skipped while held, taken back once let go.
+    const hand = this._valHands.get(name);
+    if (hand?.held) return;
+    if (hand) this._valHands.delete(name);
     const a = ev.args ?? {};
     const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
     const cur = this._resolveSrc(name, when);
@@ -3996,6 +4179,14 @@ export class IRPlayer {
   _applyParam(ch, ev, when) {
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
+    // A register in the panel's hand: the score's write waits while it is
+    // held, and takes it back once let go.
+    if (this._paramHands.size && !this._panelWrite) {
+      const key = `${ch}:${target}`;
+      const hand = this._paramHands.get(key);
+      if (hand?.held) return;
+      if (hand) this._paramHands.delete(key);
+    }
     const value = ev.args?.value ?? 0;
 
     // Helper to round, clamp and apply. All hardware register targets are integers;
@@ -4465,7 +4656,7 @@ export class IRPlayer {
     const key = `${this._bpm}|${this._tempoSweep?.steps.length ?? 0}|${this._schedGen}`;
     if (this._tempoAheadKey !== key) {
       const list = [...(this._tempoSweep?.steps ?? [])];
-      if (!this._tempoOverride) {
+      if (!this._hands.get("tempo")?.held) {
         for (const track of this._tracks) {
           for (const i of track.tempoIdx ?? []) {
             if (i < track.flatIndex) continue; // flatIndex: the next to dispatch
@@ -5784,6 +5975,7 @@ export class IRPlayer {
   // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
   // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
   _composePsgAtt(psgCh, vel, vol, master) {
+    vol = this._handVol(`psg:${psgCh}`) ?? vol;
     const level = this._psgLevel[psgCh];
     if (!level || vol <= 0 || master <= 0) return this._psgOff(psgCh); // no such lane here: silent
     if (level.scale === "linear") // a linear volume (the SCC's), upside down
@@ -5839,6 +6031,10 @@ export class IRPlayer {
   }
 
   _fmLiveVolAt(ch, t) {
+    return this._handVol(`fm:${ch}`) ?? this._fmScoreVolAt(ch, t);
+  }
+
+  _fmScoreVolAt(ch, t) {
     return this._lineAt(this._fmLevelLines[ch]?.vol, t) ?? this._fmVolAtTime(ch, t);
   }
 

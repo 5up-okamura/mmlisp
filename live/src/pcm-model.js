@@ -156,10 +156,6 @@ export class PcmEngineModel {
     }
     /** What the edge applied, for a caller that checks intent: {slot, v, kind, ...}. */
     this.log = [];
-    /** The editor's per-track PCM faders (0..1 a voice), applied to the sample
-     * BEFORE its rung — a UI gain the driver does not have. null = none, which
-     * is what every gate and the reference driver use. */
-    this.uiGain = null;
   }
 
   get16(at) { return this.state[at] | (this.state[at + 1] << 8); }
@@ -205,8 +201,7 @@ export class PcmEngineModel {
     for (let v = 0; v < this.img.voices; v++) {
       const a = this.ptr[v];
       if (a < PCM_WINDOW) throw new Error(`voice ${v} reads Z80 RAM at $${a.toString(16)}`);
-      let x = signed(this.bank[a - PCM_WINDOW]);
-      if (this.uiGain) x = Math.round(x * this.uiGain[v]);
+      const x = signed(this.bank[a - PCM_WINDOW]);
       const t = pcmRung(x, this.page[v] - this.img.lutPage);
       this.voiceRing[v][at] = t;
       acc = v === 0 ? t : this.saturate ? sat(acc + t) : signed(acc + t);

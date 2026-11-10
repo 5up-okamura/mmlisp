@@ -1925,7 +1925,7 @@
         max: slider.max === '' ? NaN : Number(slider.max),
         step: Number(slider.step) || 1,
         get: () => Number(slider.value),
-        set: (v) => { slider.value = v; slider.dispatchEvent(new Event('input', { bubbles: true })); },
+        set: (v) => { slider.value = v; slider.dispatchEvent(new Event('input', { bubbles: true })); letGoOf(slider); },
       };
     }
     function channelVolDesc(head, valEl) {
@@ -1933,11 +1933,11 @@
       const knob = valEl.closest('.ch-col')?.querySelector('.ch-knob');
       return {
         min: 0, max: 31, step: 1,
-        get: () => _channelVol.get(head) ?? VOL_UNITY,
+        get: () => _stripVolShown.get(head) ?? VOL_UNITY,
         set: (v) => {
-          _channelVol.set(head, v);
+          _stripVolShown.set(head, v);
           if (knob) setKnobVisual(knob, v);
-          if (entry) setChannelVolLive(entry, v);
+          if (entry) { holdStripVol(entry, v); releaseStripVol(entry); }
           valEl.textContent = v;
         },
       };
@@ -4628,7 +4628,7 @@
       document.getElementById('abCopyLabel').textContent = `Copy ${abSnapshots.active} to ${abSnapshots.active === 'A' ? 'B' : 'A'}`;
     }
     function abCurrentSnapshot() {
-      return { state: editorView.state, cue: _auditionCue, effect: _auditionEffect, dynVals: { ..._dynVals } };
+      return { state: editorView.state, cue: _auditionCue, effect: _auditionEffect };
     }
     function resetABCompare() {
       _abOperation++;
@@ -4726,7 +4726,6 @@
         refreshTimeBar(null);
         _auditionCue = next.cue;
         _auditionEffect = next.effect ?? null;
-        _dynVals = { ...next.dynVals };
         _timeCue = next.cue;
         if (!isCoarsePointerDevice()) editorView.focus(); // do not summon a phone's keyboard
         // The source dispatch above marked the document dirty and saved its
@@ -7448,10 +7447,10 @@
     // of them is off its written value, so the file does not surprise.
     function logPreviewOnly(kind) {
       const off = [
-        _tempoDialled && 'TEMPO',
-        _masterVolUi !== 31 && 'MASTER',
+        player?.handOn?.('tempo') && 'TEMPO',
+        player?.handOn?.('MASTER') && 'MASTER',
         (_mutedChannels.size || _soloChannels.size) && 'mute/solo',
-        [..._channelVol.values()].some((v) => v !== VOL_UNITY) && 'channel vol',
+        _chStripModel.some((e) => player?.volOf?.(e.strip)?.hand) && 'channel vol',
       ].filter(Boolean);
       if (!off.length) return;
       const list = off.length > 1 ? `${off.slice(0, -1).join(', ')} and ${off.at(-1)}` : off[0];
@@ -8096,10 +8095,6 @@
       _mucomSong = null; // a .dat / .bin applied now belongs to the new document, not the song before
       _mutedChannels.clear();
       _soloChannels.clear();
-      _channelVol.clear();
-      _masterVolUi = 31;
-      _tempoDialled = false;
-      setSlider('sl-master', 'val-master', 31);
       _dynVals = {};
       selectedChannel = null;
       selectedCh = null;
@@ -8418,10 +8413,8 @@
     let _vizRoll = false;                  // the piano roll's pane is open
     let _vizScope = false;                 // the oscilloscope draws behind the editor
     let _vizPixelRatio = 0;                // a video take's canvas scale (0: the screen's devicePixelRatio)
-    const _channelVol = new Map();         // head → live mixer vol 0-31 (default VOL_UNITY)
+    const _stripVolShown = new Map();      // head → the :vol its knob shows (player.volOf)
     let _chVuEls = new Map();              // head → .ch-vu element (cached for the VU loop)
-    let _masterVolUi = 31;                 // master fader 0-31 (live mixer); default fully open
-    let _tempoDialled = false;             // TEMPO moved since the run began: it shows, held after Stop, until the next Play
     let _fmCursorDefContext = null;
     let _stepInputEnabled = false;
     let _kbBaseOctave = 3;
@@ -8648,7 +8641,13 @@
       const present = new Set(_chStripModel.map((e) => e.head));
       for (const h of _mutedChannels) if (!present.has(h)) _mutedChannels.delete(h);
       for (const h of _soloChannels) if (!present.has(h)) _soloChannels.delete(h);
-      for (const h of [..._channelVol.keys()]) if (!present.has(h)) _channelVol.delete(h);
+      for (const h of [..._stripVolShown.keys()]) if (!present.has(h)) _stripVolShown.delete(h);
+      // What the player takes a strip as (IRPlayer.holdVol): its tracks, and
+      // a chip's sound several tracks share, its voice.
+      for (const e of _chStripModel) {
+        const tracks = e.rhythmTracks ?? (ir?.tracks ?? []).flatMap((t, i) => ((t.scoreChannel ?? t.channel) === e.head ? [i] : []));
+        e.strip = { heads: [e.head], tracks, voice: e.voice };
+      }
       if (selectedChannel != null && !present.has(selectedChannel)) {
         selectedChannel = null;
         selectedCh = null;
@@ -8670,7 +8669,7 @@
         const selCls  = selectedChannel === h ? ' ch-sel' : '';
         const muteCls = _mutedChannels.has(h) ? ' muted' : '';
         const soloCls = _soloChannels.has(h) ? ' soloed' : '';
-        const vol = _channelVol.get(h) ?? VOL_UNITY;
+        const vol = _stripVolShown.get(h) ?? VOL_UNITY;
         const col = document.createElement('div');
         col.className = 'ch-col';
         col.innerHTML = `
@@ -8700,21 +8699,20 @@
 
     // Dynamic Parameters: one slider per (def-val …) slot, the `:public` ones
     // marked — `:public` says what the game may write (language.md §8), not
-    // what the panel may: a value the score sweeps can be nudged by hand, and
-    // the hand's write ends the sweep as the game's would. Slider positions
-    // persist across build/play in _dynVals (declared with the panel state
-    // above); onDynParam drives player.setVal live. The section auto-hides when
-    // the score declares no def-vals.
+    // what the panel may. A slider shows its slot as the score plays it (from
+    // its init; _dynVals, declared with the panel state above); moved, it
+    // stands in for the game — its value is the slot's and the score's writes
+    // of it wait (IRPlayer.holdVal) — and let go it stays until the score
+    // writes the slot again. The section auto-hides when the score declares
+    // no def-vals.
     let _dynValDefs = [];                  // the last render's metadata.vals, for the pad's axes
     function renderDynParams(ir) {
       const vals = Array.isArray(ir?.metadata?.vals) ? ir.metadata.vals : [];
       const section = document.getElementById('dynParamSection');
       const body = document.getElementById('dynParamBody');
       if (!section || !body) return;
-      // Keep values for surviving names; seed new ones from init.
-      const next = {};
-      for (const v of vals) next[v.name] = v.name in _dynVals ? _dynVals[v.name] : v.init;
-      _dynVals = next;
+      // From the slots' inits; a playing run's values follow (syncDynParams).
+      _dynVals = Object.fromEntries(vals.map((v) => [v.name, v.init]));
       _dynValDefs = vals;
       section.hidden = vals.length === 0;
       body.innerHTML = '';
@@ -8849,7 +8847,11 @@
       surface?.addEventListener('pointermove', (e) => {
         if (e.pointerId === _dynPadPointer) dynPadPoint(e);
       });
-      const release = (e) => { if (e.pointerId === _dynPadPointer) _dynPadPointer = null; };
+      const release = (e) => {
+        if (e.pointerId !== _dynPadPointer) return;
+        _dynPadPointer = null;
+        for (const axis of ['x', 'y']) { const v = dynPadAxisDef(axis); if (v) player?.releaseVal?.(v.name); }
+      };
       surface?.addEventListener('pointerup', release);
       surface?.addEventListener('pointercancel', release);
     }
@@ -8922,16 +8924,28 @@
       _dynVals[name] = v;
       const disp = document.getElementById('dynval-' + name);
       if (disp) disp.textContent = v;
-      if (player) player.setVal(name, v);
+      player?.holdVal?.(name, v);
       if (name === _dynPadAxes?.x || name === _dynPadAxes?.y) refreshDynPad();
       midiOutReplan();
     }
 
-    // Push all current slider values into a freshly (re)started player, since
-    // the player seeds slots from def-val inits on load.
-    function applyDynVals() {
-      if (!player) return;
-      for (const name in _dynVals) player.setVal(name, _dynVals[name]);
+    // The sliders follow the slots as the score writes them; the one in hand
+    // shows the player's value, which is its own then.
+    function syncDynParams() {
+      if (!player?.getVal) return;
+      let moved = false;
+      for (const v of _dynValDefs) {
+        const val = player.getVal(v.name);
+        // The MMLispDRV reference knows a slot by name only when it is :public.
+        if (val == null || _dynVals[v.name] === val) continue;
+        _dynVals[v.name] = val;
+        moved = true;
+        const el = document.querySelector(`#dynParamBody input[type=range][data-midi-key="val:${CSS.escape(v.name)}"]`);
+        if (el) el.value = String(val);
+        const disp = document.getElementById('dynval-' + v.name);
+        if (disp) disp.textContent = val;
+      }
+      if (moved) refreshDynPad();
     }
 
     // A strip's mute / solo onto the player: a voice strip's (the YM2608's
@@ -8958,18 +8972,36 @@
       renderChStrips();
     }
 
-    // Apply a channel's live mixer vol to the player, routed by precomputed type.
-    function setChannelVolLive(entry, vol) {
+    // A strip's knob shows its :vol as the score plays it (player.volOf).
+    // Moved, the knob's value is the strip's :vol and the score's :vol there
+    // goes unheard (IRPlayer.holdVol); let go, it stays until the score
+    // writes :vol on the strip's tracks again. Nothing is written to the score.
+    function holdStripVol(entry, vol) {
       if (!player) initParamOnlyPlayer();
       if (!player) return;
-      // PCM track gain is an IR-player mixer feature: the MMLispDRV reference
-      // soft-mixes PCM into the DAC itself and has no per-track gain, so this
-      // no-ops there rather than throwing.
-      if (entry.volKind === 'voice') player.setVoiceVol?.(entry.voice, vol);
-      else if (entry.volKind === 'pcm') player.setPcmTrackVol?.(entry.trackIndex, vol);
-      else if (entry.volKind === 'psg') player.setPsgVol(entry.volIndex, vol);
-      else if (entry.volIndex != null) player.setParam('VOL', vol, entry.volIndex);
+      player.holdVol?.(entry.strip, vol);
     }
+    function releaseStripVol(entry) {
+      player?.releaseVol?.(entry.strip);
+    }
+    // The knobs follow the player, the one in hand too (its value is the
+    // player's then).
+    function syncStripKnobs() {
+      if (!player?.volOf) return;
+      for (const entry of _chStripModel) {
+        const v = player.volOf(entry.strip)?.v;
+        if (v == null || _stripVolShown.get(entry.head) === v) continue;
+        _stripVolShown.set(entry.head, v);
+        const knob = document.querySelector(`#chStrips .ch-knob[data-head="${entry.head}"]`);
+        if (knob) setKnobVisual(knob, v);
+      }
+    }
+    // The strip's :vol the panel holds over a plan whose score has its own
+    // (the MIDI output, the note meters), else unity.
+    const stripHandVol = (entry) => {
+      const r = entry && player?.volOf?.(entry.strip);
+      return r?.hand ? r.v : VOL_UNITY;
+    };
 
     // Map vol 0-31 to the knob indicator angle (-135°…+135°).
     function volToKnobAngle(vol) {
@@ -8992,7 +9024,7 @@
       const entry = _chStripModel.find((x) => x.head === knob.dataset.head);
       if (!entry) return;
       e.preventDefault();
-      _knobDrag = { entry, knob, startY: e.clientY, startVol: _channelVol.get(entry.head) ?? VOL_UNITY };
+      _knobDrag = { entry, knob, startY: e.clientY, startVol: _stripVolShown.get(entry.head) ?? VOL_UNITY };
       knob.setPointerCapture?.(e.pointerId);
     });
     window.addEventListener('pointermove', (e) => {
@@ -9000,13 +9032,17 @@
       const { entry, knob } = _knobDrag;
       const dy = _knobDrag.startY - e.clientY; // up = louder
       const vol = Math.max(0, Math.min(31, Math.round(_knobDrag.startVol + dy * 0.2)));
-      if (vol === (_channelVol.get(entry.head) ?? VOL_UNITY)) return;
-      _channelVol.set(entry.head, vol);
+      if (vol === (_stripVolShown.get(entry.head) ?? VOL_UNITY)) return;
+      _stripVolShown.set(entry.head, vol);
       setKnobVisual(knob, vol);
-      setChannelVolLive(entry, vol);
+      holdStripVol(entry, vol);
     });
-    window.addEventListener('pointerup', () => { _knobDrag = null; });
-    window.addEventListener('pointercancel', () => { _knobDrag = null; });
+    const endKnobDrag = () => {
+      if (_knobDrag) releaseStripVol(_knobDrag.entry);
+      _knobDrag = null;
+    };
+    window.addEventListener('pointerup', endKnobDrag);
+    window.addEventListener('pointercancel', endKnobDrag);
     // The drag is vertical, so a finger on a knob must never pan the panel.
     // .ch-knob has touch-action: none too; cancelling touchstart is the form
     // every mobile browser honours.
@@ -9016,11 +9052,34 @@
 
     // LFO rate is global ($22), not a channel parameter: it writes whatever the
     // FM panel's mode is, and its thumb follows the player, not the panel regs.
+    // The song-wide sliders show the score's value as it plays. Moved, the
+    // slider's value is the word's and the score's writes of it wait
+    // (IRPlayer.holdWord); let go, it stays until the score writes the word
+    // again. Nothing is written to the score.
+    const HAND_SLIDERS = {
+      'sl-master': 'MASTER', 'sl-tempo': 'tempo', 'sl-lfo': 'LFO_RATE',
+      'sl-lfo-freq': 'LFO_FREQ', 'sl-lfo-pmd': 'LFO_PMD', 'sl-lfo-amd': 'LFO_AMD', 'sl-lfo-wave': 'LFO_WAVE',
+    };
+    // The master the panel holds over a plan (the MIDI output, the note meters),
+    // whose score already has its own.
+    const panelMaster = () => (player?.handOn?.('MASTER') ? player.getMaster() : 31);
+    function holdWord(word, val) {
+      if (!player) initParamOnlyPlayer();
+      player?.holdWord?.(word, val);
+    }
+    // A slider let go (its change), or set in one step (a typed value, a CC).
+    function letGoOf(el) {
+      const word = HAND_SLIDERS[el?.id];
+      if (word) player?.releaseWord?.(word);
+      else if (el?.closest?.('#fmParamSection')) player?.releaseParams?.();
+      else if (el?.dataset?.midiKey?.startsWith('val:') && el.closest('#dynParamBody')) player?.releaseVal?.(el.dataset.midiKey.slice(4));
+    }
+    document.addEventListener('change', (e) => letGoOf(e.target));
+
     function onLfo(slider) {
       const val = parseInt(slider.value, 10);
       setSliderDisplayValue(slider, val);
-      if (!player) initParamOnlyPlayer();
-      player?.setParam('LFO_RATE', val, 0);
+      holdWord('LFO_RATE', val);
     }
     window.onLfo = onLfo;
     // The OPM LFO's waveform names (language.md §19 x68k, :lfo-wave).
@@ -9050,16 +9109,13 @@
       const val = parseInt(slider.value, 10);
       setSliderDisplayValue(slider, val);
       if (word === 'LFO_WAVE') setValueTextById('val-lfo-wave', LFO_WAVES[val] ?? val);
-      if (!player) initParamOnlyPlayer();
-      player?.setParam(word, val, 0);
+      holdWord(word, val);
     };
 
     function onMaster(slider) {
       const val = parseInt(slider.value, 10);
       setSliderDisplayValue(slider, val);
-      _masterVolUi = val;
-      if (!player) initParamOnlyPlayer();
-      player?.setParam('MASTER', val, 0);
+      holdWord('MASTER', val);
       // Reflect the new master on the selected FM channel's TL immediately (the
       // live refresh loop only runs while playing).
       if (player && isFmSlot(selectedCh) && getFmParamMode() === 'channel') {
@@ -9067,22 +9123,16 @@
       }
     }
 
-    // Push persisted mixer state (mute/solo/vol/master, kept by channel name) onto
-    // a freshly loaded player, translating names → track indices from the model.
+    // Push the strips' mute and solo (kept by channel name) onto a freshly
+    // loaded player, names → track indices from the model. Levels are not
+    // pushed: a run starts with the score's own.
     function applyPlayerChannelState(p) {
       if (!p) return;
       p.clearChannelStates();
-      // Mute/solo, live vol and master work on both backends (the MMLispDRV
-      // reference routes them through the driver's own PARAM_SET apply path).
-      // The guard stays for param-only//stub players that lack the API.
-      const supportsVol = typeof p.setParam === 'function';
       for (const entry of _chStripModel) {
         if (_mutedChannels.has(entry.head)) applyMute(p, entry, true);
         if (_soloChannels.has(entry.head)) applySolo(p, entry, true);
-        const vol = _channelVol.get(entry.head);
-        if (vol != null && supportsVol) setChannelVolLive(entry, vol);
       }
-      if (supportsVol) p.setParam('MASTER', _masterVolUi, 0);
     }
 
     window.toggleMute = toggleMute;
@@ -9707,7 +9757,6 @@
             throw new Error('No compiled IR available for the current source');
           }
           player = new DrvPlayer(writeToWorklet);
-          _tempoDialled = false; // a run starts at the score's own tempo
           player.loadMMB(mmbBytes, mmbSampleBank);
           if (_lastGoodIR) {
             buildChStrips(playIr);
@@ -9729,7 +9778,6 @@
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
           // (the IR player seeds slots on load instead, hence the earlier call there).
-          applyDynVals();
           log(se != null ? `Playing effect ${seName} (MMLispDRV reference)` : 'Playing (MMLispDRV reference)', 'info');
           setPlayIcon(true);
           document.getElementById('btnPlay').classList.add('active');
@@ -9744,7 +9792,6 @@
       const notPlayable = _lastGoodIR && notYet(targetProfile(_lastGoodIR.metadata?.target), 'play');
       if (notPlayable) { log(notPlayable, 'err'); return; }
       player = new IRPlayer(writeToWorklet);
-      _tempoDialled = false; // a run starts at the score's own tempo
       try {
         // Use last successfully compiled IR if available, else load from URL
         if (_lastGoodIR) {
@@ -9781,10 +9828,9 @@
         // that never went through compileNow), then push persisted mute/solo.
         buildChStrips(player._ir);
         renderDynParams(player._ir);
-        applyDynVals();
         applyPlayerChannelState(player); // playFromLine keeps the run state
-        // play() resets the run's levels to unity; the persisted mixer goes back
-        // in from its hook, before the first event is scheduled.
+        // play() resets the run; the strips' mute and solo go back on from its
+        // hook, before the first event is scheduled.
         const irp = player;
         player.setOnRunStart(() => { clearPlayMarks(); applyPlayerChannelState(irp); });
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
@@ -9891,6 +9937,21 @@
       setPlayIcon(false);
       dropPlayheadFx();
       editorView.dispatch({ effects: [setTrackLine.of({ trackIdx: -1 }), setSeq.of({ clear: true })] });
+      showIdleValues();
+    }
+
+    // Stopped, the keys play on a player of their own at unity, its LFO off
+    // (initParamOnlyPlayer): the panel shows those values — what a key sounds
+    // at — and a Play then shows the score's.
+    function showIdleValues() {
+      setSliderCached('sl-master', 'val-master', VOL_UNITY);
+      syncLfoSlider();
+      _stripVolShown.clear();
+      renderChStrips();
+      if (_lastGoodIR) {
+        updateTempoDisplay(irInitialBpm(_lastGoodIR));
+        renderDynParams(_lastGoodIR);
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -12792,7 +12853,9 @@
         player._psgSetPitch(psgCh, midi, 0, when);
       }
       // 0 = loudest attenuation, 15 = silent
-      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, VOL_UNITY, VOL_UNITY), when);
+      // The lane's :vol and the master as the panel shows them (a strip's
+      // knob, MASTER): what is shown is what the key plays at.
+      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, player._psgVol?.[psgCh] ?? VOL_UNITY, player.getMaster?.() ?? VOL_UNITY), when);
     }
 
     function previewPsgNoteOff(psgCh) {
@@ -12970,6 +13033,10 @@
         }
         const machine = targetProfile(ir.metadata?.target);
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
+        // The picked strip's :vol and the master, as the panel shows them.
+        const stripVol = (part && player?.volOf?.({ heads: [part] })?.v) ?? VOL_UNITY;
+        const master = player?.getMaster?.() ?? VOL_UNITY;
+        const faders = levelGain({ faders: [stripVol, master] });
         const samples = await pcmSampleBlobsForMmb(one, new Set([name]));
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.loopStartSec != null || def.loopEndSec != null;
@@ -12988,7 +13055,7 @@
           workletNode.port.postMessage({ type: 'pcm8-bank', bank });
           workletNode.port.postMessage({
             type: 'pcm8', kind: 'on', voice: PCM8_VOICES - 1, sample: name, mode: loop ? 'loop' : 'shot',
-            step: (s.rate * 2 ** ((midi - 60) / 12)) / PCM8_RATE, gain: 10 ** (-(2 * (15 - Math.max(0, Math.min(15, vel)))) / 20),
+            step: (s.rate * 2 ** ((midi - 60) / 12)) / PCM8_RATE, gain: faders * 10 ** (-(2 * (15 - Math.max(0, Math.min(15, vel)))) / 20),
           });
           return;
         }
@@ -12998,7 +13065,7 @@
         if (sp?.bank === 'frames') {
           const s = bakePcm8(ir, samples, [name]).entries[name];
           if (!s) throw new Error(`"${name}" did not load`);
-          playAuditionBlob(sp.audition(s, midi, { ir, target: machine, name }), false, vel);
+          playAuditionBlob(sp.audition(s, midi, { ir, target: machine, name }), false, vel, faders);
           return;
         }
         // The YM2608's ADPCM-B: the def baked into the chip's RAM as the song's
@@ -13012,7 +13079,7 @@
           if (!entry) throw new Error(`"${name}" did not load`);
           workletNode.port.postMessage({ type: 'adpcm-ram', image });
           const enc = machine.chipFor(sp.name).adpcm;
-          const level = Math.round(255 * levelGain({ vel }));
+          const level = Math.round(255 * levelGain({ vel, faders: [stripVol, master] }));
           const deltaN = enc.deltaN(entry.rate * 2 ** ((midi - 60) / 12));
           for (const [p, a, d] of enc.note(entry, deltaN, level, 0, loop)) writePreview(p, a, d);
           _pcmAuditionChip = loop ? enc : null; // a shot plays its range out
@@ -13021,16 +13088,17 @@
         // During playback the engine is the song's: the same bake plays on a
         // plain buffer source beside it, so the keys can play along.
         if (_fmLiveRaf != null) {
-          playAuditionBlob(bakeAuditionBlob(one, samples, name, midi), loop, vel);
+          playAuditionBlob(bakeAuditionBlob(one, samples, name, midi), loop, vel, faders);
           return;
         }
         const { sampleBank, entryIds } = bakeAuditionBank(one, samples, name, midi);
         workletNode.port.postMessage({
           type: 'pcm-set-bank', bank: sampleBank, pcmVoices: 1, entryIds,
         });
+        workletNode.port.postMessage({ type: 'pcm-ev', kind: 'master', value: master });
         workletNode.port.postMessage({
           type: 'pcm-ev', kind: 'on', voice: 0, track: 0, sample: name, midi,
-          mode: loop ? 'loop' : 'shot', vel,
+          mode: loop ? 'loop' : 'shot', vel, vol: stripVol,
         });
       } catch (e) {
         auditionPositionOff(true);
@@ -13060,7 +13128,7 @@
     // source of its own — the engine and the song's bank stay untouched. One
     // at a time, as the engine's audition voice is; its level follows vel
     // linearly, not the driver's 6 dB rungs.
-    function playAuditionBlob({ data, rateHz, range, loop: loopPts }, loop, vel) {
+    function playAuditionBlob({ data, rateHz, range, loop: loopPts }, loop, vel, faders = 1) {
       _sideAudition?.stop();
       const [from, to] = range ?? [0, data.length];
       const buf = audioCtx.createBuffer(1, Math.max(1, to - from), rateHz);
@@ -13074,7 +13142,7 @@
         src.loopEnd = (loopPts[1] - from) / rateHz;
       }
       const gain = audioCtx.createGain();
-      gain.gain.value = 0.5 * Math.max(0, Math.min(15, vel)) / 15;
+      gain.gain.value = 0.5 * faders * Math.max(0, Math.min(15, vel)) / 15;
       src.connect(gain).connect(audioCtx.destination);
       src.onended = () => { if (_sideAudition === src) _sideAudition = null; };
       src.start();
@@ -13909,7 +13977,7 @@
         // ROM rhythm's sounds, which share their tracks) and the master.
         fadersOf: (ti) => {
           const entry = _chStripModel.find((e) => e.trackIndex === ti && !e.rhythmTracks);
-          return [entry ? _channelVol.get(entry.head) ?? 31 : 31, _masterVolUi];
+          return [stripHandVol(entry), panelMaster()];
         },
       });
       _midiOutTimer = setInterval(midiOutTick, 25);
@@ -14056,7 +14124,7 @@
       const src = _irSource.get(ir);
       if (src == null) return Promise.resolve();
       const failed = (why) => { if (!_midiOutAsked.has(ir)) return; log(`MIDI output: no plan for this score (${why}); nothing is sent for it`, 'warn'); };
-      const asked = compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: { ..._dynVals } }).then((r) => {
+      const asked = compileOffThread(src, _lastFileName, _importSources, 'midi', { vals: player?.valsInHand?.() ?? {} }).then((r) => {
         if (!r?.plan) return failed('it did not compile');
         const names = (ir.tracks ?? []).map((t) => t.scoreChannel ?? t.channel);
         if (!r.plan.tracks.every((t) => names[t.trackIndex] === t.name)) return failed('its tracks differ');
@@ -14207,6 +14275,7 @@
         if (Number(el.value) === v) continue;
         el.value = String(v);
         el.dispatchEvent(new Event('input', { bubbles: true }));
+        letGoOf(el); // a CC has no let-go: its value stays until the score writes the word
       }
       _midiCcPending.clear();
     }
@@ -14341,8 +14410,17 @@
     // the score under the last top-level import — a local def of the same name
     // wins (language.md §9.2), so the tracks keep their name — with the edit
     // already in it. One change, so one undo takes the copy back out.
+    // The selected FM channel's register, in the panel's hand while the
+    // slider moves (IRPlayer.holdParam): the score's writes of it wait, and
+    // once let go it stays until the score writes it again.
     function setLiveChannelParam(paramName, value) {
-      return setLiveParamForChannel(paramName, value, selectedCh?.ch);
+      const ch = selectedCh?.ch;
+      if (!player) initParamOnlyPlayer();
+      if (player?.holdParam) {
+        player.holdParam(ch, paramName, value);
+        return true;
+      }
+      return setLiveParamForChannel(paramName, value, ch);
     }
 
     function setLiveOperatorEnabled(op, enabled) {
@@ -14641,6 +14719,10 @@
       _fmLiveLast = ts;
       if (!player) return;
       updateTempoDisplay(player.getBpm());
+      // A held slider's value is the player's then: following it never fights the drag.
+      if (player.getMaster) setSliderCached('sl-master', 'val-master', player.getMaster());
+      syncStripKnobs();
+      syncDynParams();
       if (player instanceof IRPlayer && player.isPlaying()) {
         refreshTimeBar(player._ir); // a hot-swapped edit is a new song to measure
         showTime(player.positionSec());
@@ -14900,10 +14982,8 @@
     function onTempo(slider) {
       const val = parseInt(slider.value, 10);
       _tempoShown = null; // force the number to refresh to the dragged value
-      _tempoDialled = true;
       updateTempoDisplay(val);
-      if (!player) initParamOnlyPlayer();
-      player?.setTempo(val);
+      holdWord('tempo', val);
     }
     function irInitialBpm(ir) {
       for (const t of ir?.tracks ?? []) {
@@ -15014,7 +15094,7 @@
       _vuNotes.set(head, n);
       if (!n || player.isTrackAudible?.(cell.trackIndex) === false) return 0;
       const fader = (v) => (v <= 0 ? -Infinity : (Math.min(31, v) - 31) * 2);
-      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(_channelVol.get(head) ?? 31) + fader(_masterVolUi);
+      const db = (Math.max(0, Math.min(15, n.vel)) - 15) * 2 + fader(stripHandVol(_chStripModel.find((e) => e.head === head))) + fader(panelMaster());
       const level = Math.max(0, Math.min(1, 1 + db / VU_RANGE_DB));
       return fresh ? level : n.sample ? 0 : level * NOTE_VU_HELD;
     }

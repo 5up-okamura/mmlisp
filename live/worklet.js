@@ -24,7 +24,6 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'point' | 'master', … }
  *       — the IR's PCM events, applied in time order to the sequencer's voice
  *         model (src/pcm-voices.js) — see _applyPcmEvent
- *   { type: 'pcm-set-vol', track: number, gain: number }  — live UI mixer fader (separate from the score)
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
@@ -120,7 +119,6 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmTaps = new Int8Array(SCOPE_PCM_CHANNELS); // each voice's term of _pcmByte (the PCM scope taps)
     this._pcmClaimsDac = false; // the first note claims fm6, as on the driver
     this._dacByWrites = false; // a score turning the DAC on and off itself ($2B: fm6 beside the PCM)
-    this._pcmTrackGain = new Map(); // trackIndex → live mixer gain (0..1); default 1
     // Whether our own engine claimed the DAC, so we only release what we took —
     // a backend streaming 0x2a/0x2b (MMLispDRV) owns it on its own terms. As on
     // the driver, the first note claims fm6 for the rest of the song.
@@ -223,15 +221,6 @@ class YM2612Processor extends AudioWorkletProcessor {
         // a loop-point sweep interleave exactly as the score orders them.
         const t = msg.when ?? (currentFrame + WORKLET_BLOCK) / sampleRate;
         this._insertTimed(this._pcmTimedQueue, t, msg);
-      } else if (msg.type === "pcm-set-vol") {
-        // Live per-PCM-track mixer fader: a gain on the voice's samples BEFORE
-        // its rung, which the driver does not have (a UI-only control).
-        const track = Number(msg.track);
-        const g = Math.max(0, Math.min(1, Number(msg.gain)));
-        if (Number.isFinite(track) && Number.isFinite(g)) {
-          this._pcmTrackGain.set(track, g);
-          this._pcmApplyUiGain();
-        }
       } else if (msg.type === "set-analog-lpf") {
         this._lpfOn = !!msg.on;
         const c = Number(msg.cutoffHz);
@@ -476,26 +465,13 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmSeq = new PcmIrVoices((c) => live.apply(c), this._pcmBank);
   }
 
-  _pcmApplyUiGain() {
-    if (!this._pcmLive) return;
-    let any = false;
-    const g = this._pcmSeq.voiceTrack.map((t) => {
-      const x = t == null ? 1 : (this._pcmTrackGain.get(t) ?? 1);
-      if (x !== 1) any = true;
-      return x;
-    });
-    this._pcmLive.model.uiGain = any ? g : null;
-  }
-
   // One IR PCM event, in time order (src/pcm-voices.js PcmIrVoices).
   _applyPcmEvent(ev) {
     if (!this._pcmSeq) return;
     if (this._pcmSeq.apply(ev)) {
       // A note started: it claims the DAC — for good, unless the score turns
-      // it on and off itself (fm6 beside the PCM: _applyYmWrite) — and its
-      // voice now answers to that track's fader.
+      // it on and off itself (fm6 beside the PCM: _applyYmWrite).
       if (!this._dacByWrites) this._pcmClaimsDac = true;
-      this._pcmApplyUiGain();
     }
   }
 

@@ -61,8 +61,7 @@ export class MultibankModel {
         case "mix":
           for (let n = 0; n < a.n; n++) {
             const raw = this.rom[v.bank * 0x8000 + v.ptr - 0x8000] ?? 255;
-            let sample = (raw << 24) >> 24;
-            if (this.uiGain) sample = Math.round(sample * this.uiGain[k]);
+            const sample = (raw << 24) >> 24;
             const term = pcmRung(sample, v.page);
             this.voiceRing[k][v.out] = term;
             const sum = term + (k ? this.ring[v.out] - 128 : 0);
