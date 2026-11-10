@@ -166,6 +166,12 @@ export const levelMethods = {
   // A rest, or the track's end, on a track whose note's gate was full: its
   // key-off or silence now (driver: `pendingOff`, resolved by the next event).
   _resolveOff(ev, t) {
+    this._keyOffAt(ev, t);
+    // ...then the note's macros take their release, as a held note's let go
+    // (the driver's dispatch keys off before the frame's macros step).
+    this._letGoNote(ev._trackIndex, t);
+  },
+  _keyOffAt(ev, t) {
     const r = ev._route;
     if (r?.core === "psg") return void this._psgResolveOff(ev._psgCh ?? 0, ev._trackIndex, t);
     if (r?.core !== "fm") return;
@@ -179,4 +185,5 @@ export const levelMethods = {
     this._pendingKeyOff[ch] = false;
     if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, t);
   },
+
 };

@@ -164,7 +164,21 @@ Open, in the order worth taking:
    held note's first minute). `_macroDry` and the eager layout are gone;
    a held note with a sustain loop, a looping :keyon or a curve no longer
    runs the player out of memory (check:loops holds three to the driver).
-   A held note the host lets go (`triggerKeyOff` → `_letGoNote`) takes its
+   **No tie look-ahead**: a note's length is its own (a TIE is the
+   track's to play, as the driver's extends its wait). A note whose gate
+   reaches its end (no gate, or one past its own length into a tie) is
+   held until it closes — the track's next event (`_resolveOff`: key-off
+   first, then `_letGoNote`), or its gate's end inside a tie — its macros
+   run as a held note's (`macroGate` / `psgMacroGate` 0). A macro reads
+   its gate as it steps (`_macroSteps`' `G` holder: offT / offFrame /
+   activeFrames are functions; `{ wait }` at a release until it closes);
+   let go, the gate is set and the steps go on — a pending step no longer
+   the note's (its own `valid()`) dropped (`next(false)`: not where a
+   release-from-now starts). No replay: replaying a tick-clocked macro
+   from its note after a tempo change counted it at the new tempo. On the
+   frame-clocked machines a macro now runs to the next event's frame (one
+   more frame than the old note-length estimate at a song's end).
+
    macros' release where the sent steps end (the lookahead late), its
    retriggers stop, a tone lane falls silent after the release. With no
    run (it is over: a song that is only held notes; or stopped) a held
@@ -185,7 +199,7 @@ Open, in the order worth taking:
    removed a silence / key-off a frame early between abutting notes (the
    gate's end rounded to the frame before the next note's). `_nextNote` is
    left only for the sample editor's playhead (`_reportSample`'s `cut`), a
-   UI hint.
+   UI hint. (The tie look-ahead `_resolveTiedLength` is gone too.)
 8. **A word's event is one rule** (`_word(ev, when, w)`): a value, a
    `$slot`, `+`, `*`, a sweep, a stop — the same for every word on every
    track; the track gives only the word, `{ read, write, sweep? }`

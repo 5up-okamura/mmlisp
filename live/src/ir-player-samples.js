@@ -794,10 +794,11 @@ export const sampleMethods = {
     const times = retrigs?.();
     let ahead = times?.next();
     const pullRetrig = () => {
-      if (!ahead || ahead.done) return null;
-      let t = ahead.value;
+      // (a null: a held note's waiting for its key-off — none after that here)
+      if (!ahead || ahead.done || ahead.value === null) return null;
+      let t = ahead.value.t;
       const F = this._eventFrame(t);
-      for (ahead = times.next(); !ahead.done && this._eventFrame(ahead.value) === F; ahead = times.next()) t = ahead.value;
+      for (ahead = times.next(); !ahead.done && ahead.value !== null && this._eventFrame(ahead.value.t) === F; ahead = times.next()) t = ahead.value.t;
       return { F, t };
     };
     let cur = pullRetrig();
@@ -854,7 +855,7 @@ export const sampleMethods = {
       if (!cur) return;
       const t = cur.t + PCM_SWEEP_AFTER;
       this._step(cur.F, AFTER, t, () => {
-        if (this._noteOf[ti] !== note || this._letGo[ti] === note) return; // the next note's, or let go
+        if (this._noteOf[ti] !== note || t >= this._letGoAt(ti, note)) return; // the next note's, or let go
         const { F: _F, t: _at, ...carried } = cur;
         this._pcmEv(t, { kind: "retrig", voice, ...carried });
         cur = pullRetrig();

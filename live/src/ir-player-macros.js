@@ -34,66 +34,91 @@ export const macroMethods = {
   // playing: the taps step through it.
   _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60, onEnd = null) {
     if (!spec) return void onEnd?.(null);
-    const restarts = this._envRetrigs?.() ?? null;
+    // The note's gate as its steps read it (_macroSteps): a held note's —
+    // a hold, a note the track's next event closes (a full gate) — is open
+    // until it is let go (_heldNote, below), and the steps wait at the
+    // release for it.
+    const G = { secs: gateSecs, frames: noteFrames };
+    let endless = gateSecs > when + 1e8; // a run does not wait for a held note's
+    const restarts = this._envRetrigs?.(G) ?? null;
+    let restartWait = false;
     const nextRestart = () => {
       for (;;) {
         const r = restarts?.next();
-        if (!r || r.done || r.value >= gateSecs) return Infinity;
-        if (r.value > when + 1e-6) return r.value;
+        if (!r || r.done) return Infinity;
+        if (r.value === null) { restartWait = true; return Infinity; } // its gate first
+        if (r.value.t >= G.secs) return Infinity;
+        if (r.value.t > when + 1e-6) return r.value.t;
       }
     };
-    const segment = (at) => this._macroSteps(spec, Math.max(1, noteFrames - Math.round((at - when) * 60)), gateSecs, at, stepSecs);
+    const segment = (at) => this._macroSteps(spec, null, {
+      get secs() { return G.secs; },
+      get frames() { return Math.max(1, G.frames - Math.round((at - when) * 60)); },
+    }, at, stepSecs);
     let it = segment(when), cut = nextRestart();
-    // A held note's (its gate is the key-off's, _resolveNoteFramesAndGate)
-    // runs until it is let go: a run does not wait for it.
-    let endless = gateSecs > when + 1e8;
     const scope = this._noteScope;
     const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
-    let segAt = when, lastT = -Infinity, run = {};
+    let run = {}, pending = null, parked = false;
     // A step already behind the run is written at once. With no run (the
     // keys while stopped, a run that is over) a minute is laid out, and a
     // held note's macro not at all: nothing steps it on.
-    const pull = () => {
+    const pull = (dropped = false) => {
       const limit = Number.isFinite(this._writeCursor) ? Infinity
         : endless ? -Infinity : (this._audioContext?.currentTime ?? 0) + 60;
       for (;;) {
-        const { value, done } = it.next();
+        const { value, done } = it.next(dropped ? false : undefined);
+        dropped = false;
         if (done) {
-          if (cut !== Infinity) { it = segment((segAt = cut)); cut = nextRestart(); continue; }
+          if (cut !== Infinity) { it = segment(cut); cut = nextRestart(); continue; }
           onEnd?.(value ?? null);
+          return;
+        }
+        if (value.wait) {
+          // Waiting for the gate: a :keyon retrigger before it starts over.
+          if (cut !== Infinity) { it = segment(cut); cut = nextRestart(); continue; }
+          parked = true; // the gate, when the note is let go
           return;
         }
         if ("k" in value) continue;
         const { v, t } = value;
-        if (t >= cut - 1e-9) { it = segment((segAt = cut)); cut = nextRestart(); continue; }
-        if (t <= lastT + 1e-9) continue; // written before the note was let go (below)
+        if (t >= cut - 1e-9) { it = segment(cut); cut = nextRestart(); continue; }
         if (t > limit) return;
         if (t <= this._writeCursor) {
           if (!ours()) return;
-          lastT = t;
           writeFn(this._macroValue(spec, v, t), t);
           continue;
         }
         const mine = run;
+        pending = { t, valid: value.valid };
         this._putWork(this._eventFrame(t), MACRO, t, () => {
           if (mine !== run || !ours()) return;
-          lastT = t;
+          pending = null;
           writeFn(this._macroValue(spec, v, t), t);
           pull();
         }, null, endless);
         return;
       }
     };
-    // A held note let go at `off` (the host's key-off, triggerKeyOff): the
-    // macro goes on as a note's whose gate ends there — its sustain stops,
-    // its release plays — from the step after the last it wrote.
+    // Let go at `off` (the host's key-off, triggerKeyOff; the track's next
+    // event, _resolveOff): the gate closes there and the steps go on from
+    // where they are — a step waiting that is no longer the note's (by its
+    // own rule: a sustain's in the key-off's frame or after it, a curve's
+    // past the note's frames) goes, and what follows it comes.
     if (endless && scope) this._heldNote(scope).push((off) => {
       if (!ours()) return;
-      run = {}; // the held run's waiting step is dropped
+      G.secs = off - KEY_OFF_LEAD_SECS;
+      G.frames = Math.max(1, Math.floor((off - when) * 60 + 1e-6));
       endless = false;
-      cut = Infinity;
-      it = this._macroSteps(spec, Math.max(1, Math.round((off - segAt) * 60)), off - KEY_OFF_LEAD_SECS, segAt, stepSecs);
-      pull();
+      if (cut !== Infinity && cut >= G.secs) cut = Infinity;
+      if (restartWait) { restartWait = false; cut = nextRestart(); }
+      if (pending?.valid && !pending.valid()) {
+        run = {};
+        pending = null;
+        pull(true);
+      } else if (parked) {
+        parked = false;
+        pull();
+      }
     });
     this._macroShown(spec, noteFrames, gateSecs, when, stepSecs);
     pull();
@@ -106,11 +131,11 @@ export const macroMethods = {
     const marks = spec.src && this._onPosition ? [] : null;
     const seq = spec.src && spec.type === "steps" && this._onSeq;
     if (!marks && !seq) return;
-    const restarts = this._envRetrigs?.() ?? null;
+    const restarts = this._envRetrigs?.({ secs: gateSecs, frames: noteFrames }) ?? null;
     const starts = [when];
     for (const r of restarts ?? []) {
-      if (r >= gateSecs || r > when + 60) break;
-      if (r > when + 1e-6) starts.push(r);
+      if (r === null || r.t >= gateSecs || r.t > when + 60) break;
+      if (r.t > when + 1e-6) starts.push(r.t);
     }
     let end = null;
     for (let i = 0; i < starts.length; i++) {
@@ -119,7 +144,7 @@ export const macroMethods = {
       for (;;) {
         const { value, done } = it.next();
         if (done) { end = value; break; }
-        if (value.t >= cut - 1e-9 || value.t > when + 60) break;
+        if (value.wait || value.t >= cut - 1e-9 || value.t > when + 60) break;
         if (marks && "k" in value) marks.push([value.k, value.t]);
       }
     }
@@ -152,6 +177,16 @@ export const macroMethods = {
   *_macroSteps(spec, noteFrames, gateSecs, when, stepSecs = 1 / 60, withMarks = false) {
     if (!spec) return null;
     const mark = withMarks;
+    // The note's gate, read as the steps go: `gateSecs` a number, or a
+    // holder { secs, frames } a held note's let-go closes (_scheduleMacro).
+    // Where a step needs the gate closed — the release, a wait for key-off
+    // — and it is not yet, { wait: true } is yielded until it is.
+    const G = typeof gateSecs === "object" ? gateSecs : { secs: gateSecs, frames: noteFrames };
+    const held = () => G.secs > when + 1e8;
+    const offT = () => this._keyOffFrameTime(when, G.secs);
+    // A sample in the key-off's frame is the release's: the driver leaves
+    // for it before that frame's step.
+    const offFrame = () => (held() ? Infinity : this._eventFrame(G.secs + KEY_OFF_LEAD_SECS));
 
     // :step is the macro sampling clock. Curve/stage macros sample (and hold)
     // every stepFrames; default 1f = 1 frame = 60 Hz (smooth, unchanged). A
@@ -192,10 +227,6 @@ export const macroMethods = {
         }
         if (st.curve && st.loop) afterLoop = true;
       }
-      const offT = this._keyOffFrameTime(when, gateSecs);
-      // A sample in the key-off's frame is the release's: the driver leaves
-      // for it before that frame's step.
-      const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
 
       // Where each stage's steps start in the vector shown: a curve its
       // steps (a looping one, one cycle), a wait its holds.
@@ -216,24 +247,27 @@ export const macroMethods = {
         const stage = stages[i];
         const keyed = i < rel;
         if (i === rel) {
-          if (offT === Infinity) break;
+          while (held()) yield { wait: true };
           // A tick clock counts the release from the key-off's tick; its first
           // sample still lands on the key-off's frame.
-          t = tickClock ? gateSecs + KEY_OFF_LEAD_SECS : offT;
+          t = tickClock ? G.secs + KEY_OFF_LEAD_SECS : offT();
         }
         // A :wait advances the time cursor. A pure wait stage (no curve) stops
         // here; a curve stage with :wait uses it as a pre-delay, then plays.
         const waitFrom = t;
-        if (stage.waitKeyOff) t = Math.max(t, offT);
+        if (stage.waitKeyOff) {
+          while (held()) yield { wait: true };
+          t = Math.max(t, offT());
+        }
         else if (stage.waitTicks != null)
           t = this._timeAfterTicks(t, Math.max(0, Number(stage.waitTicks)));
         else if (stage.waitFrames != null) t += stage.waitFrames / 60;
         if (mark && !stage.curve)
           for (let k = 0; k < shown[i]; k++) {
             const at = waitFrom + ((t - waitFrom) * k) / shown[i];
-            if (!keyed || at < offT) yield { k: shownAt[i] + k, t: at };
+            if (!keyed || at < offT()) yield { k: shownAt[i] + k, t: at };
           }
-        if (keyed && t >= offT - 1e-9) {
+        if (keyed && t >= offT() - 1e-9) {
           i = rel - 1; // key-off during a wait: on to the release
           continue;
         }
@@ -251,15 +285,15 @@ export const macroMethods = {
         const baseFrames = lenUnits(stage, rawFrames);
         // A looping stage runs until key-off; a keyed one-shot is cut there.
         const untilOff =
-          offT === Infinity ? Infinity : Math.max(0, Math.ceil((offT - t) * perSec) + stepUnits);
+          held() ? Infinity : Math.max(0, Math.ceil((offT() - t) * perSec) + stepUnits);
         const budget = !keyed
           ? loop ? 0 : baseFrames
           : loop
-            ? untilOff === Infinity ? Math.max(0, Math.floor((gateSecs - t) * perSec)) : untilOff
+            ? untilOff === Infinity ? Math.max(0, Math.floor((G.secs - t) * perSec)) : untilOff
             : Math.min(baseFrames, untilOff);
         let cut = false;
         for (let frame = 0; frame < budget; frame += stepUnits) {
-          if (keyed && this._eventFrame(adv(t, frame)) >= offFrame) {
+          if (keyed && this._eventFrame(adv(t, frame)) >= offFrame()) {
             cut = true;
             break;
           }
@@ -269,13 +303,16 @@ export const macroMethods = {
               ? 1
               : Math.min(1, frame / (baseFrames - 1));
           const v = from + (to - from) * share(sampleCurveUnit(curve, phase, params));
-          if (keyed) last = v;
-          const at = keyed ? adv(t, frame) : Math.max(offT, adv(t, frame));
-          yield { v, t: at };
+          const at = keyed ? adv(t, frame) : Math.max(offT(), adv(t, frame));
+          // (a step the caller drops — a held note's, past where it was let
+          // go — is not where its release starts from: next(false))
+          // (`valid`: whether it is still the note's once its gate has moved)
+          const taken = yield { v, t: at, valid: () => !keyed || this._eventFrame(at) < offFrame() };
+          if (keyed && taken !== false) last = v;
           if (mark) yield { k: shownAt[i] + Math.min(shown[i] - 1, Math.floor((loop ? frame % baseFrames : frame) / stepUnits)), t: at };
         }
-        t = cut ? offT : adv(t, budget);
-        if (keyed && (cut || t >= offT - 1e-9)) i = rel - 1; // key-off: on to the release
+        t = cut ? offT() : adv(t, budget);
+        if (keyed && (cut || t >= offT() - 1e-9)) i = rel - 1; // key-off: on to the release
       }
       return t;
     }
@@ -293,8 +330,9 @@ export const macroMethods = {
       // :len → 60 Hz frames (ticks by default, `Nf` as absolute frames, or a
       // dynamic slot resolved by its unit).
       const baseFrames = lenUnits(spec, rawFrames);
+      if (waitKeyOff) while (held()) yield { wait: true };
       const waitFrameOffset = waitKeyOff
-        ? Math.max(0, Math.round((gateSecs - when) * perSec))
+        ? Math.max(0, Math.round((G.secs - when) * perSec))
         : tickClock
           ? Math.max(0, Math.round(Number(waitTicks ?? 0)))
           : waitFrames != null
@@ -304,24 +342,23 @@ export const macroMethods = {
                 Math.round(Number(waitTicks ?? 0) * this._secsPerTick * 60),
               );
       const startWhen = waitKeyOff
-        ? Math.max(when, gateSecs)
+        ? Math.max(when, G.secs)
         : adv(when, waitFrameOffset);
-      const remainingFrames = Math.max(0, (noteFrames / 60) * perSec - waitFrameOffset);
-      const activeFrames = waitKeyOff
-        ? baseFrames
-        : loop
-          ? remainingFrames
-          : Math.min(remainingFrames, baseFrames);
-      for (let frame = 0; frame < activeFrames; frame += stepUnits) {
+      // The note's frames left — its gate's, as it closes (a held note's).
+      const activeFrames = () => {
+        const remainingFrames = Math.max(0, (G.frames / 60) * perSec - waitFrameOffset);
+        return waitKeyOff ? baseFrames : loop ? remainingFrames : Math.min(remainingFrames, baseFrames);
+      };
+      for (let frame = 0; frame < activeFrames(); frame += stepUnits) {
         const phase = loop
           ? (frame % baseFrames) / baseFrames
           : baseFrames <= 1
             ? 1
             : Math.min(1, frame / (baseFrames - 1));
-        yield { v: from + (to - from) * sampleCurveUnit(curve, phase, params), t: adv(startWhen, frame) };
+        yield { v: from + (to - from) * sampleCurveUnit(curve, phase, params), t: adv(startWhen, frame), valid: () => frame < activeFrames() };
         if (mark) yield { k: Math.floor((loop ? frame % baseFrames : frame) / stepUnits), t: adv(startWhen, frame) };
       }
-      return adv(startWhen, activeFrames);
+      return adv(startWhen, activeFrames());
     }
 
     if (spec.type === "steps") {
@@ -335,18 +372,15 @@ export const macroMethods = {
       // before key-off — the target keeps its current value until the release.
       // Key-off leaves attack/sustain for the release on its own frame, as the
       // driver does (see the stages form).
-      const offT = this._keyOffFrameTime(when, gateSecs);
-      const releaseAt = offT === Infinity ? gateSecs : offT;
-      // A step in the key-off's frame is the release's (see the stages form).
-      const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
+      // (A step in the key-off's frame is the release's, see the stages form.)
       let t = when;
       let idx = 0;
       while (
         sustainEnd > 0 &&
-        (offFrame === Infinity ? t < releaseAt - 1e-9 : this._eventFrame(t) < offFrame)
+        (held() ? true : this._eventFrame(t) < offFrame())
       ) {
         if (steps[idx] !== null && steps[idx] !== undefined)
-          yield { v: steps[idx], t };
+          yield { v: steps[idx], t, valid: () => held() || this._eventFrame(t) < offFrame() };
         if (mark) yield { k: idx, t };
         idx++;
         if (idx >= sustainEnd) {
@@ -359,12 +393,15 @@ export const macroMethods = {
         t = tickClock ? this._timeAfterTicks(t, stepUnits) : t + stepSecs;
       }
 
-      // Release phase after gate (steps after :off), spaced by :step too
+      // Release phase after gate (steps after :off), spaced by :step too —
+      // once the gate has closed.
+      while (held()) yield { wait: true };
+      const releaseAt = offT();
       if (releaseIndex !== null && releaseIndex < steps.length) {
         // A tick clock counts the release from the key-off's tick; its first
         // step still lands on the key-off's frame.
-        const tick = spec.step?.unit === "tick" && offT !== Infinity;
-        t = tick ? gateSecs + KEY_OFF_LEAD_SECS : releaseAt;
+        const tick = spec.step?.unit === "tick";
+        t = tick ? G.secs + KEY_OFF_LEAD_SECS : releaseAt;
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
             yield { v: steps[ri], t: tick ? Math.max(releaseAt, t) : t };
@@ -373,7 +410,7 @@ export const macroMethods = {
         }
         return t; // time after last release write
       }
-      return gateSecs; // time at gate-off
+      return G.secs; // time at gate-off
     }
 
     return null;
@@ -394,6 +431,7 @@ export const macroMethods = {
     if (!spec) return null;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     for (const x of this._macroSteps(spec, noteFrames, gateSecs, when, this._stepSecs(spec.step))) {
+      if (x.wait) return null;
       if ("k" in x) continue;
       return x.t <= when + 1e-9 ? clampForTarget(target, this._macroValue(spec, x.v, x.t)) : null;
     }
@@ -542,21 +580,29 @@ export const macroMethods = {
 
   // The times a note's `:keyon` macro re-attacks it (every sample ≥ 0.5 but
   // the first, which is the note's own attack).
+  // A held note's (`off`: where it was let go, _heldNote) are taken again
+  // with its gate closed there.
   _keyonRetrigs(keyonSpec, when, gateTicks, until = Infinity) {
     if (!keyonSpec) return null;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const own = this._resolveNoteFramesAndGate(when, gateTicks);
     const stepSecs = this._stepSecs(keyonSpec.step);
     const self = this;
-    const times = function* () {
-      for (const x of self._macroSteps(keyonSpec, noteFrames, gateSecs, when, stepSecs)) {
+    // `G`: the gate as the steps read it ({ secs, frames }, _macroSteps) —
+    // a held note's, closed when it is let go; a null is the steps waiting
+    // for that. Each time comes as { t, valid } (_macroSteps' validity).
+    const times = function* (G = { secs: own.gateSecs, frames: own.noteFrames }) {
+      for (const x of self._macroSteps(keyonSpec, null, G, when, stepSecs)) {
+        if (x.wait) { yield null; continue; }
         if ("k" in x) continue;
         if (x.t >= until) return;
-        if (self._macroValue(keyonSpec, x.v, x.t) >= 0.5 && x.t > when + 1e-6) yield x.t;
+        if (self._macroValue(keyonSpec, x.v, x.t) >= 0.5 && x.t > when + 1e-6) yield { t: x.t, valid: x.valid };
       }
     };
-    times.endless = gateSecs > when + 1e8 && until === Infinity; // a held note's: until it is let go
+    times.endless = own.gateSecs > when + 1e8 && until === Infinity; // a held note's: until it is let go
+    times.when = when;
     return times;
   },
+
 
   // What a held note (`scope`: its track and note) does when it is let go.
   _heldNote(scope) {
@@ -569,29 +615,38 @@ export const macroMethods = {
   // their release where the steps the run has sent end, its retriggers stop.
   // Returns that time (null: the track holds no note with macros).
   _letGoNote(ti, when) {
-    this._letGo[ti] = this._noteOf[ti];
+    const off = Math.max(when, this._sentUntil() ?? when);
+    this._letGo[ti] = { note: this._noteOf[ti], at: off };
     const h = this._heldNotes.get(ti);
     this._heldNotes.delete(ti);
     if (!h || h.note !== this._noteOf[ti] || !h.release.length) return null;
-    const off = Math.max(when, this._sentUntil() ?? when);
     for (const f of h.release) f(off);
     return off;
+  },
+
+  // Where track `ti`'s note `note` was let go (_letGoNote), or Infinity.
+  _letGoAt(ti, note) {
+    const g = this._letGo[ti];
+    return g && g.note === note ? g.at : Infinity;
   },
 
   // `run(t)` at each of `retrigs`' times, one after the other, as work at
   // its time while the track's note is still the one dispatching now.
   _eachTime(retrigs, run, phase = KEYED) {
     if (!retrigs) return;
-    const times = retrigs();
+    // The note's gate (a held note's open until it is let go, below).
+    const G = { secs: Infinity, frames: Infinity };
+    const times = retrigs.endless ? retrigs(G) : retrigs();
+    if (retrigs.endless) G.secs = retrigs.when + 1e9;
     const scope = this._noteScope;
-    // (A held note's stop when it is let go: its gate has closed.)
-    const ours = () => !scope || (this._noteOf[scope.ti] === scope.note && this._letGo[scope.ti] !== scope.note);
-    const endless = !!retrigs.endless;
+    const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
+    let endless = !!retrigs.endless, mine = {}, pending = null, parked = false;
     const next = () => {
       for (;;) {
         const r = times.next();
         if (r.done) return;
-        const t = r.value;
+        if (r.value === null) { parked = true; return; } // the gate, when the note is let go
+        const { t, valid } = r.value;
         if (t <= this._writeCursor) {
           // Behind the run: at once. With no run (it is over, or stopped) a
           // minute is laid out, and a held note's not at all (_scheduleMacro).
@@ -600,30 +655,53 @@ export const macroMethods = {
           run(t);
           continue;
         }
+        const token = mine;
+        pending = { t, valid };
         this._putWork(this._eventFrame(t), phase, t, () => {
-          if (!ours()) return;
+          if (token !== mine || !ours()) return;
+          pending = null;
           run(t);
           next();
         }, null, endless);
         return;
       }
     };
+    // Let go at `off`: the gate closes there and the times go on — one
+    // waiting that is no longer the note's goes (_scheduleMacro).
+    if (endless && scope) this._heldNote(scope).push((off) => {
+      if (!ours()) return;
+      G.secs = off - KEY_OFF_LEAD_SECS;
+      G.frames = Math.max(1, Math.floor((off - retrigs.when) * 60 + 1e-6));
+      endless = false;
+      if (pending?.valid && !pending.valid()) {
+        mine = {};
+        pending = null;
+        next();
+      } else if (parked) {
+        parked = false;
+        next();
+      }
+    });
     next();
   },
+
 
   // An FM3 operator's `:keyon` retriggers, a step at a time: each a key-off
   // and a key-on of this operator alone, merged with the other operators'
   // in its frame's $28 edges (_fm3Edge), before the note's key-off `until`.
   // Sampled as _scheduleKeyonMacro samples a channel's: the same :step
   // clock, the same gap.
+  // (`until` null: a full gate's, closed where the note is let go.)
   _fm3Retriggers(opBit, keyonSpec, when, gateTicks, until) {
     if (!keyonSpec) return;
     const op = Math.log2(opBit) - 4, gen = this._fm3KeyGen[op];
+    const scope = this._noteScope;
+    const bound = () => until ?? (scope ? this._letGoAt(scope.ti, scope.note) : Infinity);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const stepSecs = this._stepSecs(keyonSpec.step);
     const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
     this._scheduleMacro(keyonSpec, noteFrames, gateSecs, when, (v, t) => {
-      if (v < 0.5 || t <= when + 1e-6 || t >= until - 1e-9) return;
+      if (v < 0.5 || t <= when + 1e-6 || t >= bound() - 1e-9) return;
       const F = this._eventFrame(t);
       this._fm3Edge(opBit, Math.max(when, t - gap), F, 1, op, false, gen);
       this._fm3Edge(opBit, t, F, 1, op, true, gen);
