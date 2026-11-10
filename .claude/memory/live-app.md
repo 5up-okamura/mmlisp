@@ -91,11 +91,12 @@ Open, in the order worth taking:
    `_fmNoteLevel`) as a tone lane's are. `_levelMacroLines` / `_lineAt`
    stay only for the chips' sample voices and `:target midi`, which keep
    lines of their own.
-2. **Five queues of their own** that write "up to the horizon"
-   (`_fm3TlQueue` / `_flushFm3Keys`, `_flushEncoders`, `_chipPcmFrames`,
-   `_waveExprFrames`, `_tempoChangesAhead`) — fold into the frame queue.
-   They flush to the horizon while a frame's work may still run a pass
-   later: check each for a write arriving behind its flush.
+2. **The queues of their own are folded**: FM3's key edges and CSM levels
+   are frame work (FM3_KEYS, FM3_TL); the tone encoders, the chips' sample
+   frames and wave expressions write up to one point (`_settled`). Left:
+   `_tempoChangesAhead`, a forecast the tick → second mapping needs (a
+   gate's end in seconds) — inherent to scheduling by time, not a
+   compensation.
 3. **Tone encoders now get a lane's level at its own time on every
    machine** (the `attAnytime` exception is gone), but a lane's other calls
    ahead (pitch sweeps, the encoders' own queues) are still made at
@@ -114,7 +115,6 @@ Open, in the order worth taking:
    judged when it is dispatched, so a hand let go less than the lookahead
    before a score write misses it. A hot-swap keeps the outgoing score's
    writes ahead; a seek drops a running sweep's remainder (both as before).
-6. The A/B probe that found each of these: `abCompare(src, { samples })`
-   from `live/src/ab-compare.js` run from `drv/tests` (for its wavs), on a
-   word written every way on every kind of track. A probe that comes back
-   clean goes in as `drv/tests/m2-*-every-track.mmlisp`.
+6. `check:words` (tools/scripts/probe-words.mjs) is the probe: every word
+   every way on every kind of Mega Drive track against the driver. 0 cases
+   part. A new word or way of writing goes into its tables first.
