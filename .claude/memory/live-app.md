@@ -145,11 +145,20 @@ Open, in the order worth taking:
    no gate saw: a sweep across its track's loop (one in the loop starts over
    each pass, one from before it runs on) — `check:loops` plays several
    passes against the driver, which the A/B gate's one pass does not.
-   A macro's values are still laid out at its note, but each step asks as
-   it runs whether the track's note is still its own (`_noteOf`,
-   `_noteScope`) — the next note takes the lane over on its frame, as the
-   driver's dispatch does before the frame's macros; no score's output
-   moved. **Key edges are the driver's too**: a gate shorter than its note
+   **A macro steps one at a time too**: `_macroSteps` is a generator (the
+   one core every target and type shares), `_scheduleMacro` writes a step
+   as frame work (MACRO) and pulls the next; a :keyon's retriggers come one
+   at a time (`_keyonRetrigs`, `_eachTime`), the envelopes restarting at
+   each. What waited for a macro's end hears it when it comes (`onEnd`:
+   the level tail's silence and the CSM mute through `_lvEnded`, a :keyon
+   note's last key-off). A held note's chains are endless work. Each step
+   asks whether the track's note is still its own (`_noteOf`,
+   `_noteScope`): the next note takes the lane over on its frame. The
+   scale slot is read at the step (`_macroValue`). The panel's marks and
+   a step vector's outline are laid out for the eye only (`_macroShown`, a
+   held note's first minute). `_macroDry` and the eager layout are gone;
+   a held note with a sustain loop, a looping :keyon or a curve no longer
+   runs the player out of memory (check:loops holds three to the driver). **Key edges are the driver's too**: a gate shorter than its note
    keys off at its end; a full gate's key-off waits for the track's next
    event (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, each with its
    gate's end `at`): a note keys off before its key-on (a slur cancels
@@ -164,8 +173,7 @@ Open, in the order worth taking:
    removed a silence / key-off a frame early between abutting notes (the
    gate's end rounded to the frame before the next note's). `_nextNote` is
    left only for the sample editor's playhead (`_reportSample`'s `cut`), a
-   UI hint. A scaled macro (`:scale $slot`) still reads its slot when laid
-   out, not per step.
+   UI hint.
 8. **A word's event is one rule** (`_word(ev, when, w)`): a value, a
    `$slot`, `+`, `*`, a sweep, a stop — the same for every word on every
    track; the track gives only the word, `{ read, write, sweep? }`
