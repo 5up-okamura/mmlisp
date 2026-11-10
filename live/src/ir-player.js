@@ -656,6 +656,7 @@ export class IRPlayer {
     this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 };
     this._masterVol = VOL_UNITY;
     this._chipPcm = null; // the YM2608's sample voices' levels (_chipPcmFrames)
+    this._midiVolLines = null; // :target midi: each track's note :vol macro (_midiLevel)
     this._laneExpr?.fill(null); // a wave expression is its run's (_waveExprFrames)
     this._psgPan?.fill(0);
     this._psgDuty?.fill(8);
@@ -1188,7 +1189,7 @@ export class IRPlayer {
       : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3OpVolAtTime(n, when)
       : kind === "psg" ? this._psgVolAtTime(n, when)
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
-      : kind === "midi" ? this._chipPcmParamAt(strip.tracks[0], "vol", when)
+      : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
       : this._chipPcmParamAt(strip.tracks[0], "vol", when);
     return { v: Math.round(v), hand: false };
   }
@@ -1199,6 +1200,12 @@ export class IRPlayer {
     if (strip.voice != null) return [`voice:${strip.voice}`];
     const sites = new Set();
     for (const head of strip.heads ?? []) {
+      // A MIDI channel's :vol, the drums' too, is its output's (midi-output.js),
+      // which reads the hand.
+      if (this._target?.name === "midi") {
+        sites.add(`midi:${head}`);
+        continue;
+      }
       const c = this._target.channels[head];
       const core = c && CORE_OF_KIND[c.part.kind];
       // An fm3 part's :vol is its operator's own (driver.md §13.4).
@@ -1206,8 +1213,6 @@ export class IRPlayer {
       if (op) sites.add(`fm3op:${op[1]}`);
       else if (core === "fm") sites.add(`fm:${c.voice}`);
       else if (core === "psg") sites.add(`psg:${toneLaneOf(c)}`);
-      // A MIDI channel's :vol is its output's (midi-output.js), which reads the hand.
-      else if (core === "none") sites.add(`midi:${head}`);
       else if (core === "sample") sites.add(c.part.mixVoice ? `voice:${c.part.mixVoice(c.voice)}` : `pcm:${c.voice}`);
     }
     return [...sites];
@@ -1293,7 +1298,7 @@ export class IRPlayer {
   scoreLevelOf(strip) {
     const when = this._audioContext?.currentTime ?? 0;
     return {
-      vol: Math.round(this._chipPcmParamAt(strip?.tracks?.[0], "vol", when)),
+      vol: Math.round(this._lineAt(this._midiVolLines?.get(strip?.tracks?.[0]), when) ?? this._chipPcmParamAt(strip?.tracks?.[0], "vol", when)),
       master: Math.round(this._chipPcmParamAt("master", "vol", when)),
     };
   }
@@ -2607,6 +2612,51 @@ export class IRPlayer {
     return expandLoops(events);
   }
 
+  // `:target midi`'s levels as the score writes them, for the panel: a
+  // track's :vol and the song's :master (a value or a sweep), and a note's
+  // :vol macro, which takes the fader's place until the next note (the
+  // output's plan does the same, export-midi.js).
+  _midiLevel(ev, when) {
+    const ti = ev._trackIndex;
+    if (ev.cmd.startsWith("PARAM_")) {
+      const t = String(ev.args?.target ?? "").toUpperCase();
+      if (t === "MASTER") this._chipPcmParam({ ...ev, _trackIndex: "master" }, when, "vol");
+      else if (t === "VOL" && ti != null) this._chipPcmParam(ev, when, "vol");
+    } else if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ti != null) {
+      const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+      const line = ev.args?.vol ? this._levelMacroLines(ev.args, when, gateTicks, this._nextNote(ev).secs).vol : null;
+      (this._midiVolLines ??= new Map()).set(ti, line?.length ? line : null);
+    }
+  }
+
+  // A sample or MIDI track's `:vol+` / `:vol*` / `:master+` …: a value from
+  // the one in force (its fader, as the driver's read_param reads it), then
+  // played as that value's write. FM and PSG tracks read theirs in their own
+  // dispatch (_readParam).
+  _relativeLevel(ev, when) {
+    if (ev.cmd !== "PARAM_ADD" && ev.cmd !== "PARAM_MUL") return ev;
+    const core = ev._route?.core;
+    if (core !== "sample" && core !== "none") return ev;
+    const target = String(ev.args?.target ?? "").toUpperCase();
+    if (target !== "VOL" && target !== "MASTER") return ev;
+    const midi = this._target?.name === "midi"; // its drums are sample tracks too
+    const cur = target === "MASTER"
+      ? midi ? this._chipPcmParamAt("master", "vol", when) : this._masterAt(when)
+      // The Mega Drive's DAC voices keep their fader; a chip's sample track
+      // and a MIDI track, a line (_chipPcmParam).
+      : ev._route.part?.name === "dac" ? this._pcmVolNow?.[ev._chIndex ?? 0] ?? VOL_UNITY
+        : this._chipPcmParamAt(ev._trackIndex, "vol", when);
+    let value;
+    if (ev.cmd === "PARAM_ADD") value = cur + this._resolveOperand(ev.args?.delta, when);
+    else {
+      // Unsigned 8.8, as the driver multiplies (the FM dispatch's PARAM_MUL).
+      const f = ev.args?.factor;
+      const fixed = f && typeof f === "object" && "src" in f ? this._resolveSrc(f.src, when) : Math.round((Number(f) || 0) * 256);
+      value = Math.floor((Math.round(cur) * Math.max(0, Math.min(0xffff, fixed))) / 256);
+    }
+    return { ...ev, cmd: "PARAM_SET", args: { target: ev.args.target, value: Math.max(0, Math.min(31, value)) } };
+  }
+
   // A sample note's place in its def's points (setOnPosition): a `gate` or
   // `loop` note is let go at its gate, every note stopped by the next.
   _reportSample(ev, when) {
@@ -2617,14 +2667,11 @@ export class IRPlayer {
   }
 
   _dispatchEvent(ev, when) {
+    ev = this._relativeLevel(ev, when);
     // `:target midi`: its sound is the output's, which the plan writes; what
     // the panel shows of its levels is the score's, kept here — before the
     // panel's hand, which the output reads beside it (scoreLevelOf).
-    if (this._target?.name === "midi" && ev.cmd.startsWith("PARAM_")) {
-      const t = String(ev.args?.target ?? "").toUpperCase();
-      if (t === "MASTER") this._chipPcmParam({ ...ev, _trackIndex: "master" }, when, "vol");
-      else if (t === "VOL" && ev._trackIndex != null) this._chipPcmParam(ev, when, "vol");
-    }
+    if (this._target?.name === "midi") this._midiLevel(ev, when);
     const hand = handWordOf(ev);
     if (hand && !this._scoreMayWrite(hand)) return;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);

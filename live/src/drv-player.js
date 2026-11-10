@@ -3052,7 +3052,8 @@ export class DrvPlayer {
     // vol reads the fader (a relative write or a sweep from "now" moves the
     // fader), not a :vol macro's live level (driver.md §7.2).
     if (target === TARGET_ID.VOL)
-      return ch < 6 ? this._fm[ch].volBase : ch < 10 ? this._psg[ch - 6].volBase : 31;
+      return ch < 6 ? this._fm[ch].volBase : ch < 10 ? this._psg[ch - 6].volBase
+        : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].volBase : 31;
     if (target === TARGET_ID.VEL)
       return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel
         : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].vel : VEL_FINE_MAX)

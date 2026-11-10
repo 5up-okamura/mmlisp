@@ -1052,7 +1052,8 @@ static int read_param(const MMLSeq *s, int ch, int target) {
     }
   }
   if (target == T_VOL)
-    return ch < 6 ? s->fm[ch].vol_base : ch < 10 ? s->psg[ch - 6].vol_base : 31;
+    return ch < 6 ? s->fm[ch].vol_base : ch < 10 ? s->psg[ch - 6].vol_base
+         : ch >= CH_PCM1 && ch <= CH_PCM3 ? s->pcm[ch - CH_PCM1].vol_base : 31;
   if (target == T_VEL)
     return ((ch < 6 ? s->fm[ch].vel : ch < 10 ? s->psg[ch - 6].vel
              : ch >= CH_PCM1 && ch <= CH_PCM3 ? s->pcm[ch - CH_PCM1].vel : VEL_MAX)
