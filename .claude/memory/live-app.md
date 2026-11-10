@@ -267,3 +267,16 @@ Design:
   or plain (rest / track end / gate end). A hold now ends at END_OF_TRACK
   (language.md §17; it was left keyed before); a track end's silence is on
   its frame, not ε before.
+- Done: (2) — `_noteGate(ev, when)` (ir-player-levels.js) is the one gate
+  rule (hold / open = the driver's pendingOff / timed), decided once per
+  note in `_dispatchEvent` (`_openNote`), read by every voice
+  (`_gateOf(ti)`); a voice only says what closing is (`_noteCloses`), a
+  sample voice through `_sampleCloses` (cut / release / a shot's no-op;
+  chips' `release(t, h, how)` in `_chipPcmHit`). A timed gate closes on a
+  timer at its end ({ gate }: whole frames on a frame-clocked machine); a
+  pcm note's PCM_NOTE_OFF closes it too, in its track's order (pcm-ab).
+  `_holdChannels` is gone (holds are `_open` records with `gate.hold`).
+  PSG now reads an explicit full gate as FM does; FM's short gate with a
+  :keyon keys off at the gate and again after an echo tail (the driver's);
+  MD PCM's retriggers run on `_eachTime`. A one-shot capture ends at the
+  song's end at the earliest (a muted track's writes set it before).

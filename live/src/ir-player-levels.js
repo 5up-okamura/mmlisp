@@ -126,10 +126,8 @@ export const levelMethods = {
   },
 
   // A note's level on its lane: its key-on's, then its :vel and :vol macros a
-  // step at a time, and silence at its gate — or, with a macro, at the
-  // level's tail. gateTicks === 0 is a held note (triggerKeyOff ends it);
-  // offWhen is null when the note holds or slurs into the next.
-  _psgNoteLevel(psgCh, ev, noteWhen, gateTicks, baseVel, offWhen) {
+  // step at a time (its silence is its close's, _psgSilence).
+  _psgNoteLevel(psgCh, ev, noteWhen, gateTicks, baseVel) {
     const args = ev.args;
     const site = `psg:${psgCh}`;
     const L = this._lvNoteOn(site, Math.max(0, Math.min(15, baseVel)));
@@ -139,9 +137,6 @@ export const levelMethods = {
     this._lvMacros(site, args, noteWhen, gateTicks, () => keyed);
     this._psgRecompose(psgCh, noteWhen);
     keyed = true;
-    // Silence at the gate, or with a macro at the level's tail — while the
-    // note is the track's: the next note takes the level over.
-    if (offWhen != null) this._psgSilence(psgCh, ev._trackIndex, !!(args.velMacro || args.vol), offWhen);
   },
 
   // A tone lane's silence at the end of its note's gate `off`: there, or
@@ -155,24 +150,57 @@ export const levelMethods = {
     });
   },
 
-  // ---- a track's open note: one close for every voice ----
-  // A note whose gate has not closed — one that reaches its end (no gate,
-  // or one into a tie: the track's next event or its gate's end closes it),
-  // a hold (the host's key-off) — is its track's open note, and `close(t,
-  // how)` is what closing does on its voice (how: { next, legato, keys } at
-  // the track's next note, { host } at the host's key-off, {} else).
-  _openNote(ti, at, close) {
-    this._open[ti] = { note: this._noteOf[ti], at, close };
+  // ---- a track's note: one gate rule, one close, for every voice ----
+  // A note's gate, as the driver keeps it on every channel (opcodes.md
+  // §3.1): 0 holds — the host's key-off, a rest or the track's end closes
+  // it; one that reaches the note's end (none written, or the note's own
+  // length) closes at the track's next event (`open`, the driver's
+  // pendingOff); any other closes at its end (`timed`), inside a tie when it
+  // reaches past the note. The note's macros run as a held note's until it
+  // closes (`macroGate` 0) unless its gate is shorter than the note.
+  _noteGate(ev, when) {
+    const length = ev.args?.length ?? 0;
+    const ticks = this._frameGate(when, ev.args?.gate ?? length, length);
+    const hold = !(ticks > 0);
+    return {
+      length, ticks, hold,
+      open: !hold && ticks === length,
+      timed: !hold && ticks !== length,
+      end: hold ? Infinity : this._timeAfterTicks(when, ticks),
+      macroGate: hold || ticks >= length ? 0 : ticks,
+    };
   },
-  // Track `ti`'s open note closed at `t`: on its voice first, then its
-  // macros take their release, as the driver's dispatch keys off before its
+
+  // Track `ti`'s note `ev` at `when` opens: its gate decided (_noteGate),
+  // and a timed gate's close set at its end ({ gate }: on a frame-clocked
+  // machine, whole frames from its key-on, on every voice). What closing
+  // does on its voice is the voice's (_noteCloses).
+  _openNote(ti, ev, when) {
+    const gate = this._noteGate(ev, when);
+    const o = (this._open[ti] = { note: this._noteOf[ti], gate, at: gate.end, close: null, key: this._holdKey(ev) });
+    if (gate.timed) this._whileNote(ti, gate.end, () => { if (this._open[ti] === o) this._closeNote(ti, gate.end, { gate: true }); });
+    return gate;
+  },
+  // The gate of track `ti`'s note dispatching now.
+  _gateOf(ti) {
+    return this._open[ti]?.gate;
+  },
+  // What closing track `ti`'s note does on its voice: `close(t, how)`, how
+  // { next, legato, keys } at the track's next note, { host } at the host's
+  // key-off, { gate } at its gate's end, {} at a rest or the track's end.
+  _noteCloses(ti, close) {
+    const o = this._open[ti];
+    if (o && o.note === this._noteOf[ti]) o.close = close;
+  },
+  // Track `ti`'s note closed at `t`: on its voice first, then its macros
+  // take their release, as the driver's dispatch keys off before its
   // frame's macros step — but at the track's next note, which takes the
   // voice over.
   _closeNote(ti, t, how = {}) {
     const o = this._open[ti];
     if (!o) return;
     this._open[ti] = null;
-    o.close(t, how);
+    o.close?.(t, how);
     if (!how.next) this._letGoNote(ti, t);
   },
 

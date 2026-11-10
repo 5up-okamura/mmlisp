@@ -58,9 +58,6 @@ export const sampleMethods = {
       case "PCM_NOTE_ON":
         this._dispatchPcmNoteOn(ev, when);
         break;
-      case "PCM_NOTE_OFF":
-        this._pcmEv(when, { kind: ev.args?.mode === "gate" ? "cut" : "off", voice });
-        break;
       // A word, every way it is written (_word).
       case "PARAM_SET":
       case "PARAM_FROM_VAL":
@@ -163,12 +160,16 @@ export const sampleMethods = {
   // step re-keys the voice — a hit of its own, its level envelopes starting
   // over with it, as on FM and PSG (a gate or loop note's only inside its
   // gate). `key(t, hit)` writes a key: the first, then each step's.
-  _chipPcmHit(voice, ev, when, end, fields, key) {
+  // `release(t, h, how)` is what closing the note does on the chip
+  // (_sampleCloses), to the track's own sound on the voice (`h`, null where
+  // another track's holds it).
+  _chipPcmHit(voice, ev, when, end, fields, key, release = null) {
     const st = this._chipPcmState();
     const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
-    const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+    const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
+    const mode = ev.args?.mode ?? "shot", held = mode === "gate" || mode === "loop";
+    if (release) this._sampleCloses(ev, (t, how) => release(t, this._chipPcmOwnHit(voice, ev._trackIndex), how));
     const retrigs = this._keyonRetrigs(keyon, when, gateTicks, held ? gateSecs : Infinity);
     // The note's macros as they are now, shared by its retriggers' hits.
     const macros = [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"], [pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
@@ -219,6 +220,20 @@ export const sampleMethods = {
       keyHit({ ...fresh, t, end: end + (t - when) });
     });
     return hit;
+  },
+
+  // What closing a sample note does (_closeNote): `release(t, { cut,
+  // shot })` — at its gate, a rest or the track's end a `:mode gate` note's
+  // cut, a loop's release; at the host's key-off a release; a shot's is the
+  // chip's to take or not (the Mega Drive's voice model plays it out, as
+  // the driver's key-off does). Nothing at the track's next note, which
+  // takes the voice over.
+  _sampleCloses(ev, release) {
+    const mode = ev.args?.mode ?? "shot";
+    this._noteCloses(ev._trackIndex, (t, how) => {
+      if (how.next) return;
+      release(t, { cut: mode === "gate" && !how.host, shot: mode === "shot" && !how.host });
+    });
   },
 
   // The hit that holds `voice` now, if it is `ti`'s: a gate's end stops
@@ -361,17 +376,14 @@ export const sampleMethods = {
           h.level = adpcmLevel(this._routes.get(h.ti).part.level, this._chipPcmLevelAt(h, t));
           h.deltaN = this._adpcmDeltaN(h, t);
           for (const [p, a, d] of enc.note({ start, stop }, h.deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
+        }, (t, h, how) => {
+          // (a voice nothing holds is stopped too)
+          if (how.shot) return;
+          if (!this._chipPcm?.owner.has("adpcm") || h) for (const [p, a, d] of enc.stop()) this._write(p, a, d, t);
+          if (h) h.end = Math.min(h.end, t);
         });
         break;
       }
-      case "PCM_NOTE_OFF":
-        // Only the track that keyed the voice last stops it.
-        if (ev.args?.mode === "gate" || ev.args?.mode === "loop") {
-          const h = this._chipPcmOwnHit("adpcm", ti);
-          if (!cp.owner.has("adpcm") || h) out(enc.stop());
-          if (h) h.end = Math.min(h.end, when);
-        }
-        break;
       // A word, every way it is written (_word): the track's fader and
       // pitch, its pan, and the range the next notes play (seconds as
       // heard; a loop is the range itself on this chip, the compiler holds
@@ -432,27 +444,17 @@ export const sampleMethods = {
         const loopEnd = l.end != null ? at(l.end) : l.len != null ? (loopStart ?? entry.loopStart) + at(l.len) : undefined;
         const mode = ev.args?.mode;
         const shotEnd = when + Math.max(0, Math.min(end, entry.data.length) - start) / perSec;
-        // A held note (:len 0) waits for triggerKeyOff, as the Mega Drive's does.
-        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) {
-          this._holdChannels.set(this._holdKey(ev), ti);
-          // The host's key-off releases a `:len 0` loop; its tail plays out.
-          this._openNote(ti, Infinity, (t, how) => { if (how.host) this._pcm8Ev(t, { kind: "off", voice }); });
-        }
         this._chipPcmHit(key, ev, when, mode === "shot" || !mode ? shotEnd : Infinity,
           { rate: entry.rate, midi, pcm8: voice }, (t, h) => {
             h.gain = pcm8Gain(this._chipPcmLevelAt(h, t));
             h.step = this._pcm8Step(h, t);
             this._pcm8Ev(t, { kind: "on", voice, sample: ev.args.sample, gain: h.gain, step: h.step,
               start, end, loopStart, loopEnd, mode: mode ?? "shot" });
+          }, (t, h, { cut, shot }) => {
+            if (!h || shot) return;
+            this._pcm8Ev(t, { kind: cut ? "cut" : "off", voice });
+            if (cut) h.end = Math.min(h.end, t);
           });
-        break;
-      }
-      case "PCM_NOTE_OFF": {
-        // Only the track that keyed the voice last stops it.
-        const h = this._chipPcmOwnHit(key, ti);
-        if (!h) break;
-        if (ev.args?.mode === "gate") { this._pcm8Ev(when, { kind: "cut", voice }); h.end = Math.min(h.end, when); }
-        else if (ev.args?.mode === "loop") this._pcm8Ev(when, { kind: "off", voice });
         break;
       }
       // A word, every way it is written (_word): the track's fader and
@@ -505,16 +507,13 @@ export const sampleMethods = {
         const loopStart = Math.min(end, l.start != null ? at(l.start) : entry.loopStart ?? start);
         const loopEnd = Math.min(end, l.end != null ? at(l.end) : l.len != null ? loopStart + at(l.len) : entry.loopEnd ?? end);
         const mode = ev.args?.mode ?? "shot";
-        // Where it stops: a gate or loop note at its gate (on its frame, as
-        // its writes are); a shot when its sample runs out, a loop held for a
-        // while; any of them at the track's next note on the channel
-        // (_chipPcmHit), the last sample before it, so the channel is off
-        // before that note keys it.
-        const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+        // Where it stops: a shot when its sample runs out, a loop held for
+        // a while; a gate or loop note at its close (below: on its frame,
+        // as its writes are); any of them at the track's next note on the
+        // channel (_chipPcmHit), the last sample before it, so the channel
+        // is off before that note keys it.
         const onFrame = (t) => (this._target.frameClock ? this._frameStart(t) : t);
-        const stop = mode !== "shot" && gateTicks > 0 ? onFrame(this._timeAfterTicks(when, gateTicks)) : Infinity;
-        const cap = Number.isFinite(stop) ? Math.floor((stop - when) * DDA_RATE + 1e-9)
-          : mode === "loop" ? Math.ceil(DDA_HOLD_SEC * DDA_RATE) : Infinity;
+        const cap = mode === "loop" ? Math.ceil(DDA_HOLD_SEC * DDA_RATE) : Infinity;
         const step = perSec / DDA_RATE; // source frames a timer tick
         const looped = mode === "loop" && loopEnd - loopStart >= 1;
         const total = Math.min(cap, looped ? Infinity : Math.max(0, Math.ceil(((mode === "loop" ? loopEnd : end) - start) / step - 1e-9)));
@@ -534,6 +533,12 @@ export const sampleMethods = {
         this._chipPcmHit(key, ev, when, off, { dda: ch, bytes, total, sent: 0 }, (t, h) => {
           h.att = levelSteps(ev._route.part.level, this._ddaLevel(h, t));
           write([...enc.pan(ch, st.pan), ...enc.level(ch, h.att)], t);
+        }, (t, h, { shot }) => {
+          if (!h || h.dumped || shot) return;
+          h.end = Math.min(h.end, onFrame(t));
+          // (never short of the samples its frames have sent: the off follows them)
+          h.total = Math.min(h.total, Math.max(h.sent, Math.floor((h.end - h.t) * DDA_RATE + 1e-9)));
+          this._ddaFrame(h, h.end); // its last samples, and the channel off
         });
         break;
       }
@@ -590,7 +595,7 @@ export const sampleMethods = {
         const mode = ev.args?.mode ?? "shot";
         // The level at key-on: the note's vel (or its macro's first step),
         // the track's :vol (or its macro's), the master, the strip.
-        const gateTicks = this._resolveGateTicks(ev.args?.gate, ev.args?.length);
+        const gateTicks = (this._gateOf(ti) ?? this._noteGate(ev, when)).macroGate;
         const gain = levelGain({
           vel: this._macroOnset(ev.args?.velMacro, when, gateTicks, "VEL") ?? Number(ev.args?.vel ?? 15),
           faders: [this._handVol("voice:dpcm") ?? this._macroOnset(ev.args?.vol, when, gateTicks, "VOL") ?? this._lv(`strk:${ti}`).vol,
@@ -618,11 +623,8 @@ export const sampleMethods = {
           const t = this._target.frameClock ? this._frameTime(when) : when;
           timed.stream({ when: t, rate: 1, port: go[0][0], perTick: go.length, bytes: flat });
         } else write(go, when);
-        if (mode !== "shot" && gateTicks > 0) {
-          // At its gate, while it is the track's note (a note there takes over).
-          const gate = this._timeAfterTicks(when, gateTicks);
-          this._whileNote(ti, gate, () => write(dmc.stop(), gate));
-        }
+        // Stopped at its close (_sampleCloses); a shot plays out.
+        this._sampleCloses(ev, (t, { shot }) => { if (!shot) write(dmc.stop(), t); });
         break;
       }
       // A word, every way it is written (_word): the track's fader (read
@@ -709,19 +711,14 @@ export const sampleMethods = {
           h.tuned = midi + this._hitCents(h, t) / 100;
           const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, st.pan, t, h.tuned);
           for (const [p, a, d] of writes) this._write(p, a, d, t);
+        }, (t, h, { cut }) => {
+          // A gate note's sound dumped at its gate; a rhythm sound has no release.
+          if (!cut || !h) return;
+          for (const [p, a, d] of enc.dump(sound, t)) this._write(p, a, d, t);
+          h.end = Math.min(h.end, t);
         });
         break;
       }
-      case "PCM_NOTE_OFF":
-        // Only the track that keyed the sound last dumps it.
-        if (sound && ev.args?.mode === "gate") {
-          const h = this._chipPcmOwnHit(sound, ti);
-          if (h) {
-            for (const [p, a, d] of enc.dump(sound, when)) this._write(p, a, d, when);
-            h.end = Math.min(h.end, when);
-          }
-        }
-        break;
       // A word, every way it is written (_word): the track's fader, its
       // pitch where the rhythm tunes (the OPLL's), its pan.
       case "PARAM_SET":
@@ -785,35 +782,23 @@ export const sampleMethods = {
     // next note on the track, which re-instantiates them; a :keyon retrigger
     // restarts the level envelopes, as it does on FM and PSG.
     const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
-    const lengthTicks = ev.args.length;
-    const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
+    const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    if (gateTicks === 0) {
-      this._holdChannels.set(this._holdKey(ev), ev._trackIndex); // waits for KEY_OFF
-      // The host's key-off releases a `:len 0` loop; its tail plays out.
-      this._openNote(ev._trackIndex, Infinity, (t, how) => { if (how.host) this._pcmEv(t, { kind: "off", voice }); });
-    }
+    // Its close: the driver's key-off — a loop's release, its tail played
+    // out (a shot's plays on); a `:mode gate` note's cut.
+    this._sampleCloses(ev, (t, how) => this._pcmEv(t, { kind: how.cut ? "cut" : "off", voice }));
     // A :keyon retrigger STARTs after its frame's level steps, so it
     // carries them: they ride its event instead of sending a level of their
-    // own. Each step is its frame's work (MACRO), each retrigger after them.
-    // The retriggers come one at a time (_keyonRetrigs): `cur` is the next,
-    // the last of its frame, which that frame's level steps ride.
+    // own. Each retrigger is its frame's work at its time (_eachTime, before
+    // the frame's steps, MACRO), and STARTs after them (AFTER) — the last
+    // of its frame, which that frame's level steps ride (`due`).
     const retrigs = this._keyonRetrigs(keyon, when, gateTicks);
-    const times = retrigs?.();
-    let ahead = times?.next();
-    const pullRetrig = () => {
-      // (a null: a held note's waiting for its key-off — none after that here)
-      if (!ahead || ahead.done || ahead.value === null) return null;
-      let t = ahead.value.t;
-      const F = this._eventFrame(t);
-      for (ahead = times.next(); !ahead.done && ahead.value !== null && this._eventFrame(ahead.value.t) === F; ahead = times.next()) t = ahead.value.t;
-      return { F, t };
-    };
-    let cur = pullRetrig();
+    const due = new Map();
     const first = []; // the samples on the note itself: its key-on composes from them
     let on = false;
     const level = (kind, value, t) => {
-      if (cur && this._eventFrame(t) === cur.F) cur[kind] = value;
+      const r = due.get(this._eventFrame(t));
+      if (r) r.carried[kind] = value;
       else this._pcmEv(t, { kind, voice, value, macro: true });
     };
     this._envRetrigs = retrigs;
@@ -858,18 +843,14 @@ export const sampleMethods = {
     on = true;
     for (const x of first) level(x.kind, x.value, x.t);
     // Each retrigger while the note is the track's: its next note takes over.
-    const ti = ev._trackIndex, note = this._noteOf[ti];
-    const retrig = () => {
-      if (!cur) return;
-      const t = cur.t + PCM_SWEEP_AFTER;
-      this._step(cur.F, AFTER, t, () => {
-        if (this._noteOf[ti] !== note || t >= this._letGoAt(ti, note)) return; // the next note's, or let go
-        const { F: _F, t: _at, ...carried } = cur;
-        this._pcmEv(t, { kind: "retrig", voice, ...carried });
-        cur = pullRetrig();
-        retrig();
-      }, null, !!retrigs?.endless);
-    };
-    retrig();
+    this._eachTime(retrigs, (t) => {
+      const F = this._eventFrame(t), r = { carried: {} };
+      due.set(F, r);
+      this._step(F, AFTER, t + PCM_SWEEP_AFTER, () => {
+        if (due.get(F) !== r) return;
+        due.delete(F);
+        this._pcmEv(t + PCM_SWEEP_AFTER, { kind: "retrig", voice, ...r.carried });
+      });
+    });
   },
 };

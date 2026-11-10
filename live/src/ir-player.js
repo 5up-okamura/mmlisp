@@ -201,7 +201,6 @@ export class IRPlayer {
 
     // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
     // channel id → the track that keyed it.
-    this._holdChannels = new Map();
 
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
     // operator of channel 3 via the shared 0x28 key register (see
@@ -485,7 +484,6 @@ export class IRPlayer {
     this._ssgMixBase.fill(null);
     this._noiseRateBase = null;
     this._ssgMacroed.fill(null);
-    this._holdChannels.clear();
     this._loopCount.clear();
     this._psgKeyedUntil.fill(0);
     this._slots = new Map(); // a sweep's slot (_slotKey) → the sweep whose frames may still write
@@ -955,9 +953,8 @@ export class IRPlayer {
    * @param {string} key  the held channel (_holdKey): "fm:2", "psg:3", "sample:0"
    */
   triggerKeyOff(key) {
-    if (!this._holdChannels.has(key)) return;
-    const tIdx = this._holdChannels.get(key);
-    this._holdChannels.delete(key);
+    const tIdx = this._open.findIndex((o) => o?.gate.hold && o.key === key);
+    if (tIdx < 0) return;
     const when = this._audioContext?.currentTime ?? 0;
     this._resumeHeldTrack(tIdx, when);
     // The hold closes as any open note does, on its voice (_closeNote).
@@ -1127,7 +1124,7 @@ export class IRPlayer {
    * to each channel holding a `:len 0` / `:gate 0` note.
    */
   releaseHolds() {
-    for (const ch of [...this._holdChannels.keys()]) this.triggerKeyOff(ch);
+    for (const o of this._open.filter((o) => o?.gate.hold)) this.triggerKeyOff(o.key);
   }
 
   /** The tracks stopped at a `:len 0` note, waiting for their key-off. */
@@ -1239,7 +1236,7 @@ export class IRPlayer {
       if (r.core === core && (!partName || r.part?.name === partName)) yield [ti, r.lane];
   }
 
-  // The key a held note's channel is kept under in _holdChannels.
+  // The key a held note's channel is let go by (triggerKeyOff).
   _holdKey(ev) {
     const r = ev._route;
     return `${r.core}:${r.lane}`;
@@ -1551,6 +1548,7 @@ export class IRPlayer {
         midi: 60, offset: 0,
       }));
       this._open = [];
+      this._songEndAt = null;
       this._tracks = this._flattenTracks();
       // Every track starts at BASE, as the driver's start their first frame
       // (driver.md §4.2). The preamble above writes at BASE too and was pushed
@@ -1663,8 +1661,10 @@ export class IRPlayer {
     writes.sort((a, b) => a.sec - b.sec);
 
     if (loopStartSec === null) {
-      // One-shot: end just after the last write so final releases ring out.
-      endSec = (writes.length ? writes[writes.length - 1].sec : 0) + 0.05;
+      // One-shot: end just after the last write so final releases ring out
+      // — and not before the song's end, whichever of its tracks sound.
+      const songEnd = this._songEndAt != null ? this._songEndAt - BASE : 0;
+      endSec = Math.max(writes.length ? writes[writes.length - 1].sec : 0, songEnd) + 0.05;
     } else {
       // Looping: keep only [0, endSec). The clock ran slightly past the loop
       // end to fully populate the window; those overflow writes belong to the
@@ -2076,27 +2076,6 @@ export class IRPlayer {
     this._fm3KeyGen = [0, 0, 0, 0]; // per operator: bumped to drop its key-ons still waiting
   }
 
-  /**
-   * Queue one FM3 operator note's key edges as its frames' work (FM3_KEYS),
-   * in the driver's order: dispatch before macros, then track (a :keyon
-   * retrigger: operator), then time, a key-off before a key-on at one time.
-   * @param {number} opBit  operator key bit (0x10=OP1 … 0x80=OP4)
-   * @param {number} onTime audio time of key-on
-   * @param {number|null} offTime audio time of key-off, or null for a hold note
-   * @param {{off: number, on: number}[]} retriggers :keyon re-attacks, in time order
-   * @param {number} track  the note's track index (its dispatch order)
-   */
-  // `bound`: where the note's retriggers end — its gate's end (null: a hold).
-  _scheduleFm3OpKey(opBit, onTime, offTime, track, bound = null) {
-    const op = Math.log2(opBit) - 4;
-    const gen = this._fm3KeyGen[op];
-    const edge = (t, frame, phase, order, on) => this._fm3Edge(opBit, t, frame, phase, order, on, gen);
-    edge(onTime, this._eventFrame(onTime), 0, track, true);
-    // A hold, and a full gate, close as the track's open note (_closeNote):
-    // same frame, same track, before a next note's key-on.
-    if (offTime != null) edge(offTime, this._eventFrame(offTime), 0, track, false);
-  }
-
   // An fm3 operator's key edge, as work of its frame once every write to
   // $28 there is known (FM3_KEYS), in the driver's order; a key-on dropped
   // when the operator was let go since (`gen`: a mute, a hold let go).
@@ -2224,7 +2203,7 @@ export class IRPlayer {
       this._word(ev, when, { read: () => this._lv(site).vol, write: (v) => this._lvSetVol(site, v) });
     else if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
       this._lvNoteOn(site, Number(ev.args?.vel ?? 15));
-      if (ev.args?.vol) this._lvMacros(site, { vol: ev.args.vol }, when, this._resolveGateTicks(ev.args?.gate, ev.args?.length));
+      if (ev.args?.vol) this._lvMacros(site, { vol: ev.args.vol }, when, (this._gateOf(ti) ?? this._noteGate(ev, when)).macroGate);
     }
   }
 
@@ -2232,16 +2211,24 @@ export class IRPlayer {
   // `loop` note is let go at its gate, every note stopped by the next.
   _reportSample(ev, when) {
     const mode = ev.args.mode ?? "shot";
-    const gateTicks = this._resolveGateTicks(ev.args.gate, ev.args.length);
-    const off = mode === "shot" || !(gateTicks > 0) ? Infinity : this._timeAfterTicks(when, gateTicks);
+    const gate = this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when);
+    const off = mode === "shot" || gate.hold ? Infinity : gate.end;
     this._onPosition({ kind: "sample", name: ev.args.sample, when, mode, off, cut: this._nextNote(ev).secs });
   }
 
   _dispatchEvent(ev, when) {
     // A note closes its track's open note first, on that note's voice — the
     // one close path every voice shares (_closeNote).
-    if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev._trackIndex != null)
+    // Then the note opens, its gate decided by the one rule (_noteGate);
+    // its voice says what closing does on it (_noteCloses).
+    if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev._trackIndex != null) {
       this._closeNote(ev._trackIndex, when, { next: true, legato: !!ev.args?.legato, keys: this._isTrackAudible(ev._trackIndex) });
+      this._openNote(ev._trackIndex, ev, when);
+    }
+    // A pcm note's gate is an event too, in its track's order among the
+    // tick's (the driver's): it closes the note there, unless its gate's end
+    // came first (a frame-clocked machine's whole frames, _openNote).
+    if (ev.cmd === "PCM_NOTE_OFF" && ev._trackIndex != null) this._closeNote(ev._trackIndex, when, { gate: true });
     const hand = handWordOf(ev);
     if (hand && !this._scoreWrites(hand)) return;
     // A score write of MASTER takes it back from a hand let go; under one
@@ -2317,18 +2304,11 @@ export class IRPlayer {
         const isFm3OpNote =
           ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
         const centOffset = this._onsetPitchOffset(ev, this._chRegs[ch]?.pitchOffset ?? 0);
-        // The note's own length (a tie after it is the track's to play, as
-        // the driver's TIE extends its wait). A gate it writes keys off at
-        // its end (one past the note's own length reaches into a tie); a
-        // gate that reaches the note's end — and no gate — closes at the
-        // track's next event (driver: `pendingOff`), or at its own end
-        // inside a tie, whichever is first (_closeNote). Until it closes,
-        // the note's macros run as a held note's (macroGate 0), and take
-        // their release where it closes.
-        const lengthTicks = ev.args.length;
-        const gateTicks = this._frameGate(when, ev.args?.gate ?? lengthTicks, lengthTicks);
-        const fullGate = gateTicks > 0 && gateTicks >= lengthTicks;
-        const macroGate = fullGate ? 0 : gateTicks;
+        // The note's gate, by the one rule (_noteGate): its macros run as a
+        // held note's until it closes, unless its gate is shorter.
+        const ti = ev._trackIndex ?? 0;
+        const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
+        const macroGate = gate.macroGate;
         const regs = this._chRegs[ch];
         regs.currentMidi = midi;
 
@@ -2426,24 +2406,9 @@ export class IRPlayer {
         // silence. vol and master are "volume": 0 mutes. (vel never mutes — it
         // floors at its lowest ladder step.)
         const isFmSilent = this._fmNoteSilent(ch, when);
-        const secsPerTick = this._secsPerTick;
-        // Key off at the gate boundary, always — on FM the key transition IS
-        // the attack, so a note that ran into the next one without keying off
-        // would swallow it. The one exception is a slur (`~`, NOTE_ON_EX bit3)
-        // reaching this note at full gate: there the envelope is meant to
-        // carry over.
-        const gateEndSecs = this._timeAfterTicks(when, gateTicks);
-        // A gate shorter than the note keys off at its end; a full gate's
-        // key-off waits for the track's next event (driver: `pendingOff`) — a
-        // note keys it off before its key-on, a slur cancels it, a rest or the
-        // track's end keys off there (_closeNote).
-        if (fullGate && ev.args?.gate != null)
-          this._whileNote(ev._trackIndex, gateEndSecs, () => this._closeNote(ev._trackIndex, gateEndSecs));
-        let offAt = gateEndSecs;
-        if (offAt < when + 0.001) offAt = when + 0.001; // never before its key-on
-        const offWhen = gateTicks > 0 && !fullGate ? offAt : null;
         // A :keyon macro's end, once it has stepped its last (undefined till
-        // then, null when it writes nothing), and what waits for it.
+        // then, null when it writes nothing): an echo tail past the note's
+        // close keys off a step after its last tap, as the driver's does.
         let keyonEnd = null, keyonDone = null;
         const keys = this._isTrackAudible(ev._trackIndex) && !isFmSilent;
         // A note that keys nothing (muted / non-soloed track, or vol 0) keys
@@ -2451,32 +2416,41 @@ export class IRPlayer {
         // to this one, and if it was queued before a mute or solo landed it
         // would ring on forever.
         if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch)) this._fmKey(ch, 0, when);
-        // A note its gate leaves open (a hold, a full gate) is its track's
-        // open note: the one close (_closeNote) — its voice writes what
-        // closing is on it (nothing where it keyed nothing), then its
-        // macros take their release.
-        if (gateTicks === 0 || fullGate) {
-          const ti = ev._trackIndex ?? 0, hold = gateTicks === 0;
-          const opBit = isFm3OpNote ? 0x10 << (fm3Op - 1) : 0;
-          this._openNote(ti, hold ? Infinity : gateEndSecs, !isFm3OpNote ? this._fmClose(ch, hold, keys && !this._csmKeysCh3(ch))
-            : (t, how) => {
-              // (a slur carries it over; a hold goes on into the next note, _fmClose)
-              if (!keys || (how.next && (hold || (how.legato && how.keys)))) return;
-              if (this._reg27 & 0x80) {
-                // CSM: the key is the level — the host's key-off releases it;
-                // at the next note TL 127 there, before its own level; at a
-                // rest or the end after its level macros' release.
-                if (how.host) return void this._fm3CsmRelease(opBit, t);
-                if (!how.next) return void this._csmMute(fm3Op, t, t, ti);
-                this._fm3Op[fm3Op - 1].csmOff = t;
-                return void this._fmWrites(this._fmEnc.ch3Tl(fm3Op - 1, 127), t);
-              }
-              // The host's key-off drops its key-ons still waiting; a gate's
-              // close is an edge in the frame's order (_fm3Edge).
-              if (how.host) return void this._fm3KeysOff(opBit, t);
-              this._fm3Edge(opBit, t, this._eventFrame(t), 0, ti, false, null);
-            });
-        }
+        // What closing the note is on its voice (_closeNote): at its gate's
+        // end, a rest, the track's end, the host's key-off — and at the
+        // track's next note, which a slur, or a hold, carries over into.
+        const opBit = isFm3OpNote ? 0x10 << (fm3Op - 1) : 0, csmOn = this._csmKeysCh3(ch);
+        const carries = (how) => how.next && (gate.hold || (how.legato && how.keys));
+        this._noteCloses(ti, !isFm3OpNote ? (t, how) => {
+          // (Under CSM, Timer A keys CH3: a note keys nothing to key off.)
+          if (!keys || csmOn || carries(how)) return;
+          // The next note's key-off goes an ordering margin ahead of its
+          // key-on, so the envelope sees the transition it attacks from.
+          if (how.next) return void this._fmKey(ch, 0, t - KEY_ORDER_EPS_SECS);
+          const off = Math.max(t, when + 0.001); // never before its key-on
+          this._fmKey(ch, 0, off);
+          const tail = (end) => {
+            if (end != null && end > off + 1e-9)
+              this._whileNote(ti, end, () => { if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, end); });
+          };
+          if (keyonEnd === undefined) keyonDone = tail;
+          else tail(keyonEnd);
+        } : (t, how) => {
+          if (!keys || carries(how)) return;
+          if (this._reg27 & 0x80) {
+            // CSM: the key is the level — the host's key-off releases it;
+            // at the next note TL 127 there, before its own level; else
+            // after its level macros' release.
+            if (how.host) return void this._fm3CsmRelease(opBit, t);
+            if (!how.next) return void this._csmMute(fm3Op, t, when, ti);
+            this._fm3Op[fm3Op - 1].csmOff = t;
+            return void this._fmWrites(this._fmEnc.ch3Tl(fm3Op - 1, 127), t);
+          }
+          // The host's key-off drops its key-ons still waiting; a gate's
+          // close is an edge in the frame's order (_fm3Edge).
+          if (how.host) return void this._fm3KeysOff(opBit, t);
+          this._fm3Edge(opBit, t, this._eventFrame(t), 0, ti, false, null);
+        });
         if (keys) {
           const hasEventMask = ev.args?.opMask !== undefined;
           let keyMask = this.getOpMask(ch);
@@ -2492,45 +2466,24 @@ export class IRPlayer {
           }
           if (isFm3OpNote && this._reg27 & 0x80) {
             // CSM: Timer A keys CH3 (driver.md §9), so the operator's key is
-            // its level — on at its note (written above), TL 127 at its gate
-            // or, as a PSG note, after its level macros' release has played
-            // (a tail the next note cuts leaves the level to that note); a
-            // hold note is released by triggerKeyOff. A :keyon retrigger is
-            // moot: every Timer A overflow is one.
+            // its level — on at its note (written above), TL 127 at its
+            // close (above). A :keyon retrigger is moot: every Timer A
+            // overflow is one.
             this._fm3Op[fm3Op - 1].csmOff = Infinity;
-            if (gateTicks > 0 && !fullGate) this._csmMute(fm3Op, offWhen, when, ev._trackIndex);
           } else if (isFm3OpNote) {
             // Merge this operator's key with the other FM3 operators sharing
             // channel 3's 0x28 register instead of overwriting them. A :keyon
             // retrigger re-attacks THIS operator only (driver.md §13.4).
-            this._scheduleFm3OpKey(
-              keyMask & 0xf0,
-              when,
-              offWhen,
-              ev._trackIndex ?? 0,
-              gateTicks === 0 ? null : gateEndSecs,
-            );
-            this._fm3Retriggers(keyMask & 0xf0, ev.args?.keyon, when, macroGate, gateTicks === 0 ? Infinity : fullGate ? null : offWhen);
-
+            this._fm3Edge(keyMask & 0xf0, when, this._eventFrame(when), 0, ti, true, this._fm3KeyGen[Math.log2(keyMask & 0xf0) - 4]);
+            this._fm3Retriggers(keyMask & 0xf0, ev.args?.keyon, when, macroGate, gate.hold ? Infinity : gate.open ? null : gate.end);
           } else {
-            // The previous note ran up to this one at full gate and left its
-            // key-off to us (driver: `pendingOff`). Write it first, an ordering
-            // margin ahead, so the envelope sees the transition this note's
-            // attack needs — the chip re-attacks because every register write
-            // costs 48 internal cycles, twice the 24-cycle round in which it
-            // latches key state (the driver gets the same guarantee from its
-            // pair transport, which spaces writes 139 µs at its closest). A
-            // slur cancels it: there the envelope carries over.
-            // (_closeNote, at this note's dispatch: the voice's close below)
+            // The previous note's key-off came first (_closeNote, at this
+            // note's dispatch); a slur cancelled it, so the envelope carries
+            // over: it keys nothing.
             const csmKeys = this._csmKeysCh3(ch);
-            // Legato slur (NOTE_ON_EX bit3): the frequency already moved above;
-            // do not re-key so the envelope carries over from the previous note.
             if (!ev.args?.legato && !csmKeys) this._fmKey(ch, keyMask, when);
-            // :keyon retrigger gate (drum roll / echo tail). FM3-op notes share
-            // the 0x28 register so retrigger there is deferred. When active, the
-            // keyon macro owns the channel's keying: its end time becomes the
-            // final key-off (the note's own gate key-off is suppressed below so
-            // it can't cancel the first retrigger that lands on the boundary).
+            // :keyon retrigger gate (drum roll / echo tail): its taps re-key
+            // the channel; one past the note's close keys off after it (above).
             if (ev.args?.keyon) {
               keyonEnd = undefined; // known when the macro has stepped its last
               this._scheduleKeyonMacro(ev.args.keyon, keyMask, ch, when, macroGate, (end) => {
@@ -2539,39 +2492,6 @@ export class IRPlayer {
               });
             }
           }
-        }
-
-        // Key-off at gate boundary (5ms lead for FM envelope decay)
-        // gateTicks === 0 means hold indefinitely (len=0 note; KEY-OFF via triggerKeyOff())
-        // FM3 operator notes schedule their own key-off via _scheduleFm3OpKey
-        // above so simultaneous operators are not silenced together.
-        if (gateTicks > 0) {
-          if (!isFm3OpNote) {
-            // With a keyon retrigger active, key off after the last retrigger
-            // (keyonEnd) instead of at the gate, so the final tap isn't cut —
-            // and never deferred, since that time is the macro's, not the
-            // note's. A note that slurs into the next keys nothing off — its
-            // gate never closes, so neither does the macro's.
-            // (Under CSM, Timer A keys CH3: a note keys nothing to key off.)
-
-            const keyOff = (end) => {
-              // (a full gate's end: where the note was let go)
-              const gateEnd = fullGate ? this._letGoAt(ev._trackIndex, this._noteOf[ev._trackIndex]) : gateEndSecs;
-              if (end != null && (!fullGate || end > gateEnd + 1e-9)) {
-                // The last tap's end, past the gate: while the note is the track's.
-                this._whileNote(ev._trackIndex, end, () => {
-                  if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, end);
-                });
-              } else if (offWhen != null && end == null && !this._csmKeysCh3(ch))
-                this._fmKey(ch, 0, offWhen);
-            };
-            if (keyonEnd === undefined) keyonDone = keyOff;
-            else keyOff(keyonEnd);
-          }
-        } else {
-          // Hold note: register the channel for runtime key-off
-          this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
-
         }
         break;
       }
@@ -2710,6 +2630,7 @@ export class IRPlayer {
         this._closeNote(ev._trackIndex, when);
         return true;
       case "TRACK_END":
+        this._songEndAt = Math.max(this._songEndAt ?? -Infinity, when); // the capture's end (captureRegisterLog)
         if (!(this._loop && this._tracks[ev._trackIndex]?.hasLoop)) this._closeNote(ev._trackIndex, when);
         return true;
 
@@ -3143,11 +3064,6 @@ export class IRPlayer {
     // the chips' own sample voices, each sounding hit.
     this._pcmEv(when, { kind: "master", value: this._masterVol });
     for (const voice of this._chipPcm?.owner.keys() ?? []) this._chipPcmWrite(voice, when);
-  }
-
-  // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
-  _resolveGateTicks(rawGate, lengthTicks) {
-    return rawGate != null ? Math.min(rawGate, lengthTicks) : lengthTicks;
   }
 
   // A note's gate on a frame-clocked target (the MSX, `frameClock`): in the
@@ -3700,13 +3616,11 @@ export class IRPlayer {
         // 2A03's: `rateNote`), pitched as a tone, its mode re-asserted.
         const rateNote = this._isNoiseLane(psgCh) && this._toneEnc[psgCh]?.part?.rateNote;
         const isNoise = this._isNoiseLane(psgCh) && !rateNote;
-        // The note's own length; its gate as on FM (a tie after it is the
-        // track's to play). A note with no gate closes at the track's next
-        // event (_closeNote): until then its macros run as a held
-        // note's (psgMacroGate 0), and take their release there.
-        const lengthTicks = ev.args.length;
-        const psgGateTicks = this._frameGate(when, ev.args?.gate ?? lengthTicks, lengthTicks);
-        const psgMacroGate = psgGateTicks > 0 && ev.args?.gate == null ? 0 : psgGateTicks;
+        // The note's gate, by the one rule (_noteGate): its macros run as a
+        // held note's until it closes, unless its gate is shorter.
+        const ti = ev._trackIndex ?? 0;
+        const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
+        const psgMacroGate = gate.macroGate;
         // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
         // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
         if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
@@ -3760,10 +3674,6 @@ export class IRPlayer {
           );
           this._envRetrigs = null;
         }
-        if (psgGateTicks === 0) {
-          // Hold note: register for runtime key-off (triggerKeyOff)
-          this._holdChannels.set(this._holdKey(ev), ev._trackIndex);
-        }
         // The SSG's mixer and its (song-wide) noise period stepped by the
         // note's `:mode` / `:noise-rate` macros, frame by frame. A macro is
         // its note's: after one, a note without it has the track's :mode and
@@ -3804,30 +3714,23 @@ export class IRPlayer {
           this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? [], null, psgCh), when);
         const baseVel = ev.args?.vel ?? 15;
         const velMacro = ev.args?.velMacro ?? null;
-        // Silence at a gate the note writes; a full gate leaves it to the
-        // track's next event (_closeNote): a rest or the track's end
-        // silences there, a note re-asserts its level. (Unlike FM, whose
-        // key-off is what the next note attacks from, a PSG note-on restarts
-        // its level either way; `~` holds the tone over.)
-        const psgGateEnd = this._timeAfterTicks(when, psgGateTicks);
-        const psgOffWhen = psgGateTicks > 0 && ev.args?.gate != null ? psgGateEnd : null;
-        if (psgGateTicks === 0 || ev.args?.gate == null) {
-          // The tone lane's close: silence — after its level macros' release
-          // where it has them (its soft envelope) — but nothing at a next
-          // note, which takes the level over.
-          const ti = ev._trackIndex, macros = !!(velMacro || ev.args?.vol);
-          this._openNote(ti, psgGateTicks === 0 ? Infinity : psgGateEnd, (t, how) => {
-            if (how.next) return;
-            this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], t);
-            this._psgSilence(psgCh, ti, macros, t);
-          });
-        }
-        this._psgKeyedUntil[psgCh] = psgOffWhen ?? Infinity;
+        // What closing the note is on its lane (_closeNote): silence —
+        // after its level macros' release where it has them (its soft
+        // envelope) — at its gate's end, a rest, the track's end, the host's
+        // key-off; nothing at the track's next note, whose key-on restarts
+        // the level (`~` holds the tone over). Until then the lane is keyed.
+        const macros = !!(velMacro || ev.args?.vol);
+        this._noteCloses(ti, (t, how) => {
+          if (how.next) return;
+          this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], t);
+          this._psgSilence(psgCh, ti, macros, t);
+        });
+        this._psgKeyedUntil[psgCh] = gate.timed ? gate.end : Infinity;
         const volMacro = ev.args?.vol ?? null;
         // A :keyon retrigger restarts the level envelopes (PSG has no
         // hardware one: this is the whole of the retrigger).
         this._envRetrigs = velMacro || volMacro ? this._keyonRetrigs(ev.args?.keyon, when, psgMacroGate) : null;
-        this._psgNoteLevel(psgCh, ev, when, psgMacroGate, baseVel, psgOffWhen);
+        this._psgNoteLevel(psgCh, ev, when, psgMacroGate, baseVel);
         this._envRetrigs = null;
         break;
       }
@@ -3884,24 +3787,6 @@ export class IRPlayer {
   // encoder's where the chip has one algorithm (the OPLL's op2).
   _carrierOps(regs) {
     return this._fmEnc.carriers ?? fmCarrierOpsForAlg(regs.algorithm ?? 0);
-  }
-
-  // An FM channel's close (_openNote): its key off — at the next note an
-  // ordering margin ahead of its key-on, so the envelope sees the transition
-  // its attack needs (the chip re-attacks because every register write costs
-  // 48 internal cycles, twice the 24-cycle round in which it latches key
-  // state; the driver gets the same from its pair transport); none on a
-  // slur, which carries the envelope over; none under CSM, whose Timer A
-  // keys CH3.
-  // A hold (`:gate 0`, `:len 0`) the next note does not key off: the
-  // driver's leaves it no pending key-off — it goes on into that note.
-  _fmClose(ch, hold = false, keyed = true) {
-    return (t, how) => {
-      // (`keyed`: whether the note keyed the channel — not under CSM, where
-      // Timer A keys CH3 — as it was at its key-on)
-      if (!keyed || (how.next && (hold || (how.legato && how.keys)))) return;
-      this._fmKey(ch, 0, how.next ? t - KEY_ORDER_EPS_SECS : t);
-    };
   }
 
   // FM writes, through the target's FM encoder (chips/). An encoder that
