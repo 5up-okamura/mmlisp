@@ -1821,16 +1821,19 @@ export class IRPlayer {
   // of the real audio timer.
   _scheduleStep(now, horizon) {
     const done = this._scheduleEvents(now, horizon);
-    // A wave expression follows its slots to the horizon — and once the song
-    // is done, to the end of its last note.
-    this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : horizon);
-    // The SSG's mixer changes up to `horizon`, in time order (chips/ssg.js).
-    this._flushEncoders(done ? Infinity : horizon);
-    // Every hit up to `horizon` is known now: the chip's sample voices'
-    // levels can be written up to it — and once the song is done, on to the
-    // end of what still sounds.
+    // What every call up to a time is known by (_settled): the encoders and
+    // models that order a chip's writes by their time write up to it.
+    const settled = this._settled(horizon);
+    // A wave expression follows its slots — and once the song is done, to
+    // the end of its last note.
+    this._waveExprFrames(done ? Math.max(horizon, this._songEndTime()) : settled);
+    // The SSG's mixer changes, in time order (chips/ssg.js).
+    this._flushEncoders(done ? Infinity : settled);
+    // Every hit up to there is known now: the chip's sample voices' levels
+    // can be written up to it — and once the song is done, on to the end of
+    // what still sounds.
     if (this._chipPcm) {
-      let until = horizon;
+      let until = settled;
       if (done)
         for (const hits of this._chipPcm.hits.values()) {
           const end = hits.at(-1)?.end;
@@ -1966,6 +1969,16 @@ export class IRPlayer {
 
   _workLeft() {
     return this._workHead < this._work.length;
+  }
+
+  // The time every call to the chip's encoders before it has been made by:
+  // the horizon, or — with a frame's work still waiting — just before the
+  // earliest time that work can carry (an event's frame begins up to a tick
+  // ahead of its time, _eventFrame).
+  _settled(horizon) {
+    if (!this._workLeft()) return horizon;
+    const F = this._work[this._workHead].F;
+    return Math.min(horizon, this._frameOrigin + F / 60 - this._secsPerTick - 1e-6);
   }
 
   _putAhead(item) {

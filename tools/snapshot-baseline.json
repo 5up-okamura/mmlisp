@@ -2190,8 +2190,8 @@
  "tools/tests/fc/fds.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b5ab644c21378930",
-  "regs": "2e2ebde298a0a850",
-  "vgm": "7676932edd9eef50",
+  "regs": "f8781f511e904b1e",
+  "vgm": "1ace8fb7671c0d4e",
   "mid": "5db8cf7c68528818"
  },
  "tools/tests/fc/mmc5.mmlisp": {
@@ -2211,7 +2211,7 @@
  "tools/tests/fc/n163.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "c7ae8e9d6712f6b7",
-  "regs": "abe48237ba4a7ab5",
+  "regs": "9d5b412f0d66a2cf",
   "vgm": "662d0ec23be6f7f4",
   "mid": "13a127184473e15c"
  },
@@ -2229,8 +2229,8 @@
  "tools/tests/fc/vrc7.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "151d1f96d8449b56",
-  "regs": "36ea3e462e76efb6",
-  "vgm": "bf19596bb9bde2f6",
+  "regs": "4753e5ef5718d2f1",
+  "vgm": "0449f781fd4bb8e0",
   "mid": "9bd7d6bd125c24ac"
  },
  "tools/tests/gb/apu.mmlisp": {
@@ -2358,8 +2358,8 @@
  "tools/tests/pc88/ssg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5359aeaea21d6803",
-  "regs": "87937b161f61daf3",
-  "vgm": "71b5377cd764921b",
+  "regs": "5757de52507d4fea",
+  "vgm": "74cf4916d703fb1d",
   "mid": "305d30734e1b5e8d"
  },
  "tools/tests/pce/dda.mmlisp": {
