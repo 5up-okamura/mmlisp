@@ -1,0 +1,12 @@
+; MASTER is the song's, written on any track: an FM, a PSG and a PCM track
+; each sweep it, from where it is (no :from), and move it relatively; a `+`
+; and a `$slot` leave a running sweep stepping, as the driver's slot does
+; (driver.md §4 step 3). What stays apart from the driver is the frame's
+; order: a write the driver makes before that frame's sweep step shows for
+; a frame in the preview.
+
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-val m 25 0..31 :public)
+(fm1 :tempo 120 :master 20 :len 4 c :master (linear :to 4 :len 1/1) c c c :master+ 5 c c :master* 1.5 c c)
+(sqr1 :len 4 _ _ _ _ _ _ _ _ c :master (linear :to 12 :len 1/2) c c :master $m c)
+(pcm1 pad :mode loop :len 4 _ _ _ _ _ _ _ _ _ _ _ _ c :master (linear 31..8 :len 1/2) c c :master+ -4 c)

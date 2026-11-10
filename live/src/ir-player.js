@@ -89,6 +89,8 @@ const SAMPLE_HANDLERS = {
   dac: "_dispatchDacEvent",
   "midi-drums": "_dispatchNothing",
 };
+// The writes that free a sweep's slot (driver.md §4 step 3).
+const SLOT_FREEING = new Set(["PARAM_SET", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
 const LFO_TARGETS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE"]);
 // The song's LFO words a wave chip's encoder takes (chips/huc6280.js, fds.js).
@@ -2863,22 +2865,14 @@ export class IRPlayer {
     const core = ev._route?.core;
     if (core !== "sample" && core !== "none") return ev;
     const target = String(ev.args?.target ?? "").toUpperCase();
-    if (target !== "VOL" && target !== "MASTER") return ev;
-    const midi = this._target?.name === "midi"; // its drums are sample tracks too
-    const cur = target === "MASTER"
-      ? midi ? this._chipPcmParamAt("master", "vol", when) : this._masterAt(when)
+    const midiMaster = target === "MASTER" && this._target?.name === "midi"; // its drums are sample tracks too
+    if (target !== "VOL" && !midiMaster) return ev;
+    const cur = midiMaster ? this._chipPcmParamAt("master", "vol", when)
       // The Mega Drive's DAC voices keep their fader; a chip's sample track
       // and a MIDI track, a line (_chipPcmParam).
       : ev._route.part?.name === "dac" ? this._pcmVolNow?.[ev._chIndex ?? 0] ?? VOL_UNITY
         : this._chipPcmParamAt(ev._trackIndex, "vol", when);
-    let value;
-    if (ev.cmd === "PARAM_ADD") value = cur + this._resolveOperand(ev.args?.delta, when);
-    else {
-      // Unsigned 8.8, as the driver multiplies (the FM dispatch's PARAM_MUL).
-      const f = ev.args?.factor;
-      const fixed = f && typeof f === "object" && "src" in f ? this._resolveSrc(f.src, when) : Math.round((Number(f) || 0) * 256);
-      value = Math.floor((Math.round(cur) * Math.max(0, Math.min(0xffff, fixed))) / 256);
-    }
+    const value = this._writeValue(ev, cur, when);
     return { ...ev, cmd: "PARAM_SET", args: { target: ev.args.target, value: Math.max(0, Math.min(31, value)) } };
   }
 
@@ -2906,6 +2900,12 @@ export class IRPlayer {
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._syncMasterSweep(ev, when);
     this._freeSlot(ev);
+    // MASTER is the song's, written on any track: one handler, whatever the
+    // track's kind (`:target midi` keeps its own, _midiLevel).
+    if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "MASTER") {
+      if (this._target?.name !== "midi") this._masterEvent(ev, when);
+      return;
+    }
     if (this._dispatchGlobalEvent(ev, when)) return;
     if (ev.cmd === "PCM_NOTE_ON" && this._onPosition && ev.args?.sample && this._isTrackAudible(ev._trackIndex))
       this._reportSample(ev, when);
@@ -2932,9 +2932,7 @@ export class IRPlayer {
           write((this._waveLfo[lfoWord] = v), t);
         }));
       else {
-        const v = ev.cmd === "PARAM_ADD" ? cur + Number(a.delta ?? 0)
-          : ev.cmd === "PARAM_MUL" ? cur * Number(a.factor ?? 1)
-          : ev.cmd === "PARAM_FROM_VAL" ? Number(this._resolveSrc(a.src, when) ?? cur) : null;
+        const v = this._writeValue(ev, cur, when);
         if (v != null) write((this._waveLfo[lfoWord] = Math.round(v)), when);
       }
       return;
@@ -3238,21 +3236,7 @@ export class IRPlayer {
       case "PARAM_ADD":
       case "PARAM_MUL": {
         const target = ev.args?.target;
-        const cur = this._readParam(ch, target, this._fm3OpOf(ev));
-        let value;
-        if (ev.cmd === "PARAM_ADD") {
-          value = cur + this._resolveOperand(ev.args?.delta, when);
-        } else {
-          // Unsigned 8.8, as the driver multiplies (opcodes.md PARAM_MUL /
-          // PARAM_MUL_VAL): a literal factor is ×256 rounded, a slot IS the
-          // 8.8 factor (256 = ×1, 128 = ×½ — the /256 a scaled macro's depth
-          // slot reads too), and the product drops its fraction.
-          const f = ev.args?.factor;
-          const fixed = f && typeof f === "object" && "src" in f
-            ? this._resolveSrc(f.src, when)
-            : Math.round((Number(f) || 0) * 256);
-          value = Math.floor((Math.round(cur) * Math.max(0, Math.min(0xffff, fixed))) / 256);
-        }
+        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev)), when);
         this._applyParam(ch, { args: { target, value }, _trackIndex: ev._trackIndex }, when);
         break;
       }
@@ -3406,8 +3390,6 @@ export class IRPlayer {
     if (target === "VOL") (this._pcmVolNow ??= [])[voice] = value;
     if (target === "VOL" || target === "VEL") {
       this._pcmEv(when, { kind: target === "VOL" ? "vol" : "vel", voice, value });
-    } else if (target === "MASTER") {
-      this._applyMasterChange(value, when);
     } else if (PCM_POINT_TARGETS.has(target)) {
       this._pcmEv(when, { kind: "point", voice, target, value: this._pcmLoopBytes(value) });
     }
@@ -3727,7 +3709,6 @@ export class IRPlayer {
         else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
         if (ev.cmd !== "PARAM_SET") break;
         if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
-        else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
         // The range the next notes play (seconds as heard); a loop is the
         // range itself on this chip (the compiler holds it to that).
         else if (target === "RANGE_START") (st.range ??= {}).start = Number(ev.args?.value);
@@ -3807,8 +3788,7 @@ export class IRPlayer {
         else if (target === "NOTE_PITCH") this._chipPcmParam(ev, when, "pitch");
         if (ev.cmd !== "PARAM_SET") break;
         const v = Number(ev.args?.value);
-        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
-        else if (target === "RANGE_START") (st.range ??= {}).start = v;
+        if (target === "RANGE_START") (st.range ??= {}).start = v;
         else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
         else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
         else if (target === "LOOP_START") (st.loop ??= {}).start = v;
@@ -3895,8 +3875,7 @@ export class IRPlayer {
         if (target === "VOL") this._chipPcmParam(ev, when, "vol");
         if (ev.cmd !== "PARAM_SET") break;
         const v = Number(ev.args?.value);
-        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
-        else if (target === "PAN") st.pan = Math.max(-1, Math.min(1, v || 0));
+        if (target === "PAN") st.pan = Math.max(-1, Math.min(1, v || 0));
         else if (target === "RANGE_START") (st.range ??= {}).start = v;
         else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
         else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
@@ -3989,8 +3968,7 @@ export class IRPlayer {
         if (target === "VOL") this._chipPcmParam(ev, when, "vol");
         if (ev.cmd !== "PARAM_SET") break;
         const v = Number(ev.args?.value);
-        if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
-        else if (target === "RANGE_START") (st.range ??= {}).start = v;
+        if (target === "RANGE_START") (st.range ??= {}).start = v;
         else if (target === "RANGE_END") { (st.range ??= {}).end = v; st.range.len = null; }
         else if (target === "RANGE_LEN") { (st.range ??= {}).len = v; st.range.end = null; }
         break;
@@ -4089,7 +4067,6 @@ export class IRPlayer {
         else if (target === "NOTE_PITCH" && enc.tune) this._chipPcmParam(ev, when, "pitch");
         if (ev.cmd !== "PARAM_SET") break;
         if (target === "PAN") st.pan = this._snapMacroOutput("PAN", ev.args?.value ?? 0);
-        else if (target === "MASTER") this._applyMasterChange(ev.args?.value ?? VOL_UNITY, when);
         break;
       }
       default:
@@ -4318,16 +4295,9 @@ export class IRPlayer {
         this._vals[name] = i16(this._resolveSrc(a.src, when));
         break;
       case "PARAM_ADD":
-        this._vals[name] = i16(cur + this._resolveOperand(a.delta, when));
+      case "PARAM_MUL":
+        this._vals[name] = i16(this._writeValue(ev, cur, when));
         break;
-      case "PARAM_MUL": {
-        const f = a.factor;
-        const fixed = f && typeof f === "object" && "src" in f
-          ? this._resolveSrc(f.src, when)
-          : Math.round((Number(f) || 0) * 256);
-        this._vals[name] = i16(Math.floor((cur * Math.max(0, Math.min(0xffff, fixed))) / 256));
-        break;
-      }
       case "PARAM_SWEEP": {
         const df = this._curveFields(a, when);
         const baseFrames = a.dyn?.len != null
@@ -4374,6 +4344,27 @@ export class IRPlayer {
     }
     const v = this._vals?.[src];
     return Number.isFinite(v) ? v : 0;
+  }
+
+  // A write's value from its word's value now (`cur`): a SET's, a `$slot`'s,
+  // a `+` or a `*`, in the driver's arithmetic (opcodes.md PARAM_ADD /
+  // PARAM_MUL / PARAM_MUL_VAL: a factor is unsigned 8.8 — a literal ×256
+  // rounded, a slot the 8.8 itself, 256 = ×1 — and the product drops its
+  // fraction). Null for any other event. Every word's relative write reads
+  // here, whatever kind of track writes it.
+  _writeValue(ev, cur, when) {
+    const a = ev.args ?? {};
+    switch (ev.cmd) {
+      case "PARAM_SET": return Number(a.value ?? 0);
+      case "PARAM_FROM_VAL": return this._resolveSrc(a.src, when);
+      case "PARAM_ADD": return cur + this._resolveOperand(a.delta, when);
+      case "PARAM_MUL": {
+        const f = a.factor;
+        const fixed = f && typeof f === "object" && "src" in f ? this._resolveSrc(f.src, when) : Math.round((Number(f) || 0) * 256);
+        return Math.floor((Math.round(cur) * Math.max(0, Math.min(0xffff, fixed))) / 256);
+      }
+      default: return null;
+    }
   }
 
   // Resolve a PARAM_ADD/MUL operand: a literal number or a { src } reference.
@@ -4814,10 +4805,6 @@ export class IRPlayer {
         this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
         break;
       }
-
-      case "MASTER":
-        this._applyMasterChange(value, when);
-        break;
 
       default:
         break;
@@ -5753,7 +5740,9 @@ export class IRPlayer {
       ? Number(df.from)
       : target === "VOL"
         ? this._fmVolAtTime(ch, when)
-        : this._readParam(ch, target, this._fm3OpOf(ev));
+        : target === "MASTER"
+          ? this._masterAt(when)
+          : this._readParam(ch, target, this._fm3OpOf(ev));
     const to = Number(df.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
     const params = df.params;
@@ -6511,6 +6500,16 @@ export class IRPlayer {
 
   // Before each event: the master state is the sweep's value at its time
   // (the sweep's frames were scheduled at once); a PARAM_SET MASTER ends it.
+  // A score write of MASTER on any track: a value, a `$slot`, `+` / `*` from
+  // the master now, a sweep (from the master now unless it names a :from),
+  // a stop (_syncMasterSweep froze it).
+  _masterEvent(ev, when) {
+    if (ev.cmd === "PARAM_SWEEP") return this._applyParamSweep(0, ev, when);
+    if (ev.cmd === "PARAM_SWEEP_STOP") return;
+    const v = this._writeValue(ev, this._masterAt(when), when);
+    if (v != null && Number.isFinite(v)) this._applyMasterChange(v, when);
+  }
+
   _syncMasterSweep(ev, when) {
     const ms = this._masterSweep;
     if (!ms) return;
@@ -6525,16 +6524,17 @@ export class IRPlayer {
 
   // A sweep holds a slot, as the driver's do (driver.md §4 step 3): a
   // song-wide word's (MASTER, LFO_RATE …) is the song's, any other its
-  // channel's — an fm3 operator's its own. A write of the word from any
-  // track frees the slot, and the sweep's frames still waiting for their
-  // time (_at) stop there.
+  // channel's — an fm3 operator's its own. A value, a sweep or a stop of the
+  // word from any track frees the slot (SLOT_FREEING), and the sweep's
+  // frames still waiting for their time (_at) stop there; a `+`, a `*` or a
+  // `$slot` moves the word and the sweep steps on.
   _slotKey(ev, target) {
     if (target === "MASTER" || LFO_TARGETS.has(target)) return `song:${target}`;
     const r = ev._route;
     return `${r?.core}${r?.lane}:${this._fm3OpOf(ev)}:${target}`;
   }
   _freeSlot(ev) {
-    if (!this._slots.size || !ev.cmd.startsWith("PARAM_")) return;
+    if (!this._slots.size || !SLOT_FREEING.has(ev.cmd)) return;
     this._slots.delete(this._slotKey(ev, String(ev.args?.target ?? "").toUpperCase()));
   }
 
