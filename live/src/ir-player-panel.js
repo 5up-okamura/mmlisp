@@ -8,6 +8,30 @@ import { VOL_UNITY } from "./ir-utils.js";
 import { toneLaneOf } from "./targets.js";
 import { CORE_OF_KIND, WAVE_LFO_WORDS } from "./ir-player-shared.js";
 
+// ---- the panel's controls ----
+// A control is one thing the panel shows and can take in hand:
+//   { id: "tempo" | "MASTER" | "LFO_RATE" …, kind: "word", word }   a song-wide word
+//   { id: "vol:fm1", kind: "vol", strip }                            a strip's :vol
+//   { id: "reg:0:FM_TL1", kind: "reg", ch, word }                    an FM channel's register word
+//   { id: "val:cutoff", kind: "val", name }                          a value slot
+// The players answer three calls for any of them (DrvPlayer has the same):
+// hold — `value` sounds now and is the control's while it is held; release
+// — let go, it stays until the score next writes it; read — what it is
+// now. A run starts with the score's own values (play, seek).
+//
+// Two mechanisms carry a hand here. A level — a strip's :vol, MASTER — is
+// laid over: the score's own runs on unheard, and wherever a level is
+// composed the panel's value stands in (_handVol, _handMaster), so letting
+// go has the score's to come back to. A word, a register and a slot are
+// gated: the score's writes of one in hand are skipped (_scoreWrites), at
+// their own time — a sweep's and a macro's frames wait for it (_at) — and
+// the state is the panel's until the score takes it back.
+//
+// The player's state is the song at its cursor (the last horizon), and the
+// chip is behind it by the lookahead: what the run has already sent plays
+// out under a hand just taken. So the panel's write is made twice — now,
+// and again where the sent writes end (_writeCursor) — and a hand has the
+// chip to itself within the lookahead.
 export const panelMethods = {
   /** The panel takes `c` in hand at `value`. */
   hold(c, value) {

@@ -46,9 +46,10 @@ export const macroMethods = {
     let it = segment(when), cut = nextRestart();
     // A held note's (its gate is the key-off's, _resolveNoteFramesAndGate)
     // runs until it is let go: a run does not wait for it.
-    const endless = gateSecs > when + 1e8;
+    let endless = gateSecs > when + 1e8;
     const scope = this._noteScope;
     const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
+    let segAt = when, lastT = -Infinity, run = {};
     // A step already behind the run is written at once. With no run (the
     // keys while stopped, a run that is over) a minute is laid out, and a
     // held note's macro not at all: nothing steps it on.
@@ -58,27 +59,42 @@ export const macroMethods = {
       for (;;) {
         const { value, done } = it.next();
         if (done) {
-          if (cut !== Infinity) { it = segment(cut); cut = nextRestart(); continue; }
+          if (cut !== Infinity) { it = segment((segAt = cut)); cut = nextRestart(); continue; }
           onEnd?.(value ?? null);
           return;
         }
         if ("k" in value) continue;
         const { v, t } = value;
-        if (t >= cut - 1e-9) { it = segment(cut); cut = nextRestart(); continue; }
+        if (t >= cut - 1e-9) { it = segment((segAt = cut)); cut = nextRestart(); continue; }
+        if (t <= lastT + 1e-9) continue; // written before the note was let go (below)
         if (t > limit) return;
         if (t <= this._writeCursor) {
           if (!ours()) return;
+          lastT = t;
           writeFn(this._macroValue(spec, v, t), t);
           continue;
         }
+        const mine = run;
         this._putWork(this._eventFrame(t), MACRO, t, () => {
-          if (!ours()) return;
+          if (mine !== run || !ours()) return;
+          lastT = t;
           writeFn(this._macroValue(spec, v, t), t);
           pull();
         }, null, endless);
         return;
       }
     };
+    // A held note let go at `off` (the host's key-off, triggerKeyOff): the
+    // macro goes on as a note's whose gate ends there — its sustain stops,
+    // its release plays — from the step after the last it wrote.
+    if (endless && scope) this._heldNote(scope).push((off) => {
+      if (!ours()) return;
+      run = {}; // the held run's waiting step is dropped
+      endless = false;
+      cut = Infinity;
+      it = this._macroSteps(spec, Math.max(1, Math.round((off - segAt) * 60)), off - KEY_OFF_LEAD_SECS, segAt, stepSecs);
+      pull();
+    });
     this._macroShown(spec, noteFrames, gateSecs, when, stepSecs);
     pull();
   },
@@ -542,21 +558,55 @@ export const macroMethods = {
     return times;
   },
 
+  // What a held note (`scope`: its track and note) does when it is let go.
+  _heldNote(scope) {
+    let h = this._heldNotes.get(scope.ti);
+    if (h?.note !== scope.note) this._heldNotes.set(scope.ti, (h = { note: scope.note, release: [] }));
+    return h.release;
+  },
+
+  // The host's key-off of track `ti`'s held note at `when`: its macros take
+  // their release where the steps the run has sent end, its retriggers stop.
+  // Returns that time (null: the track holds no note with macros).
+  _letGoNote(ti, when) {
+    this._letGo[ti] = this._noteOf[ti];
+    const h = this._heldNotes.get(ti);
+    this._heldNotes.delete(ti);
+    if (!h || h.note !== this._noteOf[ti] || !h.release.length) return null;
+    const off = Math.max(when, this._sentUntil() ?? when);
+    for (const f of h.release) f(off);
+    return off;
+  },
+
   // `run(t)` at each of `retrigs`' times, one after the other, as work at
   // its time while the track's note is still the one dispatching now.
   _eachTime(retrigs, run, phase = KEYED) {
     if (!retrigs) return;
     const times = retrigs();
     const scope = this._noteScope;
+    // (A held note's stop when it is let go: its gate has closed.)
+    const ours = () => !scope || (this._noteOf[scope.ti] === scope.note && this._letGo[scope.ti] !== scope.note);
+    const endless = !!retrigs.endless;
     const next = () => {
-      const r = times.next();
-      if (r.done) return;
-      const t = r.value;
-      this._at(t, () => {
-        if (scope && this._noteOf[scope.ti] !== scope.note) return;
-        run(t);
-        next();
-      }, phase, !!retrigs.endless);
+      for (;;) {
+        const r = times.next();
+        if (r.done) return;
+        const t = r.value;
+        if (t <= this._writeCursor) {
+          // Behind the run: at once. With no run (it is over, or stopped) a
+          // minute is laid out, and a held note's not at all (_scheduleMacro).
+          if (!Number.isFinite(this._writeCursor) && (endless || t > (this._audioContext?.currentTime ?? 0) + 60)) return;
+          if (!ours()) return;
+          run(t);
+          continue;
+        }
+        this._putWork(this._eventFrame(t), phase, t, () => {
+          if (!ours()) return;
+          run(t);
+          next();
+        }, null, endless);
+        return;
+      }
     };
     next();
   },

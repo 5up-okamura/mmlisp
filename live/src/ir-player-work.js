@@ -6,6 +6,27 @@
 // `this` is the player.
 import { KEYED, FM3_KEYS, UNSHIFTED, MACRO } from "./ir-player-shared.js";
 
+// ---- the frame's order ----
+// The driver renders a frame in a fixed order (driver.md §4): it dispatches
+// the frame's events, then steps each channel's engines — sweeps, then
+// macros — then the song's own sweeps. This player dispatches an event its
+// lookahead ahead of the chip, at the event's own time; what the event sets
+// going is work for later frames, and waits here (_at) keyed by its frame
+// and its place in that order:
+//
+//   KEYED  a timed part of a dispatch (a gate's key-off), at its time
+//   SWEEP  a channel's sweep step        MACRO  a macro's step
+//   SONG   a song-wide sweep's step (MASTER, the LFO)
+//
+// A frame's work runs once every event of that frame is dispatched, in that
+// order, and reads the player's state as it is then — the state is the
+// song's at its cursor, never a forecast. What it writes is stamped no
+// earlier than the frame's last event, so the chip takes the frame as the
+// driver makes it: dispatch, then engines.
+//
+// A plain write ahead of the run (_write) waits by its time and goes out
+// as the run reaches it, so nothing is with the chip's queue (the
+// worklet's) further ahead than the lookahead.
 export const workMethods = {
   /** A register write (port, addr, data) or a message ({ type, when, … }), at `when` — now when absent. */
   _write(portOrMsg, addr, data, when) {

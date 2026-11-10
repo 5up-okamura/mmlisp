@@ -854,7 +854,7 @@ export const sampleMethods = {
       if (!cur) return;
       const t = cur.t + PCM_SWEEP_AFTER;
       this._step(cur.F, AFTER, t, () => {
-        if (this._noteOf[ti] !== note) return;
+        if (this._noteOf[ti] !== note || this._letGo[ti] === note) return; // the next note's, or let go
         const { F: _F, t: _at, ...carried } = cur;
         this._pcmEv(t, { kind: "retrig", voice, ...carried });
         cur = pullRetrig();

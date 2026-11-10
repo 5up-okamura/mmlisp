@@ -107,6 +107,8 @@ export class IRPlayer {
     this._onHold = null; // (trackIdx) => void — a track stops at a `:len 0` hold
     this._onPosition = null; // (record) => void — where a note's macro or sample will be (setOnPosition)
     this._noteOf = []; // per track: its note now (a macro's steps are that note's)
+    this._heldNotes = new Map(); // track → { note, release: [fn] }: a held note's macros (_heldNote)
+    this._letGo = []; // per track: the held note the host let go (_letGoNote)
     this._noteScope = null;
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
@@ -452,6 +454,8 @@ export class IRPlayer {
   _resetRunState() {
     this._dropAhead();
     this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
+    this._heldNotes.clear();
+    this._letGo = [];
     this._hands.clear(); // a run starts with the score's own values
     this._handCtl.clear();
     this._levels.clear();
@@ -924,31 +928,6 @@ export class IRPlayer {
       if (!this._isVoiceTrackAudible(ti, "dpcm")) for (const [p, a, d] of dmc.stop()) this._write(p, a, d, when);
   }
 
-  // ---- the panel's controls ----
-  // A control is one thing the panel shows and can take in hand:
-  //   { id: "tempo" | "MASTER" | "LFO_RATE" …, kind: "word", word }   a song-wide word
-  //   { id: "vol:fm1", kind: "vol", strip }                            a strip's :vol
-  //   { id: "reg:0:FM_TL1", kind: "reg", ch, word }                    an FM channel's register word
-  //   { id: "val:cutoff", kind: "val", name }                          a value slot
-  // The players answer three calls for any of them (DrvPlayer has the same):
-  // hold — `value` sounds now and is the control's while it is held; release
-  // — let go, it stays until the score next writes it; read — what it is
-  // now. A run starts with the score's own values (play, seek).
-  //
-  // Two mechanisms carry a hand here. A level — a strip's :vol, MASTER — is
-  // laid over: the score's own runs on unheard, and wherever a level is
-  // composed the panel's value stands in (_handVol, _handMaster), so letting
-  // go has the score's to come back to. A word, a register and a slot are
-  // gated: the score's writes of one in hand are skipped (_scoreWrites), at
-  // their own time — a sweep's and a macro's frames wait for it (_at) — and
-  // the state is the panel's until the score takes it back.
-  //
-  // The player's state is the song at its cursor (the last horizon), and the
-  // chip is behind it by the lookahead: what the run has already sent plays
-  // out under a hand just taken. So the panel's write is made twice — now,
-  // and again where the sent writes end (_writeCursor) — and a hand has the
-  // chip to itself within the lookahead.
-
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
   getBpm() {
     return this._bpm;
@@ -983,14 +962,19 @@ export class IRPlayer {
     const when = this._audioContext?.currentTime ?? 0;
     this._resumeHeldTrack(tIdx, when);
     const { core, part, lane: ch } = this._routes.get(tIdx);
+    // The note's macros go to their release, its retriggers stop.
+    const macrosOff = this._letGoNote(tIdx, when);
     if (core === "sample") {
       // PCM: the key-off releases a `:len 0` loop; its tail plays out.
       if (part.name === "pcm8") this._pcm8Ev(when, { kind: "off", voice: ch });
       else this._pcmEv(when, { kind: "off", voice: ch });
     } else if (core === "psg") {
-      // PSG channels: silence by setting attenuation to 15 (max att = silent)
+      // A tone lane falls silent — after its level macros' release, where
+      // the note has them (as a note's gate does, _psgSilence).
       this._psgKeyedUntil[ch] = Math.min(this._psgKeyedUntil[ch], when);
-      this._psgSetAtt(ch, this._psgOff(ch), when);
+      const lvl = this._lv(`psg:${ch}`).note?.lvl;
+      if (macrosOff != null && lvl?.left > 0) this._psgSilence(ch, tIdx, true, macrosOff);
+      else this._psgSetAtt(ch, this._psgOff(ch), when);
     } else {
       if (ch === 2 && this._fm3Held) {
         // Release only the held FM3 operators; any timed operators stay keyed.
@@ -1351,28 +1335,6 @@ export class IRPlayer {
       for (const [p, a, d, t] of this._rhythmEnc?.flush?.(done ? Infinity : settled) ?? []) this._write(p, a, d, t);
     return done;
   }
-
-  // ---- the frame's order ----
-  // The driver renders a frame in a fixed order (driver.md §4): it dispatches
-  // the frame's events, then steps each channel's engines — sweeps, then
-  // macros — then the song's own sweeps. This player dispatches an event its
-  // lookahead ahead of the chip, at the event's own time; what the event sets
-  // going is work for later frames, and waits here (_at) keyed by its frame
-  // and its place in that order:
-  //
-  //   KEYED  a timed part of a dispatch (a gate's key-off), at its time
-  //   SWEEP  a channel's sweep step        MACRO  a macro's step
-  //   SONG   a song-wide sweep's step (MASTER, the LFO)
-  //
-  // A frame's work runs once every event of that frame is dispatched, in that
-  // order, and reads the player's state as it is then — the state is the
-  // song's at its cursor, never a forecast. What it writes is stamped no
-  // earlier than the frame's last event, so the chip takes the frame as the
-  // driver makes it: dispatch, then engines.
-  //
-  // A plain write ahead of the run (_write) waits by its time and goes out
-  // as the run reaches it, so nothing is with the chip's queue (the
-  // worklet's) further ahead than the lookahead.
 
   _scheduleEvents(now, horizon) {
     // Once the boundary has passed, the post-swap dispatch floor is moot.

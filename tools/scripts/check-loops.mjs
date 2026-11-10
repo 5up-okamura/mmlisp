@@ -95,5 +95,63 @@ for (const [name, src, [port, addr]] of CASES) {
   try { n = parts(src, port, addr); } catch (e) { n = e.message; }
   if (n !== 0) { failed++; console.error(`FAIL ${name}: ${typeof n === "number" ? `${n} frames part from the driver` : n}`); }
 }
+// A held note with a macro that never ends, on the machines no driver plays:
+// the preview plays it — while the song goes on, and when the held note is
+// all there is (the run is over at once) — and captures it, without laying
+// the macro out (it used to run the player out of memory, or of stack).
+const HELD = [
+  `(def-score :target pce)\n(wave1 :lfo-sync on :len 0 (macro :keyon [#sus 1 0]) c)`,
+  `(def-score :target pc88)\n(rhythm1 kick :len 0 (macro :keyon [#sus 1 0 0 0]) c)`,
+  `(def-score :target pc88)\n(rhythm1 kick :len 0 (macro :keyon [#sus 1 0 0 0]) c)\n(fm1 :len 1 #t c (go t))`,
+  `(def-score :target msx)\n(rhythm1 kick :len 0 (macro :keyon [#sus 1 0 0 0] :vel [#sus 15 8]) c)\n(fm1 piano :len 1 #t c (go t))`,
+  `(def-score :target msx)\n(sqr1 :len 0 (macro :vel [#sus 15 10]) c)`,
+  `(fm1 :len 0 (macro :keyon [#sus 1 0 0 0] :vel [#sus 15 10]) c)`,
+  `(sqr1 :len 0 (macro :vel [#sus 15 10]) c)`,
+];
+for (const src of HELD) {
+  try {
+    const { ir, diagnostics } = compileMMLisp(src, "loops.mmlisp", {});
+    const errs = diagnostics.filter((d) => d.severity === "error");
+    if (errs.length) throw new Error(errs.map((d) => d.message).join("; "));
+    const ctx = { currentTime: 10, state: "running", resume() {} };
+    const p = new IRPlayer(() => {});
+    p.loadJSON(ir);
+    p.play(ctx);
+    for (let t = 10; t < 13; t += 0.01) {
+      ctx.currentTime = t;
+      clearTimeout(p._schedulerTimer);
+      p._scheduleLoop();
+      clearTimeout(p._schedulerTimer);
+    }
+    p.stop();
+    new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog();
+  } catch (e) {
+    failed++;
+    console.error(`FAIL a held note plays: ${src.replace(/\n/g, " ")}: ${e.message}`);
+  }
+}
+// A held note let go (the host's key-off): its macro leaves its sustain for
+// its release and ends, as the driver's does — a tone lane falls silent
+// after it, and stays so (it used to step its sustain on, the tone droning).
+try {
+  const { ir } = compileMMLisp(`(sqr1 :tempo 120 :len 0 (macro :vel [#sus 15 10 #rel 6 3 0]) c)\n(fm4 :len 1 #t c (go t))`, "loops.mmlisp", {});
+  const att = [];
+  const ctx = { currentTime: 10, state: "running", resume() {} };
+  const p = new IRPlayer((pt, a, d, when) => { if (pt === 2 && (d & 0x90) === 0x90 && ((d >> 5) & 3) === 0) att.push([(when ?? ctx.currentTime) - 10, d & 15]); });
+  p.loadJSON(ir);
+  p.play(ctx);
+  const to = (sec) => { for (; ctx.currentTime < 10 + sec; ctx.currentTime += 0.005) { clearTimeout(p._schedulerTimer); p._scheduleLoop(); clearTimeout(p._schedulerTimer); } };
+  to(1);
+  p.releaseHolds();
+  to(3);
+  p.stop();
+  const after = att.filter(([t]) => t > 1).map(([, v]) => v);
+  const tail = after.slice(after.findIndex((v, i) => v === 9 && after[i + 1] === 12));
+  // (the release's 9, 12, 15, then silence — the lane's off, and the stop's)
+  if (tail.length < 3 || tail[1] !== 12 || tail.slice(2).some((v) => v !== 15)) throw new Error(`after the key-off: ${after.slice(-8).join(" ")}`);
+} catch (e) {
+  failed++;
+  console.error(`FAIL a held note let go takes its release: ${e.message}`);
+}
 if (failed) process.exit(1);
-console.log(`check:loops ok — ${CASES.length} cases, ${SECS} s each, the preview's passes are the driver's`);
+console.log(`check:loops ok — ${CASES.length} cases, ${SECS} s each, the preview's passes are the driver's; ${HELD.length} held notes play`);

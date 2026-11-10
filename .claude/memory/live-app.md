@@ -163,7 +163,14 @@ Open, in the order worth taking:
    a step vector's outline are laid out for the eye only (`_macroShown`, a
    held note's first minute). `_macroDry` and the eager layout are gone;
    a held note with a sustain loop, a looping :keyon or a curve no longer
-   runs the player out of memory (check:loops holds three to the driver). **Key edges are the driver's too**: a gate shorter than its note
+   runs the player out of memory (check:loops holds three to the driver).
+   A held note the host lets go (`triggerKeyOff` → `_letGoNote`) takes its
+   macros' release where the sent steps end (the lookahead late), its
+   retriggers stop, a tone lane falls silent after the release. With no
+   run (it is over: a song that is only held notes; or stopped) a held
+   note's chains are not stepped at all — `_scheduleMacro` and `_eachTime`
+   both check the cursor each pull (the second was missed at first: a
+   stack overflow on pce :lfo-sync and the chips' sample hits). **Key edges are the driver's too**: a gate shorter than its note
    keys off at its end; a full gate's key-off waits for the track's next
    event (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, each with its
    gate's end `at`): a note keys off before its key-on (a slur cancels
