@@ -433,7 +433,11 @@ export const sampleMethods = {
         const mode = ev.args?.mode;
         const shotEnd = when + Math.max(0, Math.min(end, entry.data.length) - start) / perSec;
         // A held note (:len 0) waits for triggerKeyOff, as the Mega Drive's does.
-        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) this._holdChannels.set(this._holdKey(ev), ti);
+        if (this._resolveGateTicks(ev.args?.gate, ev.args?.length) === 0) {
+          this._holdChannels.set(this._holdKey(ev), ti);
+          // The host's key-off releases a `:len 0` loop; its tail plays out.
+          this._openNote(ti, Infinity, (t, how) => { if (how.host) this._pcm8Ev(t, { kind: "off", voice }); });
+        }
         this._chipPcmHit(key, ev, when, mode === "shot" || !mode ? shotEnd : Infinity,
           { rate: entry.rate, midi, pcm8: voice }, (t, h) => {
             h.gain = pcm8Gain(this._chipPcmLevelAt(h, t));
@@ -784,7 +788,11 @@ export const sampleMethods = {
     const lengthTicks = ev.args.length;
     const gateTicks = this._resolveGateTicks(ev.args?.gate, lengthTicks);
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    if (gateTicks === 0) this._holdChannels.set(this._holdKey(ev), ev._trackIndex); // waits for KEY_OFF
+    if (gateTicks === 0) {
+      this._holdChannels.set(this._holdKey(ev), ev._trackIndex); // waits for KEY_OFF
+      // The host's key-off releases a `:len 0` loop; its tail plays out.
+      this._openNote(ev._trackIndex, Infinity, (t, how) => { if (how.host) this._pcmEv(t, { kind: "off", voice }); });
+    }
     // A :keyon retrigger STARTs after its frame's level steps, so it
     // carries them: they ride its event instead of sending a level of their
     // own. Each step is its frame's work (MACRO), each retrigger after them.

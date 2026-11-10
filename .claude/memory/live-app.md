@@ -261,3 +261,9 @@ Design:
   open record; (2) one gate rule; (3) one retrigger path; (4) levels and
   onset through _lv for every voice; (5) pitch; (6) the note function and
   the voice adapters; (7) the word tables (VOL / PAN once).
+- Done: (1) — `_open[ti]` (`_openNote` / `_closeNote` in
+  ir-player-levels.js) replaces `_pendingKeyOff`, `_fm3Pending`,
+  `_psgPending`, `_fm3Held`; closes by `{next, legato, keys}`, `{host}`
+  or plain (rest / track end / gate end). A hold now ends at END_OF_TRACK
+  (language.md §17; it was left keyed before); a track end's silence is on
+  its frame, not ε before.

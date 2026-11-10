@@ -148,42 +148,33 @@ export const levelMethods = {
   // with a level macro at its tail.
   _psgSilence(psgCh, ti, macros, off) {
     if (!macros) return void this._psgSetAtt(psgCh, this._psgOff(psgCh), off);
-    this._lvEnded(`psg:${psgCh}`, (at) => {
-      if (at != null) this._whileNote(ti, at, () => this._psgSetAtt(psgCh, this._psgOff(psgCh), at));
+    this._lvEnded(`psg:${psgCh}`, (end) => {
+      // (a tail done before the gate closed, or none written: at its close)
+      const at = Math.max(end ?? off, off);
+      this._whileNote(ti, at, () => this._psgSetAtt(psgCh, this._psgOff(psgCh), at));
     });
   },
 
-  // A full-gate note's silence, at the track's next event that is not a
-  // note: a rest, the track's end.
-  _psgResolveOff(psgCh, ti, t) {
-    const p = this._psgPending[psgCh];
-    if (!p) return;
-    this._psgPending[psgCh] = null;
-    this._psgKeyedUntil[psgCh] = t;
-    this._psgSilence(psgCh, ti, p.macros, t);
+  // ---- a track's open note: one close for every voice ----
+  // A note whose gate has not closed — one that reaches its end (no gate,
+  // or one into a tie: the track's next event or its gate's end closes it),
+  // a hold (the host's key-off) — is its track's open note, and `close(t,
+  // how)` is what closing does on its voice (how: { next, legato, keys } at
+  // the track's next note, { host } at the host's key-off, {} else).
+  _openNote(ti, at, close) {
+    this._open[ti] = { note: this._noteOf[ti], at, close };
+  },
+  // Track `ti`'s open note closed at `t`: on its voice first, then its
+  // macros take their release, as the driver's dispatch keys off before its
+  // frame's macros step — but at the track's next note, which takes the
+  // voice over.
+  _closeNote(ti, t, how = {}) {
+    const o = this._open[ti];
+    if (!o) return;
+    this._open[ti] = null;
+    o.close(t, how);
+    if (!how.next) this._letGoNote(ti, t);
   },
 
-  // A rest, or the track's end, on a track whose note's gate was full: its
-  // key-off or silence now (driver: `pendingOff`, resolved by the next event).
-  _resolveOff(ev, t) {
-    this._keyOffAt(ev, t);
-    // ...then the note's macros take their release, as a held note's let go
-    // (the driver's dispatch keys off before the frame's macros step).
-    this._letGoNote(ev._trackIndex, t);
-  },
-  _keyOffAt(ev, t) {
-    const r = ev._route;
-    if (r?.core === "psg") return void this._psgResolveOff(ev._psgCh ?? 0, ev._trackIndex, t);
-    if (r?.core !== "fm") return;
-    const op = this._fm3OpOf(ev);
-    if (op) {
-      if (this._fm3Pending[op - 1] != null) this._fm3ResolveOff(op, t);
-      return;
-    }
-    const ch = ev._chIndex ?? 0;
-    if (!this._pendingKeyOff[ch]) return;
-    this._pendingKeyOff[ch] = false;
-    if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, t);
-  },
 
 };
