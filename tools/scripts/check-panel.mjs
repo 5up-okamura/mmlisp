@@ -317,6 +317,61 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
   }
 }
 
+// A seek (a pause's resume, a jump while playing) keeps the panel's hands:
+// what it holds, what it let go, each over the score's value at the point;
+// a play from the top starts with the score's.
+{
+  try {
+    const ir = compile(`(fm1 :tempo 120 :vol 25 :len 4 #top c c c c (go top))`);
+    const writes = [];
+    const ctx = { currentTime: 10, state: "running", resume() {} };
+    const player = new IRPlayer((port, addr, data, when) => {
+      if (typeof port !== "object") writes.push({ port, addr, data, when: when ?? ctx.currentTime });
+    });
+    player.loadJSON(ir);
+    const to = (sec) => {
+      for (const end = ctx.currentTime + sec; ctx.currentTime <= end + 1e-9; ctx.currentTime += 0.005) {
+        clearTimeout(player._schedulerTimer);
+        player._scheduleLoop();
+        clearTimeout(player._schedulerTimer);
+      }
+    };
+    const tl = () => {
+      let last = null;
+      for (const w of writes) if (w.port === 0 && w.addr === TL4 && w.when <= ctx.currentTime + 1e-9 && (!last || w.when >= last.when)) last = w;
+      return last?.data ?? null;
+    };
+    player.play(ctx);
+    to(0.3);
+    const scoreTl = tl();
+    player.hold(vol("fm1", [0]), 9);
+    player.release(vol("fm1", [0]));
+    player.hold(word("MASTER"), 20);
+    player.hold(reg(0, "FM_FB"), 5);
+    to(0.2);
+    const heldTl = tl();
+    assert.notEqual(heldTl, scoreTl, "the strip moves the chip");
+    player.stop(); // pause
+    ctx.currentTime += 1;
+    player.seek(ctx, { sec: 0.7 }); // resume
+    to(0.3);
+    assert.deepEqual(player.read(vol("fm1", [0])), { v: 9, hand: true, score: 25 }, "the strip let go");
+    assert.equal(player.read(word("MASTER")).v, 20, "MASTER held");
+    assert.equal(player.read(reg(0, "FM_FB")).v, 5, "a register held");
+    assert.equal(tl(), heldTl, `the chip after the resume (TL ${heldTl}, the score's ${scoreTl})`);
+    assert.equal(player.hands().find((h) => h.c.id === "vol:fm1")?.held, false, "let go, still");
+    player.stop();
+    player.play(ctx);
+    to(0.3);
+    assert.equal(player.read(vol("fm1", [0])).hand, false, "a play from the top: the score's");
+    assert.equal(tl(), scoreTl, "and its TL");
+    player.stop();
+  } catch (e) {
+    failed++;
+    console.error(`FAIL a seek keeps the panel's hands: ${e.message}`);
+  }
+}
+
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);
 console.log(`check:panel ok${open.length ? ` (${open.length} open)` : ""}`);

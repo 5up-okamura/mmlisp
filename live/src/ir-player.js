@@ -295,6 +295,7 @@ export class IRPlayer {
     this._bpm = 120;
     this._tempoSweep = null;
     this._hands = new Map(); // a control's id → { held }: the panel's value is its word's (hold)
+    this._handCtl = new Map(); // a control's id → the control the panel held (hands)
     this._schedGen = 0; // bumped whenever a track's next event moves
     this._startAudioTime = 0;
     this._frameOrigin = 0; // audio time of frame 0 (the sweep frame grid)
@@ -656,6 +657,7 @@ export class IRPlayer {
     this._dropAhead();
     this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
     this._hands.clear(); // a run starts with the score's own values
+    this._handCtl.clear();
     this._levels.clear();
     this._masterHand = null;
     // A sample track's range, loop and pan are its run's: a second run, or
@@ -800,8 +802,12 @@ export class IRPlayer {
    * @param {{sec?: number, line?: number}} at
    * @returns {number} the point's time from the top, in seconds
    */
-  seek(audioContext, { sec = null, line = null } = {}) {
+  // `hands`: the panel's hands to carry over (hands()) — the player's own by
+  // default: a seek (a pause's resume, a jump while playing) keeps what the
+  // panel holds and what it let go, where a stop and play starts afresh.
+  seek(audioContext, { sec = null, line = null, hands = null } = {}) {
     if (!this._ir) throw new Error("No IR loaded");
+    const keep = hands ?? this.hands();
     this.stop();
     // A line names no time until the song is run to it: find that first, and
     // stop just short of its event, so the event itself plays live.
@@ -835,6 +841,8 @@ export class IRPlayer {
     this._silenceChipPcm(at);
 
     this._audioContext = audioContext;
+    // The panel's hands, back over the score's values at the point.
+    this._applyHands(keep, at);
     this._runs = (this._runs ?? 0) + 1; // runNumber
     this._onRunStart?.();
     this._scheduleLoop();
@@ -1147,6 +1155,7 @@ export class IRPlayer {
 
   /** The panel takes `c` in hand at `value`. */
   hold(c, value) {
+    this._handCtl.set(c.id, c);
     if (c.kind === "vol") return this._holdVol(c.strip, value);
     if (c.word === "MASTER") {
       this._masterHand = { v: Math.max(0, Math.min(31, Math.round(value))), held: true };
@@ -1168,6 +1177,43 @@ export class IRPlayer {
       }
     } finally {
       this._panelWrite = false;
+    }
+  }
+
+  /**
+   * The controls in the panel's hand now — held, or let go and not yet
+   * written over by the score — with the value each has: what a seek, or a
+   * score built while paused, carries over (`seek`'s `hands`).
+   * @returns {{ c: object, v: number, held: boolean }[]}
+   */
+  hands() {
+    const out = [];
+    for (const c of this._handCtl.values()) {
+      const r = this.read(c);
+      if (!r?.hand) continue;
+      const held = c.kind === "vol" ? !!this._lv(this._volSites(c.strip)[0] ?? "").hand?.held
+        : c.word === "MASTER" ? !!this._masterHand?.held : !!this._hands.get(c.id)?.held;
+      out.push({ c, v: r.v, held });
+    }
+    return out;
+  }
+
+  // The panel's hands put back at `at` (a seek's point): each control's
+  // value written there over the score's, held or let go as it was.
+  _applyHands(list, at) {
+    for (const { c, v, held } of list) {
+      this.hold(c, v);
+      if (c.kind === "vol") for (const site of this._volSites(c.strip)) this._levelNow(site, at);
+      else if (c.word === "MASTER") this._recomposeLevels(at);
+      else if (c.kind !== "val" && c.word !== "tempo") {
+        this._panelWrite = true;
+        try {
+          this.setParam(c.word, v, c.kind === "reg" ? c.ch : 0, at);
+        } finally {
+          this._panelWrite = false;
+        }
+      }
+      if (!held) this.release(c);
     }
   }
 

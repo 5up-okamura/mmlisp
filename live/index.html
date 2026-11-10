@@ -9642,7 +9642,7 @@
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
     // se: an effect's index, null for the song; left out, the cursor decides.
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride, prepared = null, guard = () => true } = {}) {
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride, prepared = null, guard = () => true, hands = null } = {}) {
       const request = ++_playEpoch;
       const epoch = _docEpoch;
       const current = () => request === _playEpoch && epoch === _docEpoch && guard();
@@ -9795,7 +9795,7 @@
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // From a point in the song, chased; an effect always plays from its top.
         if (fromSec != null && se == null) {
-          _auditionCue = player.seek(audioCtx, { sec: fromSec });
+          _auditionCue = player.seek(audioCtx, { sec: fromSec, hands: hands ?? [] });
         } else if (fromLine != null && _lastSourceMap && se == null) {
           _auditionCue = player.playFromLine(audioCtx, fromLine, _lastSourceMap);
         } else {
@@ -10205,8 +10205,9 @@
       if (!player || !_paused) return;
       // Edited while paused: build, and play the new score from the same point
       // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
+      // The panel's hands carry over, as a resume's own do (IRPlayer.seek).
       if (editorView.state.doc.toString() !== _runSrc) {
-        onPlay(null, { fromSec: _pausedSec, se: _runSe });
+        onPlay(null, { fromSec: _pausedSec, se: _runSe, hands: player.hands?.() ?? null });
         return;
       }
       // Resume is a seek back to where pause left it: the song's clock and state
