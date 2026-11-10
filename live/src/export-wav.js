@@ -24,7 +24,7 @@
 // the VGM export takes it) and the rhythm ROM the user brings (`rhythmRom`).
 // ---------------------------------------------------------------------------
 
-import { notYet } from "./targets.js";
+import { notYet, targetProfile } from "./targets.js";
 import { NUKED_NATIVE_SAMPLE_RATE } from "./synth-md.js";
 import { Pcm8Stream } from "./synth-x68k.js";
 import { synthFor } from "./synths.js";
@@ -287,18 +287,18 @@ export async function renderWav(player, opts = {}) {
  *                     pcmCount:number, durationSec:number }>}
  */
 export async function renderWavSamples(player, opts = {}) {
-  const why = notYet(player._target, "play"); // a register log with no core to play it
+  const target = targetProfile(player.machine());
+  const why = notYet(target, "play"); // a register log with no core to play it
   if (why) throw new Error(why);
   const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const fadeSec = opts.fadeSec ?? DEFAULT_FADE_SEC;
   // A sound that is a MIDI output's (`:target midi`): rendered on a GM
   // SoundFont, its bytes `opts.gmBank` (gm-render.js, loaded only for it).
-  if (player._target?.sound === "midi") {
-    if (!opts.gmBank) throw new Error(noSound(player._target));
+  if (target?.sound === "midi") {
+    if (!opts.gmBank) throw new Error(noSound(target));
     const { renderGmSamples } = await import("./gm-render.js");
     return renderGmSamples(player, { bank: opts.gmBank, reverb: opts.gmReverb, sampleRate, fadeSec, onProgress: opts.onProgress ?? null });
   }
-  const target = player._target;
   const synth = await synthFor(target?.name).create(sampleRate);
   synth.setLpf(!!opts.lpfOn);
 

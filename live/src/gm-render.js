@@ -56,7 +56,7 @@ export function planClock(plan) {
  * bytes, kept for the render), as renderWavSamples returns them.
  */
 export async function renderGmSamples(player, { bank, reverb = GM_REVERB_DEFAULT, sampleRate = 48000, fadeSec = 4, onProgress = null } = {}) {
-  const ir = player.loadedIr?.() ?? player._ir;
+  const ir = player.loadedIr();
   if (!ir) throw new Error("No IR loaded");
   const plan = midiPlan(ir);
   const { secAt, tickAt } = planClock(plan);

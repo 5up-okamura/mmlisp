@@ -748,6 +748,15 @@ export class IRPlayer {
     return this._irGiven ?? this._ir ?? null;
   }
 
+  /**
+   * The IR the run plays: the song's tracks alone (a def-se's are not), or
+   * an effect's own, as the strips, the TIME bar and the piano roll show
+   * them; null before a load.
+   */
+  playedIr() {
+    return this._ir ?? null;
+  }
+
   /** Whether the run goes round its loop (setLoop), or stops at the jump. */
   loopEnabled() {
     return !!this._loop;

@@ -352,7 +352,7 @@ export function configurePcmRate(player, pcm) {
  * names the chips the score played that VGM cannot carry (the VRC6).
  */
 export function renderVgm(player, meta = {}, pcm = null) {
-  const target = player._target ?? targetProfile();
+  const target = targetProfile(player.machine?.());
   if (target.sound === "midi")
     throw new Error(`the ${target.system} (:target ${target.name}) has no chip to log: File > Export > MIDI… writes it`);
   // The PC Engine's DDA: the samples as frames, which the player writes as

@@ -8307,7 +8307,7 @@
       // old chip's sounding notes would hang over. Stop, and play again from
       // the top if it was playing.
       const machineOf = (x) => targetProfile(x?.metadata?.target).name;
-      if (player?._ir && typeof player.swapAtNextBar === 'function' && machineOf(player._ir) !== machineOf(ir)) {
+      if (player?.playedIr?.() && typeof player.swapAtNextBar === 'function' && machineOf(player.playedIr()) !== machineOf(ir)) {
         const wasPlaying = player.isPlaying();
         onStop();
         log(`Built — the target is now ${machineOf(ir)}`, 'info');
@@ -9733,7 +9733,7 @@
           _auditionEffect = seName;
           if (prepared && fromSec > 0) log('A/B: MMLispDRV reference has no seek; playing from the beginning.', 'info');
           playingStarted();
-          refreshTimeBar(player._ir ?? _lastGoodIR, false); // the reference driver cannot seek
+          refreshTimeBar(player.playedIr?.() ?? _lastGoodIR, false); // the reference driver cannot seek
           // After play(): the driver's reset is a power-on, reseeding every value
           // slot from its def-val init, so the live slider values go in behind it
           // (the IR player seeds slots on load instead, hence the earlier call there).
@@ -9769,7 +9769,7 @@
           log('Loading ' + currentIrURL + '…');
           await player.loadURL(currentIrURL);
           if (!current()) return;
-          await syncPcmBankToWorklet(player._ir, player, current);
+          await syncPcmBankToWorklet(player.playedIr(), player, current);
           if (!current()) return;
           log('Playing', 'info');
         } else {
@@ -9779,14 +9779,14 @@
         player.setOnSeq(highlightSeq);
         player.setOnPosition?.(notePosition);
         const playing = player;
-        player.setOnTrig((t, code) => logTrig(playing._ir, t, code));
-        player.setOnHold?.((t) => logHold(playing._ir, t));
+        player.setOnTrig((t, code) => logTrig(playing.playedIr(), t, code));
+        player.setOnHold?.((t) => logHold(playing.playedIr(), t));
         // The FM panel tracks live registers via the playback refresh loop
         // (startFmLiveLoop), so no per-PARAM_SET UI callback is needed.
         // Rebuild strips from the IR actually loaded (covers URL/.mmb sources
         // that never went through compileNow), then push persisted mute/solo.
-        buildChStrips(player._ir);
-        renderDynParams(player._ir);
+        buildChStrips(player.playedIr());
+        renderDynParams(player.playedIr());
         applyPlayerChannelState(player); // playFromLine keeps the run state
         // play() resets the run; the strips' mute and solo go back on from its
         // hook, before the first event is scheduled.
@@ -9806,7 +9806,7 @@
         playingStarted();
         _paused = false;
         _vizFrozen = null;
-        refreshTimeBar(player._ir);
+        refreshTimeBar(player.playedIr());
         setPlayIcon(true);
         document.getElementById('btnPlay').classList.add('active');
         syncParamUI();
@@ -14664,7 +14664,7 @@
       if (!player) return;
       syncPanelControls();
       if (player instanceof IRPlayer && player.isPlaying()) {
-        refreshTimeBar(player._ir); // a hot-swapped edit is a new song to measure
+        refreshTimeBar(player.playedIr()); // a hot-swapped edit is a new song to measure
         showTime(player.positionSec());
       }
       updateChannelVu();
@@ -14798,7 +14798,7 @@
       // The pitch trace is what sounded before the jump, laid out on the clock
       // as it ran then: it no longer lines up with the roll, so it goes.
       _rollTrace = null;
-      if (player instanceof IRPlayer && player.isPlaying() && player._ir) {
+      if (player instanceof IRPlayer && player.isPlaying() && player.playedIr()) {
         player.stop();
         workletNode?.port.postMessage({ type: 'flush' });
         player.seek(audioCtx, { sec });
@@ -14807,7 +14807,7 @@
       } else if (_paused) {
         _pausedSec = sec; // Resume picks up here
         _pausedAsLeft = false;
-        holdRollAt(player._ir, sec);
+        holdRollAt(player.playedIr(), sec);
       } else {
         _timeCue = sec;   // Play starts here
         holdRollAt(_timeSpan?.ir, sec);
@@ -14931,7 +14931,7 @@
     const VIZ_FLAT_ASPECT = 3, VIZ_AIM_ASPECT = 2, VIZ_NARROW_CELL_W = 160;
 
     function vizPpqn() {
-      return (player?._ir ?? _lastGoodIR)?.ppqn || 96;
+      return (player?.playedIr?.() ?? _lastGoodIR)?.ppqn || 96;
     }
 
     function buildVizNotes(getEvents) {
@@ -14980,7 +14980,7 @@
       // EXPANDED events, so (x N …) repeats are unrolled and align with
       // trackClock: the player's, or — stopped — the probe's on the last
       // compiled IR, which the TIME bar's point is chased on.
-      const src = player?._ir ? player : _lastGoodIR ? timeProbe(_lastGoodIR) : null;
+      const src = player?.playedIr?.() ? player : _lastGoodIR ? timeProbe(_lastGoodIR) : null;
       const getEvents = src ? (ti) => src.expandedTrackEvents(ti) : () => [];
       _vizNotes = buildVizNotes(getEvents);
       rollModelChanged();
