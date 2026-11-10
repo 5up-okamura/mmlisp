@@ -38,6 +38,16 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
 
 ## The panel and the players — how it is built, and what is open
 
+**Where the restructuring stopped (2026-11):** the five rules hold (frame
+order, state now, one rule a word, slots, the public API — the page and the
+exports read the player only through it: `playedIr()`, `loadedIr()`,
+`machine()`). Left by choice: (1) a held note let go releases where the
+sent writes end, ~the lookahead late — undoing writes already sent needs
+a per-channel retraction in the worklet for all eight machines; (2) the
+parts are mixins, not components — they call into each other and share
+the core's state freely (samples: 31 calls, 27 fields; measured with a
+script) — to draw when a part next has to change.
+
 `ir-player.js` is split into parts (`ir-player-work / -words / -macros /
 -levels / -samples / -panel / -keys / -shared .js`), each a set of methods
 mixed into IRPlayer: the function names below are where they were, in
