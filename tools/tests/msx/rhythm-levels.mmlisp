@@ -1,0 +1,8 @@
+; msx FM-PAC rhythm's levels as they move: a track's :vol (a value, a sweep,
+; + and * through a sweep), the song's :master swept from an FM track, a
+; note's :vol and :vel macros, a :keyon retrigger, a :pitch sweep.
+(def-score :target msx :title "msx rhythm levels")
+(fm1 piano :tempo 125 :len 1 c :master (linear 31..12 :len 2/1) c c :master 31 c |)
+(rhythm1 kick :len 4 c :vol (linear 31..8 :len 2/1) c c c c :vol+ 6 c :vol* 1.5 c
+  :vol 28 (macro :vol (linear 31..10 :len 20f)) c (macro :vel [15 11 7 3] :keyon [1 0 1 0]) :len 2 c c |)
+(rhythm2 tom4 :len 4 c :pitch (linear 0..-700 :len 1/1) c c c :pitch 0 c |)

@@ -1,0 +1,8 @@
+; fc DMC's level at key-on: a track's :vol (a value, a sweep, + and *
+; through a sweep), the song's :master swept from the triangle, a note's
+; :vol and :vel macros' first step.
+(def-score :target fc :title "fc DPCM levels")
+(def-pcm kick :file "wav/kick.wav")
+(tri :tempo 125 :len 1 :oct 3 c :master (linear 31..12 :len 2/1) c c :master 31 c |)
+(pcm1 :len 4 kick c :vol (linear 31..8 :len 2/1) c c c c :vol+ 6 c :vol* 1.5 c
+  :vol 28 (macro :vol [20 10]) c (macro :vel [8 15]) c c |)

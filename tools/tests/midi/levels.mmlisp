@@ -1,0 +1,8 @@
+; :target midi's levels as the score writes them: a channel's :vol (a value,
+; a sweep, + and * through a sweep), the song's :master swept, a note's :vol
+; macro.
+(def-score :target midi :title "midi levels")
+(ch1 gm-piano :tempo 125 :len 4 c :vol (linear 31..8 :len 2/1) c c c c :vol+ 6 c :vol* 1.5 c
+  :vol 28 (macro :vol (linear 31..10 :len 20f)) c c |)
+(ch2 gm-violin :len 1 c :master (linear 31..12 :len 2/1) c c :master 31 c |)
+(drum1 :len 8 kick c c :vol (linear 31..4 :len 1/1) c c c c c c |)

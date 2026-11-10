@@ -1,0 +1,13 @@
+; pc88 sample voices' levels as they move: a track's :vol (a value, a sweep,
+; + and * through a sweep), the song's :master swept from an FM track, a
+; note's :vol / :vel macros, a :keyon retrigger, a :pitch sweep on the
+; ADPCM-B — the level component's cases on the chip's own voices.
+(def-score :target pc88 :title "pc88 sample levels")
+(def-pcm blip :file "wav/blip.wav")
+(fm1 :tempo 125 :len 1 c :master (linear 31..12 :len 2/1) c c :master 31 c |)
+(pcm1 :len 4 blip :mode loop c :vol (linear 31..8 :len 2/1) c c :vol+ 6 c :vol* 1.5 c
+  :mode shot :vol 28 (macro :vol (linear 31..10 :len 20f)) c c
+  (macro :vel [15 11 7 3] :keyon [1 0 1 0]) :len 2 c
+  :mode loop :pitch (linear 0..-700 :len 1/1) :len 1 c :pitch 0 |)
+(rhythm1 :len 8 kick c c :vol (linear 31..4 :len 1/1) c c c c c c
+  :vol 31 (macro :vol (linear 31..0 :len 12f)) :len 4 c c (macro :vel [15 9 5]) c c |)

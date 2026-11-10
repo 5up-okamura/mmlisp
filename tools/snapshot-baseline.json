@@ -2189,6 +2189,13 @@
   "vgm": "3e029af20ffe2b65",
   "mid": "9ed99112089946c3"
  },
+ "tools/tests/fc/dpcm-levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "25cfeec8bf3d92bb",
+  "regs": "addc283aedea422b",
+  "vgm": "e1a8fc2f81cafb31",
+  "mid": "c17060157d7a0995"
+ },
  "tools/tests/fc/dpcm.mmlisp": {
   "diagnostics": "b4e4c9ef89c5b72c",
   "ir": "280f174a84e63f8b",
@@ -2273,6 +2280,11 @@
   "ir": "51adb80f91a14524",
   "mid": "1471b9dce0cb1431"
  },
+ "tools/tests/midi/levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "4c11fe4265e903f6",
+  "mid": "9a1aa8aace685c6b"
+ },
  "tools/tests/msx/env-detune.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "602742d8cea2f201",
@@ -2322,6 +2334,13 @@
   "vgm": "bf4766744bc42c6d",
   "mid": "dac669d274084c8c"
  },
+ "tools/tests/msx/rhythm-levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "ef18a9383d8cd02c",
+  "regs": "b03f47ddb5be3b10",
+  "vgm": "6725ba9e0181f006",
+  "mid": "a132e91750aa73d7"
+ },
  "tools/tests/msx/rhythm-share.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "8d46349552ac64eb",
@@ -2364,6 +2383,13 @@
   "vgm": "b72508d03f0d285f",
   "mid": "2c024f3b99ad1ad8"
  },
+ "tools/tests/pc88/sample-levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b12072693edf8dcb",
+  "regs": "616cc88a34122bb8",
+  "vgm": "11b05c3bac69fff5",
+  "mid": "0ef759049f2b0f69"
+ },
  "tools/tests/pc88/ssg-macro.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "e23d8cd576270ab6",
@@ -2377,6 +2403,13 @@
   "regs": "5757de52507d4fea",
   "vgm": "74cf4916d703fb1d",
   "mid": "305d30734e1b5e8d"
+ },
+ "tools/tests/pce/dda-levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "8424027b031371ae",
+  "regs": "f40455448d9530d3",
+  "vgm": "bf3822871882dc4c",
+  "mid": "bcb779751258f60a"
  },
  "tools/tests/pce/dda.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
@@ -2458,5 +2491,12 @@
   "regs": "1af3691b89e1d263",
   "vgm": "5d33e6b3c558d2b4",
   "mid": "9324b44005989653"
+ },
+ "tools/tests/x68k/sample-levels.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "5f3d9cff4ba81e27",
+  "regs": "d5b4704c65a619b8",
+  "vgm": "210323b094d64ff1",
+  "mid": "9f27e8fd18e5cdc4"
  }
 }
