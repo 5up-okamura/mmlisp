@@ -101,11 +101,14 @@ Open, in the order worth taking:
    ahead (pitch sweeps, the encoders' own queues) are still made at
    dispatch: the Game Boy's, the 2A03's and the PC Engine's encoders order
    and drop writes by the calls they have seen. Listen to those first.
-4. **A strip's :vol is still kept six ways** (FM regs + sweep + lines, an
-   fm3 operator's, the PSG's arrays, `_pcmVolNow`, the chip-sample lines,
-   `:target midi`'s lines) — why `_volOf` / `_volSites` switch on kind. The
-   other words a sample track writes (`:pan`, `:pitch`) are still per
-   dispatcher; probe each against the driver as MASTER and :vol were.
+4. **One level model for FM channels, fm3 operators and tone lanes**
+   (`_lv(site)`: vel, vol, liveVel / liveVol, note, key, hand; `_lvWrite`
+   is the only part that differs by kind). Still outside it: the Mega
+   Drive's PCM voices (the worklet's model + `_pcmVolNow`), the chips'
+   sample voices and `:target midi` (lines of their own) — they have only
+   the panel's hand there, so `_volOf` still switches on them. The other
+   words a sample track writes (`:pan`, `:pitch`) are still per dispatcher;
+   probe each against the driver as MASTER and :vol were.
 5. Bounds of the lookahead, as they are: a hand has the chip within it
    (0.2 s visible) while a sweep or macro runs; a score event's gate is
    judged when it is dispatched, so a hand let go less than the lookahead

@@ -12848,6 +12848,7 @@
     function previewFmNoteOff(ch) {
       if (!player) return;
       const fm = player.fmEncoder();
+      player.keyFmOff?.(ch); // the key's velocity no longer holds the channel's level
       writePreviews(_borrowedKeyMask.has(ch) && fm.held ? fm.held.off(ch) : fm.key(ch, 0));
     }
 

@@ -346,9 +346,7 @@ export class IRPlayer {
     // note's NOTE_ON (same tick), so that note must start from the sweep's
     // FIRST value instead — else its onset write lands on the target pitch for
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
-    this._psgVol = new Array(PSG_LANES).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
-    this._psgLive = new Array(PSG_LANES).fill(null); // each lane's note: { vel, vol } as they are (_psgRecompose)
-    this._psgKeys = new Array(PSG_LANES).fill(null); // a key of Live's held on a lane: { vel, vol } (keyTone)
+    this._levels = new Map(); // a voice's level, by its site ("fm:0", "fm3op:1", "psg:0" …): _lv
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att under its off). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
@@ -399,7 +397,6 @@ export class IRPlayer {
     this._masterHand = null; // { v, held }: the panel's MASTER, laid over the score's (_handMaster)
     this._slots = new Map(); // a sweep's slot (_slotKey) → its sweep (_resetRunState)
     this._panelWrite = false; // the panel's own write, which no hand stops
-    this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (_holdVol)
 
     // Channels holding a note until triggerKeyOff() (`:len 0` or `:gate 0`):
     // channel id → the track that keyed it.
@@ -413,7 +410,7 @@ export class IRPlayer {
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
     this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+      midi: 60, offset: 0,
     }));
 
     // Per FM channel: a full-gate note has run up to the next note and left its
@@ -575,7 +572,7 @@ export class IRPlayer {
     // and level (index = op − 1) — what its F-number and TL are written
     // from (driver.md §13.4).
     this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-      midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+      midi: 60, offset: 0,
     }));
     this._pendingKeyOff.fill(false);
 
@@ -654,7 +651,7 @@ export class IRPlayer {
     this._dropAhead();
     this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
     this._hands.clear(); // a run starts with the score's own values
-    this._volHands.clear();
+    this._levels.clear();
     this._masterHand = null;
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
@@ -678,8 +675,6 @@ export class IRPlayer {
     this._psgCurrentMidi.fill(60);
     this._psgPitchOffset.fill(0);
     this._psgSnap.fill(0);
-    this._psgVol.fill(VOL_UNITY);
-    this._psgLive.fill(null);
     this._psgNoiseMode = 0b1_00;
     this._psgEnv.fill(-1);
     this._envFollow = null;
@@ -876,7 +871,7 @@ export class IRPlayer {
       this._initDefaultVoices();
       this._resetFm3Keys();
       this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-        midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+        midi: 60, offset: 0,
       }));
       this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
@@ -1266,10 +1261,10 @@ export class IRPlayer {
   _holdVol(strip, value) {
     const sites = this._volSites(strip);
     if (!sites.length) return;
-    let hand = this._volHands.get(sites[0]);
+    let hand = this._lv(sites[0]).hand;
     if (!hand) {
       hand = { tracks: new Set(strip.tracks), sites };
-      for (const site of sites) this._volHands.set(site, hand);
+      for (const site of sites) this._lv(site).hand = hand;
     }
     // Strips that share a site (the fm3 parts on channel 3) share its hand.
     for (const ti of strip.tracks ?? []) hand.tracks.add(ti);
@@ -1284,7 +1279,8 @@ export class IRPlayer {
 
   // Let go: it stays until the score writes :vol there.
   _releaseVol(strip) {
-    const hand = this._volHands.get(this._volSites(strip)[0]);
+    const site = this._volSites(strip)[0];
+    const hand = site && this._lv(site).hand;
     if (hand) hand.held = false;
   }
 
@@ -1296,13 +1292,11 @@ export class IRPlayer {
     const when = this._audioContext?.currentTime ?? 0;
     const [kind, at] = site.split(":");
     const n = Number(at);
-    const score = Math.round(kind === "fm" ? this._fmScoreVolAt(n, when)
-      : kind === "fm3op" ? this._fm3Op[n - 1].liveVol ?? this._fm3Op[n - 1].vol
-      : kind === "psg" ? (this._psgKeyed(n, when) ? this._psgLive[n].vol : null) ?? this._psgVol[n] ?? VOL_UNITY
+    const score = Math.round(kind === "fm" || kind === "fm3op" || kind === "psg" ? this._lvScoreVol(this._lv(site))
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
       : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
       : this._chipPcmParamAt(strip.tracks[0], "vol", when));
-    const hand = this._volHands.get(site);
+    const hand = this._lv(site).hand;
     return { v: hand ? hand.v : score, hand: !!hand, score };
   }
 
@@ -1332,7 +1326,7 @@ export class IRPlayer {
 
   // The panel's :vol at a level's site, or null.
   _handVol(site) {
-    return this._volHands.size ? this._volHands.get(site)?.v ?? null : null;
+    return this._levels.get(site)?.hand?.v ?? null;
   }
 
   // A score write of :vol on track `ti` takes a strip the panel let go back.
@@ -1340,10 +1334,10 @@ export class IRPlayer {
   // panel's value went: it gets the score's back (a note's :vol macro would
   // not say it).
   _volTakeBack(ti, when) {
-    for (const hand of new Set(this._volHands.values())) {
-      if (hand.held || !hand.tracks.has(ti)) continue;
+    for (const hand of new Set([...this._levels.values()].map((L) => L.hand))) {
+      if (!hand || hand.held || !hand.tracks.has(ti)) continue;
       for (const site of hand.sites) {
-        this._volHands.delete(site);
+        this._lv(site).hand = null;
         const [kind, n] = site.split(":");
         if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._pcmVolNow?.[Number(n)] ?? VOL_UNITY });
       }
@@ -1365,7 +1359,7 @@ export class IRPlayer {
       // A fader move must never un-silence an idle lane into a tone. A run
       // knows a lane keyed at its cursor, not at the chip's now: its level
       // moves where the sent writes end. Stopped, the keys' lane is live.
-      if (this._playing && !this._psgKeys[n] && !(when != null && when >= this._writeCursor - 1e-9)) return;
+      if (this._playing && !this._lv(site).key && !(when != null && when >= this._writeCursor - 1e-9)) return;
       if (this._psgKeyed(n, when)) this._psgRecompose(n, when);
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
@@ -1405,27 +1399,33 @@ export class IRPlayer {
   keyTone(lane, midi, vel = null, when = this._keyNow()) {
     if (this._isNoiseLane(lane)) this._psgTriggerNoise(when, lane);
     else this._psgSetPitch(lane, midi, 0, when);
-    this.keyToneLevel(lane, vel ?? this._psgLive[lane]?.vel ?? 15, when);
+    const L = this._lv(`psg:${lane}`);
+    this.keyToneLevel(lane, vel ?? L.liveVel ?? L.vel, when);
   }
   /** A keyed tone lane's level at `vel` — a wave role's envelope steps it. */
   keyToneLevel(lane, vel, when = this._keyNow()) {
-    // The key has the lane's level until it is let go (_psgRecompose); the
-    // song's note there stays the song's, and has the lane back then.
-    this._psgKeys[lane] = { vel: Math.max(0, Math.min(15, vel)), vol: null };
+    // The key has the lane's level until it is let go (_lvVel); the song's
+    // note there stays the song's, and has the lane back then.
+    this._lv(`psg:${lane}`).key = { vel: Math.max(0, Math.min(15, vel)) };
     this._psgRecompose(lane, when);
   }
   /** The velocity a key holds the lane at (keyTone), 15 with none held. */
   keyToneVel(lane) {
-    return this._psgKeys[lane]?.vel ?? 15;
+    return this._lv(`psg:${lane}`).key?.vel ?? 15;
   }
   keyToneOff(lane, when = this._keyNow()) {
-    this._psgKeys[lane] = null;
+    this._lv(`psg:${lane}`).key = null;
     this._psgSetAtt(lane, this._psgOff(lane), when);
   }
 
-  /** An FM channel's carriers at `vel`, composed as a note's are. */
+  /** An FM channel's carriers at a key's `vel`, composed as a note's are, until keyFmOff. */
   keyFmLevel(ch, vel, when = this._keyNow()) {
-    this._writeFmLevel(ch, when, { vel });
+    this._lv(`fm:${ch}`).key = { vel };
+    this._writeFmLevel(ch, when);
+  }
+  /** The key on the channel let go: its level is the song's note's again. */
+  keyFmOff(ch) {
+    this._lv(`fm:${ch}`).key = null;
   }
   /** An OPN's CH3 in its special mode: every operator at `midi`, as one voice. */
   keyFm3Unison(midi) {
@@ -1440,7 +1440,7 @@ export class IRPlayer {
   keyPatchWrites(ch, regs, vel, when = this._keyNow()) {
     const fm = this._fmEnc;
     const carriers = this._carrierOps(regs);
-    const vol = this._handVol(`fm:${ch}`) ?? this._fmScoreVolAt(ch, when);
+    const vol = this._lvVol(this._lv(`fm:${ch}`));
     const ops = regs.ops.map((o, i) => {
       const voiced = o.voicedTl ?? o.tl ?? 0;
       const tl = vel != null && carriers.includes(i)
@@ -2240,7 +2240,7 @@ export class IRPlayer {
       // and level (index = op − 1) — what its F-number and TL are written
       // from (driver.md §13.4).
       this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-        midi: 60, offset: 0, vel: 15, velBase: 15, vol: VOL_UNITY,
+        midi: 60, offset: 0,
       }));
       this._pendingKeyOff.fill(false);
       this._tracks = this._flattenTracks();
@@ -2629,26 +2629,24 @@ export class IRPlayer {
   // voices, the reason the mode exists — this is its volume, and on a
   // modulator it is its modulation depth, which is a level too (§13.4).
   // The operator's level as it is: its note's :vel / :vol macro where one
-  // has stepped (liveVel, liveVol), else its velocity and fader. `over` pins
-  // vel / vol / group for a caller that has its own value.
-  _fm3OpTl(op, when, over = {}) {
+  // has stepped, else its velocity and fader (_lv).
+  _fm3OpTl(op, when) {
     const st = this._fm3Op[op - 1];
     // CSM (driver.md §9): Timer A keys CH3, so an operator's key is its level —
     // outside its note it is held at TL 127, whatever else recomposes it.
     if (this._reg27 & 0x80 && when !== undefined && st.csmOn !== undefined
       && (when < st.csmOn - 1e-6 || when >= st.csmOff - 1e-6)) return 127;
     const regs = this._chRegs[2];
-    const vel = over.vel ?? st.liveVel ?? st.vel;
-    const vol = this._handVol(`fm3op:${op}`) ?? over.vol ?? st.liveVol ?? st.vol;
+    const L = this._lv(`fm3op:${op}`);
     return levelSteps(this._fmLevel, {
-      base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
-      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, this._handMaster() ?? this._masterVol ?? VOL_UNITY],
+      base: regs.ops[op - 1].voicedTl ?? 0, vel: this._lvVel(L), k: velK(regs.ops[op - 1].velK, true),
+      faders: [this._lvVol(L), this._lvVol(this._lv("fm:2")), this._handMaster() ?? this._masterVol ?? VOL_UNITY],
     });
   }
-  _writeFm3OpTl(op, when, over = {}) {
-    if (this._isAhead(when)) return void this._at(when, () => this._writeFm3OpTl(op, when, over));
+  _writeFm3OpTl(op, when) {
+    if (this._isAhead(when)) return void this._at(when, () => this._writeFm3OpTl(op, when));
     const o = this._chRegs[2].ops[op - 1];
-    o.tl = this._fm3OpTl(op, when, over);
+    o.tl = this._fm3OpTl(op, when);
     // Under CSM an operator's level is its key, and a rest on the rate track
     // dispatched after this note silences it through the rest (driver.md §9):
     // the write waits in a queue until no later dispatch can reach its frame
@@ -2666,13 +2664,13 @@ export class IRPlayer {
   // A channel's levels at `when`, from the LIVE vel / vol (its note's level
   // macros, else the note's velocity and the fader or its sweep) and master:
   // its carriers, and a modulator its voice makes velocity-sensitive (`:vel2`).
-  // `over` pins any of vel / vol / master for a caller that has its own value.
-  // The one place a normal channel's level is composed (§7).
-  _writeFmLevel(ch, when, over = {}) {
-    if (this._isAhead(when)) return void this._at(when, () => this._writeFmLevel(ch, when, over));
+  // The one place a normal channel's level is composed (§7), from its level
+  // as it is (_lv).
+  _writeFmLevel(ch, when) {
+    if (this._isAhead(when)) return void this._at(when, () => this._writeFmLevel(ch, when));
     const regs = this._chRegs[ch];
-    const vel = over.vel ?? this._fmLiveVelAt(ch, when);
-    const vol = this._handVol(`fm:${ch}`) ?? over.vol ?? this._fmLiveVolAt(ch, when);
+    const L = this._lv(`fm:${ch}`);
+    const vel = this._lvVel(L), vol = this._lvVol(L);
     const master = this._handMaster() ?? this._masterVol ?? VOL_UNITY;
     const carriers = this._carrierOps(regs);
     for (let opIdx = 0; opIdx < 4; opIdx++) {
@@ -2703,8 +2701,8 @@ export class IRPlayer {
     if (!carrier && !velK(op.velK, false)) return op.voicedTl ?? 0;
     return this._carrierTl(
       op,
-      this._fmLiveVelAt(ch, when),
-      this._fmLiveVolAt(ch, when),
+      this._lvVel(this._lv(`fm:${ch}`)),
+      this._lvVol(this._lv(`fm:${ch}`)),
       this._handMaster() ?? this._masterVol ?? VOL_UNITY,
       carrier,
     );
@@ -3001,7 +2999,7 @@ export class IRPlayer {
     // held it runs on, unheard.
     if (this._masterHand && !this._masterHand.held && ev.cmd.startsWith("PARAM_")
       && String(ev.args?.target ?? "").toUpperCase() === "MASTER") this._masterHand = null;
-    if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
+    if (ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._freeSlot(ev);
     // MASTER is the song's, written on any track: one handler, whatever the
     // track's kind (`:target midi` keeps its own, _midiLevel).
@@ -3091,16 +3089,14 @@ export class IRPlayer {
           // FM3 independent-OP: the note's velocity is THIS operator's, and it
           // composes into that operator's own TL — not the channel's carriers,
           // which belong to the other operators too (driver.md §13.4).
-          this._fm3Op[fm3Op - 1].liveVel = this._fm3Op[fm3Op - 1].liveVol = null;
-          this._fm3Op[fm3Op - 1].vel = ev.args?.vel ?? 15;
+          this._lvNoteOn(`fm3op:${fm3Op}`, ev.args?.vel ?? 15);
           // The note's span, CSM's level key (_fm3OpTl); its end is set once
           // the gate is resolved below.
           this._fm3Op[fm3Op - 1].csmOn = when;
           this._fm3Op[fm3Op - 1].csmOff = Infinity;
           this._writeFm3OpTl(fm3Op, when);
         } else {
-          regs.liveVel = regs.liveVol = null;
-          regs.vel = ev.args?.vel ?? 15; // the note's velocity, for later :vol / :master recomposes
+          this._lvNoteOn(`fm:${ch}`, ev.args?.vel ?? 15);
           this._writeFmLevel(ch, when);
         }
 
@@ -3172,7 +3168,7 @@ export class IRPlayer {
         // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
         // :pan run on.
         this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, gateTicks, macroLimit);
-        this._fmNoteLevel(ch, isFm3OpNote ? fm3Op : 0, ev.args ?? {}, when, gateTicks, macroLimit);
+        this._lvMacros(isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`, ev.args ?? {}, when, gateTicks, macroLimit);
         this._scheduleFmOpMacros(
           ch,
           ev.args ?? {},
@@ -3236,7 +3232,7 @@ export class IRPlayer {
             // (a tail the next note cuts leaves the level to that note); a
             // hold note is released by triggerKeyOff. A :keyon retrigger is
             // moot: every Timer A overflow is one.
-            const ends = this._fm3Op[fm3Op - 1].levelEnds ?? [];
+            const ends = this._lv(`fm3op:${fm3Op}`).ends;
             const muteAt = offWhen == null ? null : Math.max(offWhen, ...ends);
             this._fm3Op[fm3Op - 1].csmOff = muteAt ?? Infinity;
             if (muteAt == null) this._fm3Held |= keyMask & 0xf0;
@@ -4540,7 +4536,7 @@ export class IRPlayer {
     const t = String(target || "").toUpperCase();
     if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
     // An fm3 operator's :vol is its own (driver.md §13.4).
-    if (t === "VOL" && fm3Op) return this._fm3Op[fm3Op - 1].vol;
+    if (t === "VOL") return this._lv(fm3Op ? `fm3op:${fm3Op}` : `fm:${ch}`).vol;
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
@@ -4551,7 +4547,6 @@ export class IRPlayer {
       case "FM_ALG": return regs.algorithm ?? 0;
       case "FM_AMS": return regs.ams ?? 0;
       case "FM_FMS": return regs.fms ?? 0;
-      case "VOL": return regs.vol ?? VOL_UNITY; // a fader never written is at unity
       case "PAN": return regs.pan ?? 0;
       case "SNAP": return regs.snap ?? 0;
       // Inline `:pitch+ N` accumulates onto the running cent offset (else it
@@ -4908,23 +4903,10 @@ export class IRPlayer {
         // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
         // on the shared (fm3 …) track it is the group fader over all four
         // (driver.md §13.4).
-        const vol = Math.max(0, Math.min(31, value));
         const volOp = this._fm3OpOf(ev);
-        if (volOp) {
-          const st = this._fm3Op[volOp - 1];
-          st.vol = vol;
-          st.liveVol = null; // over a :vol macro's, until its next step
-          this._writeFm3OpTl(volOp, when);
-          break;
-        }
-        if (ch === 2 && this._fm3Ops) {
-          regs.vol = vol;
-          this._recomposeFm3Ops(when);
-          break;
-        }
-        regs.vol = vol;
-        regs.liveVol = null; // over a :vol macro's, until its next step
-        this._writeFmLevel(ch, when);
+        const site = volOp ? `fm3op:${volOp}` : `fm:${ch}`;
+        this._lvSetVol(site, value);
+        this._lvWrite(site, when);
         break;
       }
 
@@ -5651,27 +5633,6 @@ export class IRPlayer {
   // either, the note's level is recomposed from both lines' live values (the
   // driver composes both every frame, §7). An FM3 operator's note writes that
   // operator's TL; a channel's, its carriers.
-  // A note's :vel and :vol macros on an FM channel, or (`op`) an fm3
-  // operator: each step, in its frame (MACRO), moves the note's live value
-  // and the level is composed with the other's as it is then — the driver's
-  // one level path (driver.md §7). Returns when each macro's level is done.
-  _fmNoteLevel(ch, op, args, when, gateTicks, limitSecs) {
-    const level = op ? this._fm3Op[op - 1] : this._chRegs[ch];
-    const note = (level.note = {});
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    const run = (spec, target, key) => !spec ? null : this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
-      if (level.note !== note) return; // the channel's next note took it over
-      level[key] = clampForTarget(target, v);
-      if (op) this._writeFm3OpTl(op, t);
-      else this._writeFmLevel(ch, t);
-    }, this._stepSecs(spec.step), limitSecs);
-    // In bind order: which of the two steps first in a frame.
-    const keys = Object.keys(args);
-    const pair = [[args.velMacro, "VEL", "liveVel"], [args.vol, "VOL", "liveVol"]];
-    if (args.vol && keys.indexOf("vol") < keys.indexOf("velMacro")) pair.reverse();
-    level.levelEnds = pair.map(([spec, target, key]) => run(spec, target, key)).filter((e) => e != null);
-  }
-
   // Schedule a pitch macro for any channel (FM or PSG).
   // writeFn(centOffset, t) performs the hardware write for the channel.
   // `offsetGetter`: when the macro is additive (`:pitch+`/`:semi+`), each sample
@@ -5897,22 +5858,14 @@ export class IRPlayer {
       // what the channel is then.
       const slot = this._slotKey(ev, "VOL");
       this._slots.set(slot, sw);
-      const st = volOp ? this._fm3Op[volOp - 1] : null;
+      const site = volOp ? `fm3op:${volOp}` : `fm:${ch}`;
       for (let i = 0; i < iterFrames; i++) {
         const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
         const t = this._sweepFrameTime(sw, i);
         this._step(sw.startFrame + i, SWEEP, t, () => {
           if (this._slots.get(slot) !== sw) return;
-          if (st) {
-            st.vol = vol;
-            st.liveVol = null;
-            this._writeFm3OpTl(volOp, t);
-          } else {
-            regs.vol = vol;
-            regs.liveVol = null;
-            if (groupSweep) this._recomposeFm3Ops(t);
-            else this._writeFmLevel(ch, t);
-          }
+          this._lvSetVol(site, vol);
+          this._lvWrite(site, t);
         });
       }
       return;
@@ -6286,7 +6239,6 @@ export class IRPlayer {
   // the 16-step attenuator as the driver does. vol or master 0 is a hard mute.
   // A PSG lane's attenuation, 0 loud .. 15 off, on its part's level ladder.
   _composePsgAtt(psgCh, vel, vol, master) {
-    vol = this._handVol(`psg:${psgCh}`) ?? vol;
     master = this._handMaster() ?? master;
     const level = this._psgLevel[psgCh];
     if (!level || vol <= 0 || master <= 0) return this._psgOff(psgCh); // no such lane here: silent
@@ -6332,18 +6284,6 @@ export class IRPlayer {
       v = value;
     }
     return v;
-  }
-
-  _fmLiveVelAt(ch) {
-    return this._chRegs[ch].liveVel ?? this._chRegs[ch].vel ?? 15;
-  }
-
-  _fmLiveVolAt(ch, t) {
-    return this._handVol(`fm:${ch}`) ?? this._fmScoreVolAt(ch, t);
-  }
-
-  _fmScoreVolAt(ch) {
-    return this._chRegs[ch].liveVol ?? this._chRegs[ch].vol ?? VOL_UNITY;
   }
 
   // A sweep's value on its `frame`-th frame (0 = the frame it starts). The
@@ -6416,52 +6356,118 @@ export class IRPlayer {
     this._psgSetNoiseCfg(this._psgNoiseMode, when, lane);
   }
 
+  // ---- a voice's level ----
+  // One model for every voice whose level the player composes — an FM
+  // channel ("fm:0"), an fm3 operator ("fm3op:1"), a tone lane ("psg:0") —
+  // kept by the site its strip's :vol names (_volSites):
+  //
+  //   vel, vol          the score's: its note's velocity, its fader
+  //   liveVel, liveVol  its note's :vel / :vol macro, where one has stepped
+  //   note, ends        the note sounding, and when its macros' levels end
+  //   key               a key of Live's holding the voice: { vel }
+  //   hand              the panel's hand on its :vol: { v, held, tracks, sites }
+  //
+  // The level is composed from what these are, each time one moves — a
+  // note's key-on, a macro's step, a :vol or :master write, a sweep's step,
+  // the panel, a key — as the driver re-composes a keyed channel (driver.md
+  // §7); only where the result is written differs by kind (_lvWrite). A
+  // sample voice and a MIDI channel keep the score's level in models of their
+  // own: here they have the panel's hand.
+  _lv(site) {
+    let L = this._levels.get(site);
+    if (!L) this._levels.set(site, (L = { vel: 15, vol: VOL_UNITY, liveVel: null, liveVol: null, note: null, ends: [], key: null, hand: null }));
+    return L;
+  }
+  // What a level is composed from now: a key's velocity over the note's, the
+  // panel's :vol over the score's.
+  _lvVel(L) {
+    return L.key?.vel ?? L.liveVel ?? L.vel;
+  }
+  _lvVol(L) {
+    return L.hand ? L.hand.v : this._lvScoreVol(L);
+  }
+  _lvScoreVol(L) {
+    return L.liveVol ?? L.vol;
+  }
+  // The level written again from what it is.
+  _lvWrite(site, when) {
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    if (kind === "fm") {
+      if (n === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
+      else this._writeFmLevel(n, when);
+    } else if (kind === "fm3op") this._writeFm3OpTl(n, when);
+    else if (kind === "psg") this._psgRecompose(n, when);
+  }
+  // A note begins on the voice: its velocity, the last note's macros gone.
+  _lvNoteOn(site, vel) {
+    const L = this._lv(site);
+    L.vel = vel;
+    L.liveVel = L.liveVol = null;
+    L.note = {};
+    L.ends = [];
+    return L;
+  }
+  // The note's :vel and :vol macros: each step, in its frame (MACRO), moves
+  // the note's live value and — while `live()` — the level is written from
+  // both as they are then. In bind order: which of the two steps first in a
+  // frame. L.ends: when each macro's level is done.
+  _lvMacros(site, args, when, gateTicks, limitSecs, live = null) {
+    const L = this._lv(site);
+    const note = L.note;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const run = (spec, target, key) => !spec ? null : this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
+      if (L.note !== note) return; // the voice's next note took it over
+      L[key] = clampForTarget(target, v);
+      if (!live || live()) this._lvWrite(site, t);
+    }, this._stepSecs(spec.step), limitSecs);
+    const keys = Object.keys(args);
+    const pair = [[args.velMacro, "VEL", "liveVel"], [args.vol, "VOL", "liveVol"]];
+    if (args.vol && args.velMacro && keys.indexOf("vol") < keys.indexOf("velMacro")) pair.reverse();
+    L.ends = pair.map(([spec, target, key]) => run(spec, target, key)).filter((e) => e != null);
+  }
+  // The fader written (a value, a sweep's step): over a :vol macro's until its next step.
+  _lvSetVol(site, vol) {
+    const L = this._lv(site);
+    L.vol = Math.max(0, Math.min(31, vol));
+    L.liveVol = null;
+    return L;
+  }
+
   // ---- a tone lane's level ----
-  // A lane's note has a velocity and, while a :vol macro of its own runs, a
-  // :vol; without one its :vol is the lane's fader. The lane's level is
-  // composed from those and the master as they are, each time one moves: the
-  // note's key-on, a macro's step, a :vol or :master write, a sweep's step —
-  // as the driver re-composes a keyed channel (driver.md §7).
+  // Its attenuation, from the lane's level as it is (_lv).
   _psgRecompose(lane, when) {
-    const n = this._psgKeys[lane] ?? this._psgLive[lane]; // a key held on the lane has its level
-    if (!n) return;
-    this._psgSetAtt(lane, this._composePsgAtt(lane, n.vel, n.vol ?? this._psgVol[lane] ?? VOL_UNITY, this._masterVol ?? VOL_UNITY), when);
+    const L = this._lv(`psg:${lane}`);
+    if (!L.note && !L.key) return;
+    this._psgSetAtt(lane, this._composePsgAtt(lane, this._lvVel(L), this._lvVol(L), this._masterVol ?? VOL_UNITY), when);
   }
 
   // Whether the lane's note is keyed at `t` (now when absent): a :vol, a
   // :master or a sweep moves a keyed lane's level only — written to an idle
   // lane, a level would drone a tone.
   _psgKeyed(lane, t) {
-    if (this._psgKeys[lane]) return true; // a key of Live's holds it
-    return this._psgLive[lane] != null && (t ?? -Infinity) < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
+    const L = this._lv(`psg:${lane}`);
+    if (L.key) return true; // a key of Live's holds it
+    return L.note != null && (t ?? -Infinity) < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
   }
 
   // A note's level on its lane: its key-on's, then its :vel and :vol macros a
   // step at a time, and silence at its gate — or, with a macro, at the
   // level's tail. gateTicks === 0 is a held note (triggerKeyOff ends it);
   // offWhen is null when the note holds or slurs into the next.
-  _psgNoteLevel(psgCh, velMacro, volMacro, noteWhen, gateTicks, baseVel, limitSecs, offWhen, velFirst) {
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
-    const note = (this._psgLive[psgCh] = { vel: Math.max(0, Math.min(15, baseVel)), vol: null });
-    let keyed = false;
-    // Each step is its frame's work (MACRO, _scheduleMacro): it moves the
-    // note's value and the level is composed with the other's as it is then.
+  _psgNoteLevel(psgCh, args, noteWhen, gateTicks, baseVel, limitSecs, offWhen) {
+    const site = `psg:${psgCh}`;
+    const L = this._lvNoteOn(site, Math.max(0, Math.min(15, baseVel)));
     // A first sample on the note itself is what the key-on composes from
-    // (driver.md §7.2); the vel macro's output is the absolute velocity.
-    const run = (spec, target, key) => !spec ? null : this._scheduleMacro(spec, noteFrames, gateSecs, noteWhen, (v, t) => {
-      if (this._psgLive[psgCh] !== note) return; // the lane's next note took it over
-      note[key] = clampForTarget(target, v);
-      if (keyed) this._psgRecompose(psgCh, t);
-    }, this._stepSecs(spec.step), limitSecs);
-    // In bind order: which of the two steps first in a frame.
-    const ends = (velFirst ? [[velMacro, "VEL", "vel"], [volMacro, "VOL", "vol"]] : [[volMacro, "VOL", "vol"], [velMacro, "VEL", "vel"]])
-      .map(([spec, target, key]) => run(spec, target, key)).filter((e) => e != null);
+    // (driver.md §7.2): the macros' steps write once the key-on has.
+    let keyed = false;
+    this._lvMacros(site, args, noteWhen, gateTicks, limitSecs, () => keyed);
     this._psgRecompose(psgCh, noteWhen);
     keyed = true;
     // Silence at the gate, or with a macro at the level's tail; a tail the
     // next note cuts short (at its limit) leaves the level to that note.
-    const off = velMacro || volMacro
-      ? (ends.length && Math.max(...ends) < limitSecs - 1e-9 ? Math.max(...ends) : null)
+    const off = args.velMacro || args.vol
+      ? (L.ends.length && Math.max(...L.ends) < limitSecs - 1e-9 ? Math.max(...L.ends) : null)
       : offWhen;
     if (off != null && offWhen != null) this._psgSetAtt(psgCh, this._psgOff(psgCh), off);
   }
@@ -6683,8 +6689,7 @@ export class IRPlayer {
         // A :keyon retrigger restarts the level envelopes (PSG has no
         // hardware one: this is the whole of the retrigger).
         this._envRetrigs = velMacro || volMacro ? this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit) : null;
-        this._psgNoteLevel(psgCh, velMacro, volMacro, when, psgGateTicks, baseVel, psgMacroLimit, psgOffWhen,
-          Object.keys(ev.args).indexOf("velMacro") < Object.keys(ev.args).indexOf("vol") || !volMacro);
+        this._psgNoteLevel(psgCh, ev.args, when, psgGateTicks, baseVel, psgMacroLimit, psgOffWhen);
         this._envRetrigs = null;
         break;
       }
@@ -6694,7 +6699,7 @@ export class IRPlayer {
       case "PARAM_MUL":
         if (String(ev.args?.target ?? "").toUpperCase() === "VOL")
           this._dispatchPsgEvent(
-            { ...ev, cmd: "PARAM_SET", args: { target: "VOL", value: this._writeValue(ev, this._psgVol[psgCh] ?? VOL_UNITY, when) } },
+            { ...ev, cmd: "PARAM_SET", args: { target: "VOL", value: this._writeValue(ev, this._lv(`psg:${psgCh}`).vol, when) } },
             when,
           );
         break;
@@ -6717,18 +6722,16 @@ export class IRPlayer {
           if (!this._isNoiseLane(psgCh))
             this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
         } else if (psgTarget === "VOL") {
-          const note = this._psgLive[psgCh];
           if (ev.cmd === "PARAM_SET") {
             // The fader: a keyed lane's level moves with it now (an idle
             // one's would drone a tone; its next note composes from it).
-            this._psgVol[psgCh] = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
-            if (note) note.vol = null; // over a :vol macro's, until its next step
+            this._lvSetVol(`psg:${psgCh}`, ev.args?.value ?? VOL_UNITY);
             if (this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
           } else {
             // A sweep of the fader, stepped in its frames (SWEEP) while it
             // holds the fader's slot. No :from: from where the fader is (§11).
             const df = this._curveFields(ev.args ?? {}, when);
-            const from = Math.max(0, Math.min(31, Number(df.from ?? this._psgVol[psgCh] ?? VOL_UNITY)));
+            const from = Math.max(0, Math.min(31, Number(df.from ?? this._lv(`psg:${psgCh}`).vol)));
             const to = Math.max(0, Math.min(31, Number(df.to ?? from)));
             const baseFrames = ev.args?.lenFrames
               ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
@@ -6754,9 +6757,7 @@ export class IRPlayer {
               const t = this._sweepFrameTime(sw, i);
               this._step(sw.startFrame + i, SWEEP, t, () => {
                 if (this._slots.get(slot) !== sw) return;
-                this._psgVol[psgCh] = vol;
-                const n = this._psgLive[psgCh];
-                if (n) n.vol = null;
+                this._lvSetVol(`psg:${psgCh}`, vol);
                 if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
               });
             }
@@ -6862,7 +6863,7 @@ export class IRPlayer {
   // at 0 (a vol is volume, so 0 mutes; vel never does).
   _fmNoteSilent(ch, when) {
     const regs = this._chRegs[ch];
-    return (regs?.vol != null && Math.round(regs.vol) === 0)
+    return Math.round(this._lv(`fm:${ch}`).vol) === 0
       || (this._masterVol ?? VOL_UNITY) === 0;
   }
 
