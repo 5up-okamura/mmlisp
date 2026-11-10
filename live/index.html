@@ -9771,6 +9771,7 @@
         }
         player.setOnLine(highlightTrackLine);
         player.setOnSeq(highlightSeq);
+        player.setOnPosition?.(notePosition);
         const playing = player;
         player.setOnTrig((t, code) => logTrig(playing._ir, t, code));
         player.setOnHold?.((t) => logHold(playing._ir, t));
@@ -9785,7 +9786,7 @@
         // play() resets the run's levels to unity; the persisted mixer goes back
         // in from its hook, before the first event is scheduled.
         const irp = player;
-        player.setOnRunStart(() => applyPlayerChannelState(irp));
+        player.setOnRunStart(() => { clearPlayMarks(); applyPlayerChannelState(irp); });
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // From a point in the song, chased; an effect always plays from its top.
         if (fromSec != null && se == null) {
@@ -9870,6 +9871,7 @@
       _playEpoch++;
       stopLibraryScorePreview();
       stopFmLiveLoop();
+      clearPlayMarks();
       resetChannelVu();
       _vizFrozen = null;
       const wasRunning = !!player; // playing or paused
@@ -12513,6 +12515,120 @@
       }
     }
 
+    // ---- the editors' playhead (IRPlayer.setOnPosition) ----
+    // As it schedules a note, the player says where the note's macros and its
+    // sample will be; each frame the panel marks, on the subject it shows, the
+    // newest of them sounding now — a macro by its vector's place in the text
+    // (mapped through edits as the source's playhead is), a sample by name.
+    const _positionRecs = [];
+    function notePosition(rec) {
+      _positionRecs.push(rec);
+      // A hidden tab draws no frames but schedules on: the past goes here.
+      if (_positionRecs.length > 1024 && audioCtx) {
+        const now = audioCtx.currentTime;
+        let keep = 0;
+        for (const r of _positionRecs) if (!positionOver(r, now)) _positionRecs[keep++] = r;
+        _positionRecs.length = keep;
+      }
+    }
+    function clearPlayMarks() {
+      _positionRecs.length = 0;
+      showPlayMarks(null, null);
+    }
+    function showPlayMarks(step, ms) {
+      if (_vecEditor && _vecEditor.playStep !== step) { _vecEditor.playStep = step; _vecEditor.draw(); }
+      if (_pcmEditor && _pcmEditor.playMs !== ms) { _pcmEditor.playMs = ms; _pcmEditor.draw(); }
+    }
+    // A record is over: a macro at its end, a sample at the next note (or a
+    // minute on, a shot the track never follows).
+    const positionOver = (r, now) => (r.kind === 'macro' ? r.end : Math.min(r.cut, r.when + 60)) < now;
+
+    // A key's sample (previewPcmNoteOn) is a note too: keyed now, let go at
+    // the key-off, cut by the next key. Stopped, a loop of its own draws it.
+    let _auditionRec = null;
+    let _playMarksRaf = 0;
+    function auditionPosition(name, loop) {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      if (_auditionRec) _auditionRec.cut = Math.min(_auditionRec.cut, now);
+      _auditionRec = { kind: 'sample', audition: true, name, when: now, mode: loop ? 'loop' : 'shot', off: Infinity, cut: Infinity };
+      notePosition(_auditionRec);
+      if (_playMarksRaf || _fmLiveRaf != null) return;
+      const tick = () => {
+        drawPlayMarks();
+        _playMarksRaf = _positionRecs.length && _fmLiveRaf == null ? requestAnimationFrame(tick) : 0;
+      };
+      _playMarksRaf = requestAnimationFrame(tick);
+    }
+    function auditionPositionOff(cut) {
+      const r = _auditionRec;
+      if (!r || !audioCtx) return;
+      const now = audioCtx.currentTime;
+      if (cut) r.cut = Math.min(r.cut, now);
+      else if (r.off === Infinity) r.off = now;
+    }
+
+    function drawPlayMarks() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const playing = player instanceof IRPlayer && player.isPlaying();
+      let keep = 0;
+      // Stopped or paused, only a key's sample goes on.
+      for (const r of _positionRecs) if ((playing || r.audition) && !positionOver(r, now)) _positionRecs[keep++] = r;
+      _positionRecs.length = keep;
+      const vec = _editorKind === 'vector' && _vecSubject?.kind === 'macro' && _vecSubject.span ? _vecSubject : null;
+      const pcm = _editorKind === 'pcm' && _pcmSubject && _pcmEditor.points ? _pcmSubject : null;
+      let step = null, ms = null, stepFrom = -Infinity, msFrom = -Infinity;
+      for (const r of _positionRecs) {
+        if (r.kind === 'macro' && vec) {
+          const from = r.marks[0][1];
+          if (from > now || from <= stepFrom || macroRecFrom(r) !== vec.span.from) continue;
+          let lo = 0, hi = r.marks.length - 1; // the last mark at or before now
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (r.marks[mid][1] <= now) lo = mid; else hi = mid - 1; }
+          step = r.marks[lo][0];
+          stepFrom = from;
+        } else if (r.kind === 'sample' && pcm && r.name === pcm.name && r.when <= now && r.when > msFrom) {
+          const at = samplePlayMs(r, now);
+          if (at == null) {
+            if (r.audition) r.cut = Math.min(r.cut, now); // played out: its loop stops
+            continue;
+          }
+          ms = at;
+          msFrom = r.when;
+        }
+      }
+      showPlayMarks(step, ms);
+    }
+
+    // Where a macro record's vector starts in the text now, or null (an
+    // import's, or edited away); asked again only when the text changes.
+    function macroRecFrom(r) {
+      const doc = editorView.state.doc;
+      if (r.at?.doc === doc) return r.at.from;
+      const v = editorView.state.field(playheadField);
+      const range = r.src.file ? null : resolvePlayhead(r.src, v.builtDoc, v.changes, doc);
+      r.at = { doc, from: range ? range[0] : null };
+      return r.at.from;
+    }
+
+    // A sample note's place in the def's points, in heard ms as the points
+    // are: from :pcm-start on; a `loop` note round its loop while held (the
+    // range, on a part that loops that), on to :pcm-end once let go; a
+    // `gate` note cut at its gate. Null once it is past the range.
+    function samplePlayMs(r, now) {
+      const p = _pcmEditor.points;
+      const e = (now - r.when) * 1000;
+      if (r.mode === 'gate' && now >= r.off) return null;
+      let at = p.start + e;
+      if (r.mode === 'loop') {
+        const [a, b] = _pcmEditor.subject?.loop ? [p.loopStart, p.loopEnd] : [p.start, p.end];
+        const held = (x) => (x < b - p.start || b <= a ? p.start + x : a + ((x - (b - p.start)) % (b - a)));
+        const eo = (r.off - r.when) * 1000;
+        at = e < eo ? held(e) : held(eo) + (e - eo);
+      }
+      return at < p.end ? at : null;
+    }
+
     // The sample under the cursor: the `(def-pcm name …)` it is in, or the
     // sample whose name it is on, the score's own or an import's. What it
     // sounds like is decided at the key, by compiling the text as it is then.
@@ -12858,6 +12974,7 @@
         if (!samples) throw new Error(`"${name}" did not load`);
         const loop = def.loopStartSec != null || def.loopEndSec != null;
         if (seq !== _pcmAuditionSeq || (loop && _pcmReleasedSeq === seq)) return; // superseded or let go
+        auditionPosition(name, loop);
         // The machine's sample part (chips/parts.js `bank`) says how its
         // samples sound.
         const sp = machine.parts.find((p) => p.bank);
@@ -12916,6 +13033,7 @@
           mode: loop ? 'loop' : 'shot', vel,
         });
       } catch (e) {
+        auditionPositionOff(true);
         log('PCM audition: ' + e.message, 'err');
       }
     }
@@ -12924,6 +13042,7 @@
     let _pcmAuditionChip = null;
     function previewPcmNoteOff() {
       _pcmReleasedSeq = _pcmAuditionSeq;
+      auditionPositionOff(false);
       if (_pcmAuditionChip) {
         for (const [p, a, d] of _pcmAuditionChip.stop()) writePreview(p, a, d);
         _pcmAuditionChip = null;
@@ -14517,6 +14636,7 @@
     // write nothing); slider thumbs are not moved while the user drags one.
     function liveTick(ts) {
       _fmLiveRaf = requestAnimationFrame(liveTick);
+      drawPlayMarks(); // every frame: a step lasts one
       if (ts - _fmLiveLast < 50) return; // ~20 fps
       _fmLiveLast = ts;
       if (!player) return;

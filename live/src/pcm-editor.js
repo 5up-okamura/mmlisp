@@ -11,12 +11,14 @@
 //   .show(subject)   { key, data, dur, points, loop, writable } (null: nothing)
 //   .points          where the four are: { start, end, loopStart, loopEnd }, ms
 //   .peak            the wave's peak, 0..1 and more (`:fx` may pass full scale)
+//   .playMs          where a playing note is, ms (null: none); draw() shows it
 //
 // onDrag runs on every move of a drag (done false), once at its end (done
 // true), and says the points to draw by setting .points. onHover has what the
 // pointer is on, "" off the canvas. Colors are the page's tokens: the range's
 // wave in --foreground and the rest in --mid, the loop a --hover fill, the
-// handles in --high and their names in --sub.
+// handles in --high and their names in --sub, a playing note's place a
+// --foreground line as the source's playhead is.
 // ---------------------------------------------------------------------------
 
 const REACH = 6; // px either side of a handle
@@ -29,6 +31,7 @@ export class PcmEditor {
     this.onHover = onHover;
     this.subject = null;
     this.points = null;
+    this.playMs = null;
     this.dragging = null; // the handle in hand
     this._moved = false;
     this._peaks = null; // { data, width, lo, hi }
@@ -200,5 +203,9 @@ export class PcmEditor {
     }
     handle("start", false, false);
     handle("end", false, true);
+    if (this.playMs != null && this.playMs <= s.dur) {
+      ctx.fillStyle = inside;
+      ctx.fillRect(Math.min(W - 1, X(this.playMs)), 0, 1, H);
+    }
   }
 }

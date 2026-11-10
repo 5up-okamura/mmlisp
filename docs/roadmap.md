@@ -96,14 +96,6 @@ Its current limits are `driver.md` §11 — keep the two in step.
 
 - **Drawing on a stage vector** in the panel's vector editor: a macro's
   stages are shown, not drawn (edit-tools.js `vectorAt`).
-- **The panel's editors follow playback.** What is heard and what is shown
-  agree: the vector editor marks the step a playing macro is at, the sample
-  editor the position in the wave a playing sample is at — as the source's
-  playhead already follows the note. The player reports a position per frame
-  (channel, macro or sample, step or frame), as the PC Engine's DDA already
-  streams a frame's writes; the panel draws a mark over the subject it
-  shows. Where one def plays on several tracks, the newest note's position
-  is shown.
 - **Small tools, still to specify:** a time-unit converter (score lengths,
   ticks, frames, ms — not Hz for the LFO); MMB / driver resource
   information on md (decide the question it answers first); how a second

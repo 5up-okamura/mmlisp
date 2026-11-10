@@ -11,11 +11,13 @@
 //   new VectorEditor(canvas, { onDraw(values, done), onHover(step, value) })
 //   .show(subject)   draw a subject (null: nothing)
 //   .values          the steps drawn, one per step (null: a hold)
+//   .playStep        the step playing now, outlined (null: none); draw() shows it
 //
 // onDraw runs on every move of a stroke (done false) and once at its end
 // (done true); onHover with the step under the pointer, or null off it.
 // Colors are the page's tokens: values in --foreground, the zero line and the
-// marks in --mid, the marks' names in --sub.
+// marks in --mid, the marks' names in --sub, the playing step outlined in
+// --foreground as the source's playhead is.
 // ---------------------------------------------------------------------------
 
 export class VectorEditor {
@@ -25,6 +27,7 @@ export class VectorEditor {
     this.onHover = onHover;
     this.subject = null;
     this.values = [];
+    this.playStep = null;
     this._last = null; // the stroke's previous [step, value]
     canvas.addEventListener("pointerdown", (e) => this._down(e));
     canvas.addEventListener("pointermove", (e) => this._move(e));
@@ -146,6 +149,10 @@ export class VectorEditor {
       ctx.stroke();
       ctx.fillStyle = sub;
       ctx.fillText(m.label, x + 2, 1);
+    }
+    if (this.playStep != null && this.playStep < n) {
+      ctx.strokeStyle = fg;
+      ctx.strokeRect(Math.round(this.playStep * w) + 0.5, 0.5, Math.max(1, Math.round(w) - 1), H - 1);
     }
   }
 }

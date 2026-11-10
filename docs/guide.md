@@ -1374,6 +1374,14 @@ written on a track stays at its number, a def extending this one has its own
 points read from the new start, and `:fx` now runs on what is left — its times
 from the new start, and a `normalize` on the new peak.
 
+**While the song plays** the editor shows where it is. The vector editor
+outlines the step a playing macro is at — a curve's at its `:step`, a stage
+vector's run end to end as it is drawn — and the sample editor draws a line
+where a playing note is among the def's points: from `:pcm-start` on, a `loop`
+note round its loop while held. A sample the keys play is marked the same
+way, stopped or along with the song. Where one def plays on several tracks,
+the newest note's place is shown. A macro from an import is not marked.
+
 ### Chords on the keyboards
 
 The keys play what is selected: a channel picked in the panel's Channels plays

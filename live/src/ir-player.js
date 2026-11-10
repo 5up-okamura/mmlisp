@@ -278,6 +278,8 @@ export class IRPlayer {
     this._onLine = null; // (line: number) => void — called when an event fires
     this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
     this._onHold = null; // (trackIdx) => void — a track stops at a `:len 0` hold
+    this._onPosition = null; // (record) => void — where a note's macro or sample will be (setOnPosition)
+    this._markStep = null; // (step, time) => void — _scheduleMacro's marks, while it asks
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
 
@@ -819,9 +821,9 @@ export class IRPlayer {
   // it; the real write path and callbacks come back. Returns the held writes
   // and, when watching, that event's time from `start` (null if none plays).
   _chase(audioContext, start, until, watchLine) {
-    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold };
+    const saved = { write: this._write, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold, onPosition: this._onPosition };
     const held = [];
-    this._onLine = this._onSeq = this._onTrig = this._onHold = null;
+    this._onLine = this._onSeq = this._onTrig = this._onHold = this._onPosition = null;
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object") held.push({ msg: portOrMsg, when: portOrMsg.when });
       else held.push({ port: portOrMsg | 0, addr: addr & 0xff, data: data & 0xff, when });
@@ -873,6 +875,7 @@ export class IRPlayer {
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
       this._onHold = saved.onHold;
+      this._onPosition = saved.onPosition;
     }
     const watched = this._chaseWatch?.time;
     this._chaseWatch = null;
@@ -1380,6 +1383,23 @@ export class IRPlayer {
   }
 
   /**
+   * Register a callback told, as a note is scheduled (ahead of its audio
+   * time), where its macros and its sample will be — what the panel's
+   * editors mark while it plays:
+   *   { kind: "macro", src, marks: [[step, time], …], end }  a macro of
+   *     source span `src`: each step of the vector the editor shows (a
+   *     curve's steps at its :step, a stage vector's run end to end), from
+   *     its time on, until `end`
+   *   { kind: "sample", name, when, mode, off, cut }  a def-pcm keyed at
+   *     `when` (heard time runs through its points from :pcm-start), let go
+   *     at `off` (Infinity: never), stopped by the next note at `cut`
+   * Times are the audio context's. @param {((record: object) => void) | null} fn
+   */
+  setOnPosition(fn) {
+    this._onPosition = fn;
+  }
+
+  /**
    * Register a callback fired when a `(trig N)` cue (IR TRIG) plays — the
    * moment a game polling the track's status byte would see it change.
    * @param {((trackIdx: number, code: number) => void) | null} fn
@@ -1682,6 +1702,7 @@ export class IRPlayer {
       onSeq: this._onSeq,
       onTrig: this._onTrig,
       onHold: this._onHold,
+      onPosition: this._onPosition,
       ctx: this._audioContext,
       loop: this._loop,
       playing: this._playing,
@@ -1694,6 +1715,7 @@ export class IRPlayer {
     this._onSeq = null;
     this._onTrig = null;
     this._onHold = null;
+    this._onPosition = null;
 
     this._write = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg)) {
@@ -1834,6 +1856,7 @@ export class IRPlayer {
       this._onSeq = saved.onSeq;
       this._onTrig = saved.onTrig;
       this._onHold = saved.onHold;
+      this._onPosition = saved.onPosition;
       this._audioContext = saved.ctx;
       this._loop = saved.loop;
       this._playing = saved.playing;
@@ -2416,9 +2439,20 @@ export class IRPlayer {
     return expandLoops(events);
   }
 
+  // A sample note's place in its def's points (setOnPosition): a `gate` or
+  // `loop` note is let go at its gate, every note stopped by the next.
+  _reportSample(ev, when) {
+    const mode = ev.args.mode ?? "shot";
+    const gateTicks = this._resolveGateTicks(ev.args.gate, ev.args.length);
+    const off = mode === "shot" || !(gateTicks > 0) ? Infinity : this._timeAfterTicks(when, gateTicks);
+    this._onPosition({ kind: "sample", name: ev.args.sample, when, mode, off, cut: this._nextNote(ev).secs });
+  }
+
   _dispatchEvent(ev, when) {
     this._syncMasterSweep(ev, when);
     if (this._dispatchGlobalEvent(ev, when)) return;
+    if (ev.cmd === "PCM_NOTE_ON" && this._onPosition && ev.args?.sample && this._isTrackAudible(ev._trackIndex))
+      this._reportSample(ev, when);
     // The chip's LFO is the song's, written on any track (language.md §1):
     // a PSG or PCM track's write goes where an FM track's does, as the
     // driver takes it from any track.
@@ -4702,17 +4736,26 @@ export class IRPlayer {
     const pre = (this._envRetrigs ?? []).filter(
       (r) => r > when + 1e-6 && r < gateSecs && r < limitSecs,
     );
+    const marks = spec?.src && this._onPosition ? [] : null;
     const run = (at, gate, lim) => {
-      const w = [];
-      const end = this._scheduleMacroImpl(
-        spec,
-        Math.max(1, noteFrames - Math.round((at - when) * 60)),
-        gate, at, (v, t) => w.push([v, t]), stepSecs, lim,
-      );
-      return { w, end };
+      const w = [], m = [];
+      const mark = this._markStep;
+      this._markStep = marks && ((step, t) => { if (t < lim) m.push([step, t]); });
+      let end;
+      try {
+        end = this._scheduleMacroImpl(
+          spec,
+          Math.max(1, noteFrames - Math.round((at - when) * 60)),
+          gate, at, (v, t) => w.push([v, t]), stepSecs, lim,
+        );
+      } finally {
+        this._markStep = mark;
+      }
+      return { w, m, end };
     };
     const flush = (seg, cut = Infinity) => {
       for (const [v, t] of seg.w) if (t < cut - 1e-9) writeFn(v, t);
+      if (marks) for (const [k, t] of seg.m) if (t < cut - 1e-9) marks.push([k, t]);
     };
     const starts = [when, ...pre];
     let seg = null;
@@ -4722,7 +4765,10 @@ export class IRPlayer {
     }
     flush(seg);
     let endTime = seg.end;
-    if (spec?.src && this._onSeq) {
+    if (marks?.length)
+      this._onPosition({ kind: "macro", src: spec.src, marks, end: Math.max(endTime ?? gateSecs, marks.at(-1)[1] + stepSecs) });
+    // The source outlines a step vector while it sounds.
+    if (spec?.src && spec.type === "steps" && this._onSeq) {
       const src = spec.src;
       const now = this._audioContext.currentTime;
       const hideAt = endTime ?? gateSecs;
@@ -4753,6 +4799,9 @@ export class IRPlayer {
     limitSecs = Infinity,
   ) {
     if (!spec) return null;
+    // Each step's time, as the panel's vector editor counts the steps
+    // (_scheduleMacro's marks; edit-tools.js vectorAt): set only when asked.
+    const mark = this._markStep;
 
     // Monophonic priority: the next note-on (limitSecs) supersedes this note's
     // tail, so drop any write scheduled at/after it.
@@ -4818,6 +4867,19 @@ export class IRPlayer {
       // for it before that frame's step.
       const offFrame = offT === Infinity ? Infinity : this._eventFrame(gateSecs + KEY_OFF_LEAD_SECS);
 
+      // Where each stage's steps start in the vector shown: a curve its
+      // steps (a looping one, one cycle), a wait its holds.
+      const shown = !mark ? null : stages.map((st) => {
+        if (st.waitKeyOff) return 0;
+        if (!st.curve) {
+          const frames = st.waitTicks != null ? Number(st.waitTicks) * this._secsPerTick * 60 : Number(st.waitFrames ?? 0);
+          return Math.max(0, Math.ceil((tickClock ? frames / (60 * this._secsPerTick) : frames) / stepUnits));
+        }
+        const base = lenUnits(st, st.frames ?? 1);
+        return Math.max(1, (st.loop ? Math.round : Math.ceil)(base / stepUnits));
+      });
+      const shownAt = shown?.map((_, i) => shown.slice(0, i).reduce((a, b) => a + b, 0));
+
       let t = when;
       let last = null; // the last value written: a release without :from starts there
       for (let i = 0; i < stages.length; i++) {
@@ -4831,10 +4893,16 @@ export class IRPlayer {
         }
         // A :wait advances the time cursor. A pure wait stage (no curve) stops
         // here; a curve stage with :wait uses it as a pre-delay, then plays.
+        const waitFrom = t;
         if (stage.waitKeyOff) t = Math.max(t, offT);
         else if (stage.waitTicks != null)
           t = this._timeAfterTicks(t, Math.max(0, Number(stage.waitTicks)));
         else if (stage.waitFrames != null) t += stage.waitFrames / 60;
+        if (mark && !stage.curve)
+          for (let k = 0; k < shown[i]; k++) {
+            const at = waitFrom + ((t - waitFrom) * k) / shown[i];
+            if (!keyed || at < offT) mark(shownAt[i] + k, at);
+          }
         if (keyed && t >= offT - 1e-9) {
           i = rel - 1; // key-off during a wait: on to the release
           continue;
@@ -4873,6 +4941,8 @@ export class IRPlayer {
           const v = from + (to - from) * share(sampleCurveUnit(curve, phase, params));
           if (keyed) last = v;
           writeFn(v, keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)));
+          mark?.(shownAt[i] + Math.min(shown[i] - 1, Math.floor((loop ? frame % baseFrames : frame) / stepUnits)),
+            keyed ? adv(t, frame) : Math.max(offT, adv(t, frame)));
         }
         t = cut ? offT : adv(t, budget);
         if (keyed && (cut || t >= offT - 1e-9)) i = rel - 1; // key-off: on to the release
@@ -4922,6 +4992,7 @@ export class IRPlayer {
           from + (to - from) * sampleCurveUnit(curve, phase, params),
           adv(startWhen, frame),
         );
+        mark?.(Math.floor((loop ? frame % baseFrames : frame) / stepUnits), adv(startWhen, frame));
       }
       return Math.min(adv(startWhen, activeFrames), limitSecs);
     }
@@ -4949,6 +5020,7 @@ export class IRPlayer {
       ) {
         if (steps[idx] !== null && steps[idx] !== undefined)
           writeFn(steps[idx], t);
+        mark?.(idx, t);
         idx++;
         if (idx >= sustainEnd) {
           if (loopIndex !== null) {
@@ -4969,6 +5041,7 @@ export class IRPlayer {
         for (let ri = releaseIndex; ri < steps.length; ri++) {
           if (steps[ri] !== null && steps[ri] !== undefined)
             writeFn(steps[ri], tick ? Math.max(releaseAt, t) : t);
+          mark?.(ri, tick ? Math.max(releaseAt, t) : t);
           t = tickClock ? this._timeAfterTicks(t, stepUnits) : t + stepSecs;
         }
         return Math.min(t, limitSecs); // time after last release write

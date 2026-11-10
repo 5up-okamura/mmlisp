@@ -552,6 +552,7 @@ All spec kinds may carry:
 | ------ | -------------------------------------- | ---------------------------------------------------------------- |
 | `type` | `"steps"` \| `"curve"` \| `"stages"`   | Discriminator.                                                    |
 | `step` | `{ "unit": "frame"\|"tick", "value": n }` | Per-macro sampling clock (`:step`). Absent ⇒ 1 frame (of `metadata.frameHz`). For step vectors: time per step. For curves/stages: sample-and-hold interval. |
+| `src`  | object | Source span of the spec as written — a `[...]` vector, a curve form — like an event's (§3). The player says where a playing macro is by it (the panel's vector editor), and outlines a step vector's while it sounds. Absent for a value from a `let` name, the scalar-constant sugar (`:keyon 1`), and a vector folded from an expression. |
 | `scale` | string | **Scaled macro** (`(* <signal> $slot)`, language.md §7). A value-slot name (no `$`, or `"$time"`). The player/driver reads the slot **live every frame** and writes `(sample × (slot & 0xFF)) >> 8` (0..255 depth, magnitude multiply, re-signed toward zero). Applies to any target, before the target write. MMB → MACRO_TABLE flags bit2 + an appended slot byte (mmb.md §15). |
 
 ### 6.1 Step vector — `type: "steps"`
@@ -566,7 +567,6 @@ All spec kinds may carry:
 | `steps`        | (number\|null)[] | One value per step; `null` = hold (advance one step, no write). Floats allowed (post-scaling). |
 | `loopIndex`    | int\|null       | `#sus` position — sustain loops back here until gate. `null` = one-shot (hold last value). |
 | `releaseIndex` | int\|null       | `#rel` position — steps from here play after key-off, spaced by `step`.  |
-| `src`          | object          | Source span of the `[...]` literal (playhead highlight). Scalar-constant sugar (`:keyon 1`) emits `steps:[v], loopIndex:0` without `src`. |
 
 Playback: attack runs from index 0; the sustain section (up to
 `releaseIndex`, or the whole vector) advances one step per `step` interval,

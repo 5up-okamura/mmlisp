@@ -2783,7 +2783,7 @@ function parseMacroSpec(
         stages.push(spec);
       }
       if (sus) bad(sus, "#sus needs a stage after it to loop");
-      return { type: "stages", stages };
+      return { type: "stages", stages, src: nodeSrc(node) };
     }
 
     // Step-vector form: [15 #sus 14 13 #rel 11 9 7 5 3 0 _ ...]
@@ -2815,7 +2815,8 @@ function parseMacroSpec(
       }
     }
     // src spans the whole `[...]` literal so the player can highlight the
-    // sounding step sequence during playback.
+    // sounding step sequence during playback (a curve's and a stage vector's
+    // span theirs, for the panel's vector editor: IRPlayer.setOnPosition).
     return { type: "steps", steps, loopIndex, releaseIndex, src: nodeSrc(node) };
   }
   // A curve, an expression or a `let` name (§7.2) evaluates to a signal or a
@@ -2874,7 +2875,7 @@ function parseMacroSpec(
           releaseIndex: r.spec.releaseIndex ?? null,
           ...(r.spec.scale ? { scale: r.spec.scale } : {}),
         }
-      : { type: "curve", ...r.spec };
+      : { type: "curve", ...r.spec, ...(node.kind === "list" ? { src: nodeSrc(node) } : {}) };
   }
 }
 
