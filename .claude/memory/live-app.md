@@ -75,28 +75,31 @@ What stands now:
 
 Open, in the order worth taking:
 
-1. **The frame's order — the next design decision.** The IR player queues
-   its future work by time; the driver runs each frame as dispatch, then
-   channel engines (sweeps, then macros), then the song's sweeps (driver.md
-   §4). A note's frame (`_eventFrame`) can fall after its time, and a
-   frame's sweep step is stamped at the frame's start, so a time-ordered
-   queue runs a step before a note the driver runs first. The predictors
-   (`_masterAt*`, `_masterAtNoteOn`, `_fmVolAtFrame`, `_psgVolAtNoteOn`,
-   `_volSetsAhead`, `_levelMacroLines`' dry run, `_psgLevelAhead`, the
-   sounding-flag save/restore) encode that order by hand and cannot go
-   until the queue keys engine work by (frame, phase) and stamps it after
-   the frame's last event. What it costs today: a write the driver makes
-   before a frame's sweep step shows for one frame in the preview
-   (m2-master-every-track: 40 mismatches, all of this kind). Needs the
-   user's go-ahead: it moves every target's register log, and only the
-   Mega Drive has an oracle.
+1. **The frame's order is in (branch `dev`).** Work ahead waits keyed by
+   its frame and phase (`_at`, `_step`: KEYED, SWEEP, MACRO, SONG, AFTER)
+   and runs once the frame's events are dispatched; every macro step is such
+   work (`_scheduleMacro`; `_macroDry` for a caller only reading values).
+   MASTER, an FM / fm3 fader and a tone lane's level are live state
+   (`_masterVol`, `regs.vol`, `_psgLive` + `_psgRecompose`): the forecasts
+   (`_masterAt*`, `_fmVolAt*`, `_psgVolAt*`, `_volSetsAhead`,
+   `_psgLevelAhead`, `_syncMasterSweep`) are gone. Mega Drive A/B: no score
+   worse, 118 of 134 clean (was 113). **Not listened to; the other seven
+   machines' register logs moved (48 scores) with no oracle.**
+   Still dispatched whole, to move the same way: pitch sweeps and glides
+   (`_applyParamSweep`'s NOTE_PITCH loops, the PSG's), `_writeSongRate`,
+   the PCM :vol sweep and point sweeps, FM level lines
+   (`_levelMacroLines`' dry run stays: a note's :vel and :vol read each
+   other's line).
 2. **Five queues of their own** that write "up to the horizon"
    (`_fm3TlQueue` / `_flushFm3Keys`, `_flushEncoders`, `_chipPcmFrames`,
-   `_waveExprFrames`, `_tempoChangesAhead`) — fold into 1.
-3. **Stateful tone encoders compose a note's level frames at dispatch**
-   (queued-tone.js, the Game Boy's, the 2A03's, the PC Engine's): a hand on
-   such a lane reaches a note with a level macro only from its next note.
-   Needs every lane call of a note deferred together, not the level alone.
+   `_waveExprFrames`, `_tempoChangesAhead`) — fold into the frame queue.
+   They flush to the horizon while a frame's work may still run a pass
+   later: check each for a write arriving behind its flush.
+3. **Tone encoders now get a lane's level at its own time on every
+   machine** (the `attAnytime` exception is gone), but a lane's other calls
+   ahead (pitch sweeps, the encoders' own queues) are still made at
+   dispatch: the Game Boy's, the 2A03's and the PC Engine's encoders order
+   and drop writes by the calls they have seen. Listen to those first.
 4. **A strip's :vol is still kept six ways** (FM regs + sweep + lines, an
    fm3 operator's, the PSG's arrays, `_pcmVolNow`, the chip-sample lines,
    `:target midi`'s lines) — why `_volOf` / `_volSites` switch on kind. The

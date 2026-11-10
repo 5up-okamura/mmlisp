@@ -648,10 +648,10 @@
     "digest": "811c9dc5"
   },
   "multibank-3v.mmlisp": {
-    "ok": false,
-    "mismatches": 2,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "dc3cbc19"
+    "digest": "811c9dc5"
   },
   "multibank-packed.mmlisp": {
     "ok": true,
@@ -798,9 +798,9 @@
     "digest": "811c9dc5"
   },
   "stress-m2skip.mmlisp": {
-    "ok": false,
-    "mismatches": 9,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "674aa464"
+    "digest": "811c9dc5"
   }
 }

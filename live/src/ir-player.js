@@ -90,7 +90,7 @@ const SAMPLE_HANDLERS = {
   "midi-drums": "_dispatchNothing",
 };
 // A frame's order (driver.md §4): the places work takes in it (IRPlayer._at).
-const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3;
+const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3, AFTER = 4; // (AFTER: what follows a frame's steps — a PCM retrigger)
 // The writes that free a sweep's slot (driver.md §4 step 3).
 const SLOT_FREEING = new Set(["PARAM_SET", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
@@ -279,7 +279,8 @@ export class IRPlayer {
     // The work of the frames ahead (_at, _step), in the frame's order: { F, phase, t, run }.
     this._work = [];
     this._workHead = 0;
-    this._stampFloor = -Infinity; // the time a frame's work writes no earlier than (_runWork)
+    this._stampFrom = -Infinity; // a frame's work running: its own time, and how far
+    this._stampShift = 0; // its writes move to follow the frame's events (_runWork)
     this._lastEvent = { F: -Infinity, t: -Infinity }; // the last event dispatched: its frame and time
     this._writeCursor = Infinity; // the time the run has reached; Infinity with no run
     this._ir = null;
@@ -327,7 +328,6 @@ export class IRPlayer {
     this._lfoRate = 0; // 0 = off, 1-8 = rate index
     this._opmLfo = { freq: 0, pmd: 0, amd: 0, wave: 0 }; // the OPM's own LFO, as last written
     this._masterVol = VOL_UNITY; // 0 = silent, 31 = full (additive TL offset applied to all channels)
-    this._masterSweep = null; // a running :master sweep (its frames are scheduled up front)
     this._reg27 = 0;
     this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE op / csm-op)
 
@@ -345,9 +345,7 @@ export class IRPlayer {
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
     this._pitchSweepOnset = new Map(); // key → { when, offset }
     this._psgVol = new Array(PSG_LANES).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
-    this._psgLastVel = new Array(PSG_LANES).fill(15); // last note vel 0-15 per PSG ch (raw, for composition)
-    this._psgLevelAhead = new Array(PSG_LANES).fill(false); // the current note's level macros took its :vol sets in
-    this._psgVolSweep = new Array(PSG_LANES).fill(null); // active VOL sweep state per PSG ch
+    this._psgLive = new Array(PSG_LANES).fill(null); // each lane's note: { vel, vol } as they are (_psgRecompose)
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att under its off). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
@@ -385,7 +383,6 @@ export class IRPlayer {
     this._ssgMacroed = new Array(PSG_LANES).fill(null); // { mix, rate }
 
     // FM vol sweep state (same approach as PSG: store state, sample at NOTE_ON time)
-    this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
     this._fmLevelLines = new Array(FM_CHANNELS).fill(null); // a note's :vel/:vol macro timelines
     this._fm3LevelLines = new Array(FM_OPS).fill(null); // ...an FM3 operator note's
 
@@ -682,7 +679,7 @@ export class IRPlayer {
     this._psgSnap.fill(0);
     this._pitchSweepOnset.clear();
     this._psgVol.fill(VOL_UNITY);
-    this._psgLastVel.fill(15);
+    this._psgLive.fill(null);
     this._psgNoiseMode = 0b1_00;
     this._psgEnv.fill(-1);
     this._envFollow = null;
@@ -694,10 +691,7 @@ export class IRPlayer {
     this._ssgMacroed.fill(null);
     this._holdChannels.clear();
     this._loopCount.clear();
-    this._fmVolSweep.fill(null);
-    this._psgVolSweep.fill(null);
     this._psgKeyedUntil.fill(0);
-    this._masterSweep = null;
     this._slots = new Map(); // a sweep's slot (_slotKey) → the sweep whose frames may still write
   }
 
@@ -1200,7 +1194,7 @@ export class IRPlayer {
       // `:target midi` keeps its master as a line (_midiLevel).
       const score = this._target?.name === "midi"
         ? Math.round(this._chipPcmParamAt("master", "vol", when))
-        : this._playing ? this._masterAt(when) : this._masterVol ?? VOL_UNITY;
+        : this._masterVol ?? VOL_UNITY;
       return { v: this._masterHand ? this._masterHand.v : score, hand: !!this._masterHand, score };
     }
     const hand = this._hands.has(c.id);
@@ -1237,10 +1231,7 @@ export class IRPlayer {
   // sent writes end.
   _levelsNow() {
     const now = this._playing ? this._audioContext?.currentTime : undefined;
-    for (const when of [now, this._sentUntil()]) {
-      if (when === null) continue;
-      this._recomposeLevels(when === undefined ? this._masterVol ?? VOL_UNITY : this._masterAt(when), when);
-    }
+    for (const when of [now, this._sentUntil()]) if (when !== null) this._recomposeLevels(when);
   }
 
   /** The value slots whose value is the panel's now, name → value. */
@@ -1306,8 +1297,8 @@ export class IRPlayer {
     const [kind, at] = site.split(":");
     const n = Number(at);
     const score = Math.round(kind === "fm" ? this._fmScoreVolAt(n, when)
-      : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3OpVolAtTime(n, when)
-      : kind === "psg" ? this._psgVolAtTime(n, when)
+      : kind === "fm3op" ? this._lineAt(this._fm3LevelLines[n - 1]?.vol, when) ?? this._fm3Op[n - 1].vol
+      : kind === "psg" ? (this._psgKeyed(n, when) ? this._psgLive[n].vol : null) ?? this._psgVol[n] ?? VOL_UNITY
       : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
       : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
       : this._chipPcmParamAt(strip.tracks[0], "vol", when));
@@ -1374,14 +1365,8 @@ export class IRPlayer {
       // A fader move must never un-silence an idle lane into a tone. A run
       // knows a lane keyed at its cursor, not at the chip's now: its level
       // moves where the sent writes end. Stopped, the keys' lane is live.
-      const keyed = this._playing
-        ? when != null && when >= this._writeCursor - 1e-9 && when < (this._psgKeyedUntil[n] ?? 0) - 1e-6
-        : this._psgSounding[n];
-      if (!keyed) return;
-      const sounding = this._psgSounding[n];
-      const vel = this._psgLastVel[n] ?? 15;
-      this._psgSetAtt(n, this._composePsgAtt(n, vel, this._psgVolAtTime(n, when ?? 0), this._masterVol ?? VOL_UNITY), when ?? 0);
-      this._psgSounding[n] = sounding;
+      if (this._playing && !(when != null && when >= this._writeCursor - 1e-9)) return;
+      if (this._psgKeyed(n, when)) this._psgRecompose(n, when);
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
 
@@ -1420,10 +1405,13 @@ export class IRPlayer {
   }
   /** A keyed tone lane's level at `vel` — a wave role's envelope steps it. */
   keyToneLevel(lane, vel, when = this._keyNow()) {
-    const vol = this._playing ? this._psgVolAtTime(lane, when) : this._psgVol[lane] ?? VOL_UNITY;
-    this._psgSetAtt(lane, this._composePsgAtt(lane, Math.max(0, Math.min(15, vel)), vol, this._keyMaster(when)), when);
+    // The key is the lane's note until it is let go (_psgRecompose).
+    this._psgLive[lane] = { vel: Math.max(0, Math.min(15, vel)), vol: null };
+    this._psgKeyedUntil[lane] = Infinity;
+    this._psgRecompose(lane, when);
   }
   keyToneOff(lane, when = this._keyNow()) {
+    this._psgKeyedUntil[lane] = 0;
     this._psgSetAtt(lane, this._psgOff(lane), when);
   }
 
@@ -1448,7 +1436,7 @@ export class IRPlayer {
     const ops = regs.ops.map((o, i) => {
       const voiced = o.voicedTl ?? o.tl ?? 0;
       const tl = vel != null && carriers.includes(i)
-        ? this._carrierTl({ voicedTl: voiced, velK: o.velK }, vel, vol, this._handMaster() ?? this._keyMaster(when))
+        ? this._carrierTl({ voicedTl: voiced, velK: o.velK }, vel, vol, this._handMaster() ?? this._masterVol ?? VOL_UNITY)
         : voiced;
       return { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
     });
@@ -1466,10 +1454,6 @@ export class IRPlayer {
 
   _keyNow() {
     return this._audioContext?.currentTime;
-  }
-  // The score's master at a key's time (the panel's hand is laid over it where the level is composed).
-  _keyMaster(when) {
-    return this._playing && when != null ? this._masterAt(when) : this._masterVol ?? VOL_UNITY;
   }
 
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
@@ -1891,9 +1875,10 @@ export class IRPlayer {
   _write(portOrMsg, addr, data, when) {
     const msg = portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg);
     let t = msg ? portOrMsg.when : when;
-    // Work of a frame writes after that frame's events (_runWork).
-    if (t != null && t < this._stampFloor) {
-      t = this._stampFloor;
+    // Work of a frame writes after that frame's events (_runWork): what it
+    // writes at its own time or ahead of it (a key-off's lead) moves with it.
+    if (t != null && this._stampShift && t <= this._stampFrom + 1e-9) {
+      t += this._stampShift;
       if (msg) portOrMsg = { ...portOrMsg, when: t };
       else when = t;
     }
@@ -1965,12 +1950,13 @@ export class IRPlayer {
     const ts = item.phase !== KEYED && this._lastEvent.F === item.F
       ? Math.max(item.t, Math.min(this._lastEvent.t, item.t + 0.49 / 60)) : item.t;
     this._sendAhead(ts);
-    const floor = this._stampFloor;
-    this._stampFloor = ts;
+    const was = [this._stampFrom, this._stampShift];
+    this._stampFrom = item.t;
+    this._stampShift = ts - item.t;
     try {
       item.run();
     } finally {
-      this._stampFloor = floor;
+      [this._stampFrom, this._stampShift] = was;
     }
   }
 
@@ -2010,7 +1996,8 @@ export class IRPlayer {
     this._aheadHead = 0;
     this._work.length = 0;
     this._workHead = 0;
-    this._stampFloor = -Infinity;
+    this._stampFrom = -Infinity;
+    this._stampShift = 0;
     this._lastEvent = { F: -Infinity, t: -Infinity };
   }
 
@@ -2633,14 +2620,6 @@ export class IRPlayer {
   // under the current algorithm is not consulted: on alg 7 — four independent
   // voices, the reason the mode exists — this is its volume, and on a
   // modulator it is its modulation depth, which is a level too (§13.4).
-  // The operator's vol at `when`: a :vol sweep on an fm3-N track is stepped
-  // per frame by the driver, so a note landing mid-sweep has to read the
-  // instantaneous value here, exactly as a channel's does (_fmVolAtTime).
-  _fm3OpVolAtTime(op, when) {
-    const st = this._fm3Op[op - 1];
-    const F = this._eventFrame(when);
-    return st.volSweep && F < st.volSweep.startFrame + st.volSweep.frames ? this._sweepVolAtFrame(st.volSweep, F) : st.vol;
-  }
   // `when` given: the operator's LIVE level then — its note's :vel/:vol macro
   // samples (_fm3LevelLines), else its velocity and fader. `over` pins any of
   // vel / vol / group / master for a caller that has its own value.
@@ -2654,10 +2633,10 @@ export class IRPlayer {
     const lines = when === undefined ? null : this._fm3LevelLines[op - 1];
     const vel = over.vel ?? this._lineAt(lines?.vel, when) ?? st.vel;
     const vol = this._handVol(`fm3op:${op}`) ?? over.vol ?? this._lineAt(lines?.vol, when)
-      ?? (when === undefined ? st.vol : this._fm3OpVolAtTime(op, when));
+      ?? st.vol;
     return levelSteps(this._fmLevel, {
       base: regs.ops[op - 1].voicedTl ?? 0, vel, k: velK(regs.ops[op - 1].velK, true),
-      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, this._handMaster() ?? over.master ?? this._masterVol ?? VOL_UNITY],
+      faders: [vol, this._handVol("fm:2") ?? over.group ?? regs.vol ?? VOL_UNITY, this._handMaster() ?? this._masterVol ?? VOL_UNITY],
     });
   }
   _writeFm3OpTl(op, when, over = {}) {
@@ -2688,7 +2667,7 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     const vel = over.vel ?? this._fmLiveVelAt(ch, when);
     const vol = this._handVol(`fm:${ch}`) ?? over.vol ?? this._fmLiveVolAt(ch, when);
-    const master = this._handMaster() ?? over.master ?? this._masterAt(when);
+    const master = this._handMaster() ?? this._masterVol ?? VOL_UNITY;
     const carriers = this._carrierOps(regs);
     for (let opIdx = 0; opIdx < 4; opIdx++) {
       const carrier = carriers.includes(opIdx);
@@ -2995,7 +2974,6 @@ export class IRPlayer {
     if (this._masterHand && !this._masterHand.held && ev.cmd.startsWith("PARAM_")
       && String(ev.args?.target ?? "").toUpperCase() === "MASTER") this._masterHand = null;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
-    this._syncMasterSweep(ev, when);
     this._freeSlot(ev);
     // MASTER is the song's, written on any track: one handler, whatever the
     // track's kind (`:target midi` keeps its own, _midiLevel).
@@ -3333,7 +3311,7 @@ export class IRPlayer {
       case "PARAM_ADD":
       case "PARAM_MUL": {
         const target = ev.args?.target;
-        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev), when), when);
+        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev)), when);
         this._applyParam(ch, { cmd: ev.cmd, args: { target, value }, _trackIndex: ev._trackIndex }, when);
         break;
       }
@@ -3343,18 +3321,10 @@ export class IRPlayer {
         break;
       }
 
-      case "PARAM_SWEEP_STOP": {
-        // Freeze a running inline sweep. The preceding sweep's frame writes are
-        // already bounded to this tick by _resolveSweepEndTick, so most targets
-        // simply hold their last written register value. VOL keeps persistent
-        // sweep state, so freeze it explicitly at the current value.
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (target === "VOL") {
-          this._chRegs[ch].vol = this._fmVolAtTime(ch, when);
-          this._fmVolSweep[ch] = null;
-        }
+      // A stop frees its word's slot (_freeSlot): the word stays where the
+      // sweep left it.
+      case "PARAM_SWEEP_STOP":
         break;
-      }
 
       case "CSM_RATE": {
         this._applyCsmRate(ev, when);
@@ -3600,6 +3570,7 @@ export class IRPlayer {
     const held = ev.args?.mode === "gate" || ev.args?.mode === "loop";
     const retrigs = (this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? []).filter((t) => !held || t < gateSecs);
     this._envRetrigs = retrigs;
+    this._macroDry = true; // the hit's lines are read as its frames are written (_chipPcmFrames)
     // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
     // the channel keeps moving through the sound's release.
     const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
@@ -3611,6 +3582,7 @@ export class IRPlayer {
       this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when,
         (v, t) => line.push([clampForTarget(target, v), t]), this._stepSecs(spec.step), limit);
     }
+    this._macroDry = false;
     this._envRetrigs = null;
     if (!st.hits.has(voice)) st.hits.set(voice, []);
     const hits = st.hits.get(voice);
@@ -4231,13 +4203,28 @@ export class IRPlayer {
     const { secs: nextNote } = this._nextNote(ev);
     const limit = Number.isFinite(nextNote) ? nextNote - KEY_OFF_LEAD_SECS : Infinity;
     if (gateTicks === 0) this._holdChannels.set(this._holdKey(ev), ev._trackIndex); // waits for KEY_OFF
-    const levels = [];
-    this._envRetrigs = this._keyonRetrigTimes(keyon, when, gateTicks, limit);
+    // A :keyon retrigger STARTs after its frame's level steps, so it
+    // carries them: they ride its event instead of sending a level of their
+    // own. Each step is its frame's work (MACRO), each retrigger after them.
+    const retrigTimes = this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? [];
+    const retrigs = new Map(retrigTimes.map((t) => [this._eventFrame(t), { t }]));
+    const first = []; // the samples on the note itself: its key-on composes from them
+    let on = false;
+    const level = (kind, value, t) => {
+      const r = retrigs.get(this._eventFrame(t));
+      if (r) r[kind] = value;
+      else this._pcmEv(t, { kind, voice, value, macro: true });
+    };
+    this._envRetrigs = retrigTimes;
     for (const [spec, kind, target] of [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"]]) {
       if (!spec) continue;
       this._scheduleMacro(
         spec, noteFrames, gateSecs, when,
-        (v, t) => levels.push({ t, kind, value: clampForTarget(target, v) }),
+        (v, t) => {
+          const value = clampForTarget(target, v);
+          if (on) level(kind, value, t);
+          else first.push({ t, kind, value });
+        },
         this._stepSecs(spec.step), limit,
       );
     }
@@ -4245,11 +4232,11 @@ export class IRPlayer {
     // The note starts at its :vel macro's first sample, as the driver's
     // note-on composes it (a leading hold: the note's own vel).
     const firstVel = velMacro && !macroLeadsWithHold(velMacro)
-      ? levels.find((x) => x.kind === "vel")?.value ?? noteVel
+      ? first.find((x) => x.kind === "vel")?.value ?? noteVel
       : noteVel;
     // ...and at its :vol macro's first sample, else the fader (restore_level_base).
     const firstVol = volMacro && !macroLeadsWithHold(volMacro)
-      ? levels.find((x) => x.kind === "vol")?.value ?? null
+      ? first.find((x) => x.kind === "vol")?.value ?? null
       : null;
     // A PCM note takes fm6 as the DAC: $2B on where it is off (its first
     // note, or after an fm6 note took it: _fmKey) — as the driver does.
@@ -4267,19 +4254,14 @@ export class IRPlayer {
       vel: firstVel,
       vol: firstVol,
     });
-    // A retrigger STARTs after its frame's level steps, so it carries them:
-    // they ride its event instead of sending a level of their own.
-    const retrigs = new Map();
-    for (const t of this._keyonRetrigTimes(keyon, when, gateTicks, limit) ?? [])
-      retrigs.set(this._eventFrame(t), { t, kind: "retrig", voice });
-    for (const x of levels) {
-      const r = retrigs.get(this._eventFrame(x.t));
-      if (r) r[x.kind] = x.value;
-      else this._pcmEv(x.t, { kind: x.kind, voice, value: x.value, macro: true });
-    }
-    for (const r of retrigs.values()) {
-      const { t, ...fields } = r;
-      this._pcmEv(t + PCM_SWEEP_AFTER, fields);
+    on = true;
+    for (const x of first) level(x.kind, x.value, x.t);
+    for (const [F, r] of retrigs) {
+      const t = r.t + PCM_SWEEP_AFTER;
+      this._step(F, AFTER, t, () => {
+        const { t: _at, ...carried } = r;
+        this._pcmEv(t, { kind: "retrig", voice, ...carried });
+      });
     }
   }
 
@@ -4511,14 +4493,13 @@ export class IRPlayer {
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
-  _readParam(ch, target, fm3Op = 0, when = undefined) {
+  _readParam(ch, target, fm3Op = 0) {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
     if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
-    // :vol at a time is the fader where a running sweep has it (the slot's).
-    if (t === "VOL" && when !== undefined)
-      return fm3Op ? this._fm3OpVolAtTime(fm3Op, when) : this._fmVolAtTime(ch, when);
+    // An fm3 operator's :vol is its own (driver.md §13.4).
+    if (t === "VOL" && fm3Op) return this._fm3Op[fm3Op - 1].vol;
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
@@ -4529,7 +4510,7 @@ export class IRPlayer {
       case "FM_ALG": return regs.algorithm ?? 0;
       case "FM_AMS": return regs.ams ?? 0;
       case "FM_FMS": return regs.fms ?? 0;
-      case "VOL": return regs.vol ?? 0;
+      case "VOL": return regs.vol ?? VOL_UNITY; // a fader never written is at unity
       case "PAN": return regs.pan ?? 0;
       case "SNAP": return regs.snap ?? 0;
       // Inline `:pitch+ N` accumulates onto the running cent offset (else it
@@ -4888,12 +4869,8 @@ export class IRPlayer {
         // (driver.md §13.4).
         const vol = Math.max(0, Math.min(31, value));
         const volOp = this._fm3OpOf(ev);
-        // A value ends a running sweep; a `+`, a `*` or a `$slot` moves the
-        // fader and the sweep steps on (SLOT_FREEING).
-        const frees = SLOT_FREEING.has(ev.cmd ?? "PARAM_SET");
         if (volOp) {
           const st = this._fm3Op[volOp - 1];
-          if (frees) st.volSweep = null;
           st.vol = vol;
           this._writeFm3OpTl(volOp, when);
           break;
@@ -4903,7 +4880,6 @@ export class IRPlayer {
           this._recomposeFm3Ops(when);
           break;
         }
-        if (frees) this._fmVolSweep[ch] = null;
         regs.vol = vol;
         this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
         break;
@@ -4918,49 +4894,25 @@ export class IRPlayer {
   // channels, PSG attenuation on all sounding PSG channels, and recomposes every
   // PCM soft-mix voice (the bit-shift attenuation rides master too). Reached from
   // a PARAM_SET MASTER on any track (FM/PSG/PCM), so all three stay in step.
-  _applyMasterChange(value, when, F = this._eventFrame(when), ahead = false) {
-    const master = Math.max(0, Math.min(31, Math.round(value)));
-    this._masterVol = master;
-    this._recomposeLevels(master, when, F, ahead);
-    if (this._chipPcm) insertLine(this._chipPcm.master, when, master);
+  _applyMasterChange(value, when) {
+    this._masterVol = Math.max(0, Math.min(31, Math.round(value)));
+    this._recomposeLevels(when);
+    if (this._chipPcm) insertLine(this._chipPcm.master, when ?? -Infinity, this._masterVol);
   }
 
-  // Every level composed again with `master` — the score's; the panel's
-  // stands in for it where each is composed (_handMaster).
-  _recomposeLevels(master, when, F = this._eventFrame(when), ahead = false) {
-    this._recomposeFmLevels(master, when, F);
-    this._recomposePsgLevels(master, when, F, ahead);
-    // PCM voices ride master too: the voice model recomposes every voice.
-    this._pcmEv(when, { kind: "master", value: master });
-  }
-
-  _recomposeFmLevels(master, when, F) {
-    // FM channels: update carrier TL
+  // Every level composed again from what it is now, after the master moved
+  // (the score's _masterVol, or the panel's hand over it, _handMaster): each
+  // FM channel, each keyed tone lane, the PCM voices.
+  _recomposeLevels(when) {
     for (let ci = 0; ci < this._fmEnc.channels; ci++) {
-      if (ci === 2 && this._fm3Ops) { this._recomposeFm3Ops(when); continue; }
-      // a :vol macro's level then, else a running :vol sweep's at frame F
-      const vol = this._lineAt(this._fmLevelLines[ci]?.vol, when) ?? this._fmVolAtFrame(ci, F);
-      this._writeFmLevel(ci, when, { vol, master });
+      if (ci === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
+      else this._writeFmLevel(ci, when);
     }
-  }
-
-  _recomposePsgLevels(master, when, F, ahead) {
-    // PSG channels: recalculate attenuation from vel * vol * master, but only
-    // for channels currently sounding — re-writing a non-silent att to an idle
-    // channel (e.g. at play start, before any note) would drone a tone.
-    for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) {
-      // Not keyed then, or silent now: a sweep's frames are written ahead, and
-      // a held note's key-off (triggerKeyOff) is not known in advance.
-      // (A held note has no known key-off: nothing is written ahead to it.)
-      const until = this._psgKeyedUntil[psgCh];
-      if (!this._psgSounding[psgCh] || F >= this._eventFrame(until) || (ahead && !Number.isFinite(until)))
-        continue;
-      const velLevel = this._psgLastVel[psgCh] ?? 15; // 0-15, raw vel
-      const vol = this._psgVolAtFrame(psgCh, F); // 0-31
-      const sounding = this._psgSounding[psgCh];
-      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLevel, vol, master), when);
-      this._psgSounding[psgCh] = sounding; // may be ahead of time (a sweep frame)
-    }
+    // (A lane the level has silenced stays so until its note's own level
+    // moves: the driver re-applies the master to sounding lanes.)
+    for (let lane = 0; lane < PSG_LANES; lane++) if (this._psgSounding[lane]) this._psgRecompose(lane, when);
+    // PCM voices ride master too: the voice model recomposes every voice.
+    this._pcmEv(when, { kind: "master", value: this._masterVol });
   }
 
   // Clamp rawGate to [0, lengthTicks]. If rawGate is null/undefined, falls back to lengthTicks.
@@ -5044,25 +4996,6 @@ export class IRPlayer {
       this._tempoAheadKey = key;
     }
     return this._tempoAhead;
-  }
-
-  // The :vol sets a track makes while its note sounds (up to its next note):
-  // frame → value. A PSG level macro's frames are written at the note's onset,
-  // so they take these in then — the set, when it comes, cannot redo them.
-  _volSetsAhead(ev) {
-    const out = new Map();
-    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-    if (!track) return out;
-    const base = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
-    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
-      const ne = track.events[i];
-      if (ne.cmd === "NOTE_ON" || ne.cmd === "PCM_NOTE_ON") break;
-      if (ne.cmd === "PARAM_SET" && String(ne.args?.target ?? "").toUpperCase() === "VOL") {
-        const v = Math.max(0, Math.min(31, ne.args?.value ?? VOL_UNITY));
-        out.set(this._eventFrame(this._timeAfterTicks(base, ne.tick - ev.tick)), v);
-      }
-    }
-    return out;
   }
 
   // The next NOTE_ON on this track: when it lands, and whether it slurs into
@@ -5301,6 +5234,9 @@ export class IRPlayer {
       (r) => r > when + 1e-6 && r < gateSecs && r < limitSecs,
     );
     const marks = spec?.src && this._onPosition ? [] : null;
+    // Each step is work of its frame, after that frame's sweeps (MACRO) —
+    // or, for a caller only reading the macro's values, handed over now.
+    const step = this._macroDry ? writeFn : (v, t) => this._at(t, () => writeFn(v, t), MACRO);
     const run = (at, gate, lim) => {
       const w = [], m = [];
       const mark = this._markStep;
@@ -5318,7 +5254,7 @@ export class IRPlayer {
       return { w, m, end };
     };
     const flush = (seg, cut = Infinity) => {
-      for (const [v, t] of seg.w) if (t < cut - 1e-9) writeFn(v, t);
+      for (const [v, t] of seg.w) if (t < cut - 1e-9) step(v, t);
       if (marks) for (const [k, t] of seg.m) if (t < cut - 1e-9) marks.push([k, t]);
     };
     const starts = [when, ...pre];
@@ -5818,19 +5754,24 @@ export class IRPlayer {
     const stepSecs = this._stepSecs(keyonSpec.step);
     const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
     const gaps = [];
-    this._scheduleMacro(
-      keyonSpec,
-      noteFrames,
-      gateSecs,
-      when,
-      (v, t) => {
-        if (v < 0.5) return; // gate closed this step
-        if (t <= when + 1e-6) return; // first sample = the note's own key-on
-        gaps.push({ off: Math.max(when, t - gap), on: t });
-      },
-      stepSecs,
-      limitSecs,
-    );
+    this._macroDry = true; // the gaps are read now, written with the other operators' edges
+    try {
+      this._scheduleMacro(
+        keyonSpec,
+        noteFrames,
+        gateSecs,
+        when,
+        (v, t) => {
+          if (v < 0.5) return; // gate closed this step
+          if (t <= when + 1e-6) return; // first sample = the note's own key-on
+          gaps.push({ off: Math.max(when, t - gap), on: t });
+        },
+        stepSecs,
+        limitSecs,
+      );
+    } finally {
+      this._macroDry = false;
+    }
     return gaps;
   }
 
@@ -5842,9 +5783,9 @@ export class IRPlayer {
     const from = df.from != null
       ? Number(df.from)
       : target === "VOL"
-        ? this._readParam(ch, "VOL", this._fm3OpOf(ev), when)
+        ? this._readParam(ch, "VOL", this._fm3OpOf(ev))
         : target === "MASTER"
-          ? this._masterAt(when)
+          ? this._masterVol ?? VOL_UNITY
           : this._readParam(ch, target, this._fm3OpOf(ev));
     const to = Number(df.to ?? 0);
     const curve = ev.args?.curve ?? "linear";
@@ -5937,9 +5878,7 @@ export class IRPlayer {
       return;
     }
 
-    // VOL: write TL directly per-frame (avoids mutating regs.vol mid-sweep which
-    // would cause NOTE_ON to read the wrong vol).  Store sweep state so
-    // _fmVolAtTime() returns the correct instantaneous vol at NOTE_ON time.
+    // VOL: the channel's fader, stepped in its frames (SWEEP).
     const regs = this._chRegs[ch];
     if (target === "VOL") {
       // FM3 independent-OP: a :vol sweep on an fm3-N track fades THAT operator,
@@ -5954,63 +5893,46 @@ export class IRPlayer {
         frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
       };
       // The fader's slot (_slotKey): a value, a sweep or a stop on it ends
-      // the sweep; its last frame leaves the fader there.
+      // the sweep. Each step moves the fader and composes the level from
+      // what the channel is then.
       const slot = this._slotKey(ev, "VOL");
       this._slots.set(slot, sw);
       const st = volOp ? this._fm3Op[volOp - 1] : null;
       for (let i = 0; i < iterFrames; i++) {
         const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
-        const frameWhen = this._sweepFrameTime(sw, i);
-        const master = this._masterAtFrame(sw.startFrame + i);
-        const last = i === iterFrames - 1;
-        this._at(frameWhen, () => {
+        const t = this._sweepFrameTime(sw, i);
+        this._step(sw.startFrame + i, SWEEP, t, () => {
           if (this._slots.get(slot) !== sw) return;
-          if (volOp) this._writeFm3OpTl(volOp, frameWhen, { vol, master });
-          else if (groupSweep) {
-            // The group fader has no reader ahead of it: it is where the sweep has it.
+          if (st) {
+            st.vol = vol;
+            this._writeFm3OpTl(volOp, t);
+          } else {
             regs.vol = vol;
-            for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op, frameWhen, { group: vol, master });
-          } else this._writeFmLevel(ch, frameWhen, { vol, master });
-          if (!last) return;
-          if (st) st.vol = vol;
-          else regs.vol = vol;
+            if (groupSweep) this._recomposeFm3Ops(t);
+            else this._writeFmLevel(ch, t);
+          }
         });
       }
-      if (st) st.volSweep = sw;
-      else if (!groupSweep) this._fmVolSweep[ch] = sw;
       return;
     }
 
-    // MASTER: every channel's level, stepped frame by frame; later events
-    // read it at their own time (_masterAt); each frame composes every channel
-    // as it is then.
+    // MASTER: the song's sweep, stepped after every channel's in its frame
+    // (driver.md §4 step 3); each step moves the master and composes every
+    // level from what it is then.
     if (target === "MASTER") {
       const ms = {
         from, to, curve, params, baseFrames, loop,
         frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
         frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
-        prev: this._masterAt(when),
       };
-      this._masterSweep = null;
       this._slots.set("song:MASTER", ms);
       for (let i = 0; i < iterFrames; i++) {
         const t = this._sweepFrameTime(ms, i);
-        const master = Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + i))));
-        const F = ms.startFrame + i;
-        // The FM and PCM levels at the frame's own time. A PSG lane's are
-        // composed as its note is dispatched (_schedulePsgEnvelope), so its
-        // frames of this sweep are the ones known now.
-        this._at(t, () => {
-          if (this._slots.get("song:MASTER") !== ms) return; // freed by a later :master
-          this._masterVol = master;
-          this._recomposeFmLevels(master, t, F);
-          this._pcmEv(t, { kind: "master", value: master });
+        const master = this._sweepAt(ms, ms.frameOffset + i);
+        this._step(ms.startFrame + i, SONG, t, () => {
+          if (this._slots.get("song:MASTER") === ms) this._applyMasterChange(master, t);
         });
-        this._recomposePsgLevels(master, t, F, i > 0);
-        if (this._chipPcm) insertLine(this._chipPcm.master, t, master);
       }
-      this._masterSweep = iterFrames > 1 ? ms : null;
-      this._masterVol = this._masterAt(when);
       return;
     }
 
@@ -6336,6 +6258,9 @@ export class IRPlayer {
     return (this._psgLevel[psgCh]?.steps ?? 16) - 1;
   }
   _psgSetAtt(psgCh, attReg, when) {
+    // A level ahead (a gate's end) is its time's to write: the lane's
+    // sounding flag and its encoder see the song in order.
+    if (this._isAhead(when)) return void this._at(when, () => this._psgSetAtt(psgCh, attReg, when), KEYED);
     const off = this._psgOff(psgCh);
     const att = Math.max(0, Math.min(off, attReg | 0));
     // Track sounding state so master/vol recomputes don't un-silence idle channels.
@@ -6368,12 +6293,6 @@ export class IRPlayer {
     return levelSteps(level, { vel, faders: [vol, master] });
   }
 
-  // Returns the current VOL (0-31) for a PSG channel at the given audio time,
-  // sampling an active VOL sweep if present.
-  _fmVolAtTime(ch, when) {
-    return this._fmVolAtFrame(ch, this._eventFrame(when));
-  }
-
   // A note's :vel and :vol macros are scheduled ahead, one after the other,
   // but on the driver each frame composes the LIVE values of both (driver.md
   // §7). So before either is written, the note-on samples both into timelines
@@ -6386,6 +6305,7 @@ export class IRPlayer {
       const out = [];
       const onSeq = this._onSeq;
       this._onSeq = null; // a dry run: no UI callbacks
+      this._macroDry = true;
       try {
         // ...and when the level is done: after the last release write, else
         // at the gate (a CSM operator falls silent there, driver.md §9).
@@ -6394,6 +6314,7 @@ export class IRPlayer {
           this._stepSecs(spec.step), limitSecs);
       } finally {
         this._onSeq = onSeq;
+        this._macroDry = false;
       }
       return out;
     };
@@ -6420,25 +6341,7 @@ export class IRPlayer {
   }
 
   _fmScoreVolAt(ch, t) {
-    return this._lineAt(this._fmLevelLines[ch]?.vol, t) ?? this._fmVolAtTime(ch, t);
-  }
-
-  _fmVolAtFrame(ch, F) {
-    const sweep = this._fmVolSweep?.[ch];
-    return sweep && F < sweep.startFrame + sweep.frames ? this._sweepVolAtFrame(sweep, F) : (this._chRegs[ch].vol ?? VOL_UNITY);
-  }
-
-  _psgVolAtTime(psgCh, when) {
-    return this._psgVolAtFrame(psgCh, this._eventFrame(when));
-  }
-
-  _psgVolAtFrame(psgCh, F) {
-    const sweep = this._psgVolSweep?.[psgCh];
-    return sweep ? this._sweepVolAtFrame(sweep, F) : (this._psgVol[psgCh] ?? VOL_UNITY);
-  }
-
-  _sweepVolAtFrame(sweep, F) {
-    return Math.max(0, Math.min(31, this._sweepAtFrame(sweep, F)));
+    return this._lineAt(this._fmLevelLines[ch]?.vol, t) ?? this._chRegs[ch].vol ?? VOL_UNITY;
   }
 
   // A sweep's value on its `frame`-th frame (0 = the frame it starts). The
@@ -6511,117 +6414,63 @@ export class IRPlayer {
     this._psgSetNoiseCfg(this._psgNoiseMode, when, lane);
   }
 
-  // Set PSG attenuation at note-on; schedule silence at note-off.
-  // gateTicks === 0 = hold note (no auto-silence; triggerKeyOff() handles it).
-  _schedulePsgEnvelope(psgCh, noteWhen, gateTicks, baseVel = 15, offWhen = null) {
-    this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
-
-    // Compose vel / vol / master → PSG attenuation (additive dB model).
-    const vol = this._psgVolAtNoteOn(psgCh, noteWhen);
-    const master = this._masterAtNoteOn(noteWhen);
-    const att = this._composePsgAtt(psgCh, baseVel, vol, master);
-
-    this._psgSetAtt(psgCh, att, noteWhen);
-    // A running :vol sweep moves the level every frame the note is keyed.
-    this._psgVolSweepWrites(psgCh, noteWhen, this._psgKeyedUntil[psgCh], baseVel);
-    // Silence at the gate boundary; offWhen is null when the note holds or slurs
-    // into the next (legato).
-    if (offWhen != null) this._psgSetAtt(psgCh, this._psgOff(psgCh), offWhen);
+  // ---- a tone lane's level ----
+  // A lane's note has a velocity and, while a :vol macro of its own runs, a
+  // :vol; without one its :vol is the lane's fader. The lane's level is
+  // composed from those and the master as they are, each time one moves: the
+  // note's key-on, a macro's step, a :vol or :master write, a sweep's step —
+  // as the driver re-composes a keyed channel (driver.md §7).
+  _psgRecompose(lane, when) {
+    const n = this._psgLive[lane];
+    if (!n) return;
+    this._psgSetAtt(lane, this._composePsgAtt(lane, n.vel, n.vol ?? this._psgVol[lane] ?? VOL_UNITY, this._masterVol ?? VOL_UNITY), when);
   }
 
-  // Write a PSG channel's :vol sweep frames in [fromWhen, untilWhen) — the
-  // span its note is keyed, as the driver re-composes the attenuation on each
-  // sweep frame of a keyed channel. The writes are ahead of time, so they
-  // leave the channel's sounding flag as it was.
-  _psgVolSweepWrites(psgCh, fromWhen, untilWhen, vel) {
-    const vs = this._psgVolSweep[psgCh];
-    const ms = this._masterSweep;
-    // A held note's key-off comes live (triggerKeyOff), after these frames
-    // would be queued: write none ahead rather than past its release.
-    if ((!vs && !ms) || !Number.isFinite(untilWhen)) return;
-    const end = Math.max(
-      vs ? vs.startFrame + vs.frames : -Infinity,
-      ms ? ms.startFrame + ms.frames : -Infinity,
-    );
-    // The frame the note keys off in is not keyed at its sweep step.
-    const last = Math.min(end, this._eventFrame(untilWhen));
-    for (let F = this._eventFrame(fromWhen); F < last; F++) {
-      const t = Math.max(fromWhen, this._frameOrigin + F / 60);
-      this._psgLevelAt(psgCh, vel, this._psgVolAtFrame(psgCh, F), this._masterAtFrame(F), t, false);
-    }
+  // Whether the lane's note is keyed at `t` (now when absent): a :vol, a
+  // :master or a sweep moves a keyed lane's level only — written to an idle
+  // lane, a level would drone a tone.
+  _psgKeyed(lane, t) {
+    return this._psgLive[lane] != null && (t ?? -Infinity) < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
   }
 
-  // A keyed PSG lane's level on a frame of its note. A frame ahead is
-  // composed when the run reaches it — with the panel's hand as it is then
-  // (_composePsgAtt). The lane's sounding flag is the dispatch's to keep: it
-  // says how the note's writes leave the lane, known as they are queued
-  // (`flag`: this write moves it, as a macro's steps do; a sweep's leave it).
-  _psgLevelAt(psgCh, vel, vol, master, t, flag) {
-    const was = this._psgSounding[psgCh];
-    // Only where the chip's level write stands alone (`attAnytime`, the
-    // SN76489's): an encoder that orders or drops writes by the calls it has
-    // seen (a queued one, the Game Boy's, the 2A03's) must see its note's
-    // whole as it is dispatched.
-    if (!this._isAhead(t) || !this._toneEnc[psgCh]?.enc.attAnytime) {
-      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, vol, master), t);
-      if (!flag) this._psgSounding[psgCh] = was;
-      return;
-    }
-    if (flag) this._psgSounding[psgCh] = this._composePsgAtt(psgCh, vel, vol, master) < this._psgOff(psgCh);
-    this._at(t, () => {
-      const now = this._psgSounding[psgCh];
-      this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, vel, vol, master), t);
-      this._psgSounding[psgCh] = now;
-    });
+  // A note's level on its lane: its key-on's, then its :vel and :vol macros a
+  // step at a time, and silence at its gate — or, with a macro, at the
+  // level's tail. gateTicks === 0 is a held note (triggerKeyOff ends it);
+  // offWhen is null when the note holds or slurs into the next.
+  _psgNoteLevel(psgCh, velMacro, volMacro, noteWhen, gateTicks, baseVel, limitSecs, offWhen, velFirst) {
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
+    const note = (this._psgLive[psgCh] = { vel: Math.max(0, Math.min(15, baseVel)), vol: null });
+    let keyed = false;
+    // Each step is its frame's work (MACRO, _scheduleMacro): it moves the
+    // note's value and the level is composed with the other's as it is then.
+    // A first sample on the note itself is what the key-on composes from
+    // (driver.md §7.2); the vel macro's output is the absolute velocity.
+    const run = (spec, target, key) => !spec ? null : this._scheduleMacro(spec, noteFrames, gateSecs, noteWhen, (v, t) => {
+      if (this._psgLive[psgCh] !== note) return; // the lane's next note took it over
+      note[key] = clampForTarget(target, v);
+      if (keyed) this._psgRecompose(psgCh, t);
+    }, this._stepSecs(spec.step), limitSecs);
+    // In bind order: which of the two steps first in a frame.
+    const ends = (velFirst ? [[velMacro, "VEL", "vel"], [volMacro, "VOL", "vol"]] : [[volMacro, "VOL", "vol"], [velMacro, "VEL", "vel"]])
+      .map(([spec, target, key]) => run(spec, target, key)).filter((e) => e != null);
+    this._psgRecompose(psgCh, noteWhen);
+    keyed = true;
+    // Silence at the gate, or with a macro at the level's tail; a tail the
+    // next note cuts short (at its limit) leaves the level to that note.
+    const off = velMacro || volMacro
+      ? (ends.length && Math.max(...ends) < limitSecs - 1e-9 ? Math.max(...ends) : null)
+      : offWhen;
+    if (off != null && offWhen != null) this._psgSetAtt(psgCh, this._psgOff(psgCh), off);
   }
 
-  // The level a PSG note-on composes. The driver runs a frame's notes before
-  // its sweep step, so a note meets the level the sweep wrote the frame
-  // before (the pre-sweep level on the sweep's own first frame), and that
-  // frame's sweep step follows it (_psgVolSweepWrites from the note).
-  // The master level at a time: a running :master sweep's value then.
-  _masterAt(when) {
-    return this._masterAtFrame(this._eventFrame(when));
-  }
-
-  _masterAtFrame(F) {
-    const ms = this._masterSweep;
-    if (!ms) return this._masterVol ?? VOL_UNITY;
-    return Math.max(0, Math.min(31, Math.round(this._sweepAtFrame(ms, F))));
-  }
-
-  // The master a PSG note-on composes: as its :vol, the value the sweep wrote
-  // the frame before (the driver steps sweeps after the frame's notes).
-  _masterAtNoteOn(when) {
-    const ms = this._masterSweep;
-    if (!ms) return this._masterVol ?? VOL_UNITY;
-    const f = this._sweepFrameOf(ms, when);
-    if (f <= 0) return ms.prev;
-    return Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + Math.min(f, ms.frames) - 1))));
-  }
-
-  // Before each event: the master state is the sweep's value at its time
-  // (the sweep's frames were scheduled at once); a PARAM_SET MASTER ends it.
   // A score write of MASTER on any track: a value, a `$slot`, `+` / `*` from
   // the master now, a sweep (from the master now unless it names a :from),
-  // a stop (_syncMasterSweep froze it).
+  // a stop (its slot freed, the master stays where the sweep left it).
   _masterEvent(ev, when) {
     if (ev.cmd === "PARAM_SWEEP") return this._applyParamSweep(0, ev, when);
     if (ev.cmd === "PARAM_SWEEP_STOP") return;
-    const v = this._writeValue(ev, this._masterAt(when), when);
+    const v = this._writeValue(ev, this._masterVol ?? VOL_UNITY, when);
     if (v != null && Number.isFinite(v)) this._applyMasterChange(v, when);
-  }
-
-  _syncMasterSweep(ev, when) {
-    const ms = this._masterSweep;
-    if (!ms) return;
-    this._masterVol = this._masterAt(when);
-    const t = (ev.args?.target ?? "").toUpperCase();
-    if (
-      this._sweepFrameOf(ms, when) >= ms.frames - 1 ||
-      (t === "MASTER" && (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP"))
-    )
-      this._masterSweep = null;
   }
 
   // A sweep holds a slot, as the driver's do (driver.md §4 step 3): a
@@ -6638,135 +6487,6 @@ export class IRPlayer {
   _freeSlot(ev) {
     if (!this._slots.size || !SLOT_FREEING.has(ev.cmd)) return;
     this._slots.delete(this._slotKey(ev, String(ev.args?.target ?? "").toUpperCase()));
-  }
-
-  _psgVolAtNoteOn(psgCh, when) {
-    const sw = this._psgVolSweep[psgCh];
-    if (!sw) return this._psgVol[psgCh] ?? VOL_UNITY;
-    const f = this._sweepFrameOf(sw, when);
-    if (f <= 0) return sw.prev;
-    return Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + Math.min(f, sw.frames) - 1)));
-  }
-
-  // A PSG note's level macros, :vel and :vol: each composes the attenuation
-  // with the other's value at its time (and master), as the driver's writes
-  // through the one level path do. A :vol macro is the channel's :vol, so its
-  // last value stays for later notes.
-  _schedulePsgLevelMacros(
-    psgCh,
-    velMacro,
-    volMacro,
-    noteWhen,
-    gateTicks,
-    baseVel = 15,
-    limitSecs = Infinity,
-    offWhen = null,
-    velFirst = true, // bind order: which of the two steps first in a frame
-    volAhead = new Map(), // frame → the :vol the track sets while the note sounds
-  ) {
-    this._psgLastVel[psgCh] = Math.max(0, Math.min(15, baseVel));
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
-    // Run each macro for its samples; the ends say when the level is done.
-    const run = (spec, target) => {
-      const out = [];
-      if (!spec) return { out, end: null };
-      const end = this._scheduleMacro(
-        spec, noteFrames, gateSecs, noteWhen,
-        (v, t) => out.push({ t, v: clampForTarget(target, v) }),
-        this._stepSecs(spec.step), limitSecs,
-      );
-      return { out, end };
-    };
-    // The vel macro's output is the absolute velocity (0-15), matching FM and
-    // the static-vel path; `:vel*` bakes any note-vel scaling in at compile
-    // time, so the player must not scale again here.
-    const vel = run(velMacro, "VEL");
-    const vol = run(volMacro, "VOL");
-    this._psgLevelAhead[psgCh] = !!(velMacro || volMacro);
-    const at = (list, t, dflt) => {
-      let v = dflt;
-      for (const s of list) if (s.t <= t + 1e-9) v = s.v; else break;
-      return v;
-    };
-    const velAt = (t) => at(vel.out, t, baseVel);
-    const volAt = (t) => at(vol.out, t, null) ?? this._psgVolAtTime(psgCh, t);
-
-    // The note-on composes from the macro's first :vel (a leading hold: the
-    // note's own) and the :vol the channel holds; the macros' samples follow.
-    const first = velMacro && !macroLeadsWithHold(velMacro) ? vel.out[0]?.v ?? baseVel : baseVel;
-    // ...and the same for :vol: the note starts at its :vol macro's first
-    // sample, else at the fader (driver.md §7.2, restore_level_base).
-    const firstVol = volMacro && !macroLeadsWithHold(volMacro) && vol.out.length
-      ? vol.out[0].v
-      : this._psgVolAtNoteOn(psgCh, noteWhen);
-    this._psgSetAtt(
-      psgCh,
-      this._composePsgAtt(psgCh, first, firstVol, this._masterAtNoteOn(noteWhen)),
-      noteWhen,
-    );
-    // Frame by frame, in the driver's order: a running :vol or :master sweep
-    // steps first (while keyed), composing with the note's vel as it stands,
-    // then the macros' samples in bind order, each composing with the other's
-    // value then. Every write that changes the level is an edge on the chip.
-    const F0 = this._eventFrame(noteWhen);
-    const frameOf = (list) => {
-      const m = new Map();
-      for (const x of list) m.set(this._eventFrame(x.t), x);
-      return m;
-    };
-    const velF = frameOf(vel.out);
-    const volF = frameOf(vol.out);
-    const vs = this._psgVolSweep[psgCh];
-    const ms = this._masterSweep;
-    const keyEnd = this._eventFrame(this._psgKeyedUntil[psgCh]);
-    const sweepEnd = Math.max(
-      vs ? vs.startFrame + vs.frames : -Infinity,
-      ms ? ms.startFrame + ms.frames : -Infinity,
-    );
-    const lastF = Math.max(
-      ...[...velF.keys(), ...volF.keys()],
-      ...[...volAhead.keys()].filter((F) => F < keyEnd),
-      Math.min(Number.isFinite(keyEnd) ? keyEnd - 1 : F0, sweepEnd - 1),
-      F0,
-    );
-    let velLive = first;
-    let volNow = null; // the channel's :vol once a sweep step or the macro set it
-    const volAtF = (F) => volNow ?? this._psgVolAtFrame(psgCh, F);
-    const inSweep = (sw, F) => sw && F >= sw.startFrame && F < sw.startFrame + sw.frames;
-    for (let F = F0; F <= lastF; F++) {
-      const t = F === F0 ? noteWhen : Math.max(noteWhen, this._frameOrigin + F / 60);
-      const master = this._masterAtFrame(F);
-      const write = () => this._psgLevelAt(psgCh, velLive, volAtF(F), master, t, true);
-      if (F < keyEnd && volAhead.has(F)) {
-        volNow = volAhead.get(F);
-        write();
-      }
-      const vsOn = inSweep(vs, F);
-      if (F < keyEnd && (vsOn || inSweep(ms, F))) {
-        if (vsOn) volNow = Math.max(0, Math.min(31, this._sweepAtFrame(vs, F)));
-        write();
-      }
-      const order = velFirst ? [[velF, "vel"], [volF, "vol"]] : [[volF, "vol"], [velF, "vel"]];
-      for (const [m, which] of order) {
-        const x = m.get(F);
-        if (!x) continue;
-        if (which === "vel") velLive = x.v;
-        else volNow = x.v;
-        write();
-      }
-    }
-    // The :vol macro was this note's; the channel's fader stays the score's,
-    // and the next note starts from it (driver.md §7.2).
-
-    // Silence at the level's tail. offWhen is null when the note holds or slurs
-    // into the next (legato) — leave the tone sounding for the next note. A
-    // tail the next note cuts short (at its limit) leaves the level to that
-    // note: no gap before it.
-    const ends = [vel.end, vol.end].filter((e) => e !== null);
-    const silenceAt = ends.length ? Math.max(...ends) : null;
-    if (silenceAt !== null && offWhen != null && silenceAt < limitSecs - 1e-9) {
-      this._psgSetAtt(psgCh, this._psgOff(psgCh), silenceAt);
-    }
   }
 
   // A PSG note's macro on a register word (the SSG's mixer, its noise
@@ -6961,30 +6681,24 @@ export class IRPlayer {
             : null;
         this._psgKeyedUntil[psgCh] = psgOffWhen ?? psgNextNote;
         const volMacro = ev.args?.vol ?? null;
-        if (velMacro || volMacro) {
-          // A :keyon retrigger restarts the level envelopes (PSG has no
-          // hardware one: this is the whole of the retrigger).
-          this._envRetrigs = this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit);
-          this._schedulePsgLevelMacros(
-            psgCh,
-            velMacro,
-            volMacro,
-            when,
-            psgGateTicks,
-            baseVel,
-            psgMacroLimit,
-            psgOffWhen,
-            Object.keys(ev.args).indexOf("velMacro") < Object.keys(ev.args).indexOf("vol") ||
-              !volMacro,
-            this._volSetsAhead(ev),
-          );
-          this._envRetrigs = null;
-        } else {
-          this._psgLevelAhead[psgCh] = false;
-          this._schedulePsgEnvelope(psgCh, when, psgGateTicks, baseVel, psgOffWhen);
-        }
+        // A :keyon retrigger restarts the level envelopes (PSG has no
+        // hardware one: this is the whole of the retrigger).
+        this._envRetrigs = velMacro || volMacro ? this._keyonRetrigTimes(ev.args?.keyon, when, psgGateTicks, psgMacroLimit) : null;
+        this._psgNoteLevel(psgCh, velMacro, volMacro, when, psgGateTicks, baseVel, psgMacroLimit, psgOffWhen,
+          Object.keys(ev.args).indexOf("velMacro") < Object.keys(ev.args).indexOf("vol") || !volMacro);
+        this._envRetrigs = null;
         break;
       }
+
+      // A `+` or a `*` of the fader, from where it is.
+      case "PARAM_ADD":
+      case "PARAM_MUL":
+        if (String(ev.args?.target ?? "").toUpperCase() === "VOL")
+          this._dispatchPsgEvent(
+            { ...ev, cmd: "PARAM_SET", args: { target: "VOL", value: this._writeValue(ev, this._psgVol[psgCh] ?? VOL_UNITY, when) } },
+            when,
+          );
+        break;
 
       // A `$slot` write lands as the PARAM_SET of the slot's value (as the FM
       // path's does).
@@ -7004,33 +6718,18 @@ export class IRPlayer {
           if (!this._isNoiseLane(psgCh))
             this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
         } else if (psgTarget === "VOL") {
+          const note = this._psgLive[psgCh];
           if (ev.cmd === "PARAM_SET") {
-            // Immediate vol: store, and update hardware only if a note is keyed
-            // at `when` (otherwise it takes effect at the next NOTE_ON; writing
-            // att to an idle channel would drone a tone). Keyed by time, not
-            // by _psgSounding: a note's key-off is scheduled at its onset, so
-            // that flag already reads silent during the note — a :vol before
-            // a tie's `~` was lost.
-            const vol = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
-            this._psgVol[psgCh] = vol;
-            this._psgVolSweep[psgCh] = null;
-            const until = this._psgKeyedUntil[psgCh] ?? 0;
-            if (when < until - 1e-6) {
-              // A note with a level macro wrote this set in with its frames
-              // at its onset (_volSetsAhead); one without composes it now.
-              if (!this._psgLevelAhead[psgCh]) {
-                const velLevel = this._psgLastVel[psgCh] ?? 15;
-                const master = this._masterVol ?? VOL_UNITY;
-                this._psgSetAtt(psgCh, this._composePsgAtt(psgCh, velLevel, vol, master), when);
-              }
-            }
+            // The fader: a keyed lane's level moves with it now (an idle
+            // one's would drone a tone; its next note composes from it).
+            this._psgVol[psgCh] = Math.max(0, Math.min(31, ev.args?.value ?? VOL_UNITY));
+            if (note) note.vol = null; // over a :vol macro's, until its next step
+            if (this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
           } else {
-            // PARAM_SWEEP: store sweep state (same format as _fmVolSweep); a
-            // note samples it at its onset and writes its frames while keyed.
-            // No :from: the sweep starts where the level is now (§11).
+            // A sweep of the fader, stepped in its frames (SWEEP) while it
+            // holds the fader's slot. No :from: from where the fader is (§11).
             const df = this._curveFields(ev.args ?? {}, when);
-            const prev = this._psgVolAtTime(psgCh, when);
-            const from = Math.max(0, Math.min(31, Number(df.from ?? prev)));
+            const from = Math.max(0, Math.min(31, Number(df.from ?? this._psgVol[psgCh] ?? VOL_UNITY)));
             const to = Math.max(0, Math.min(31, Number(df.to ?? from)));
             const baseFrames = ev.args?.lenFrames
               ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
@@ -7038,7 +6737,7 @@ export class IRPlayer {
             const loop = !!ev.args?.loop;
             const { budgetFrames, nonLoopStartFrame, loopPhaseOffset } =
               this._sweepFrameParams(ev, baseFrames, loop, when);
-            this._psgVolSweep[psgCh] = {
+            const sw = {
               from, to, curve: ev.args?.curve ?? "linear", params: df.params,
               baseFrames, loop,
               frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
@@ -7048,21 +6747,27 @@ export class IRPlayer {
                 : Math.min(budgetFrames, Math.max(1, baseFrames - nonLoopStartFrame)),
               startWhen: when,
               startFrame: this._eventFrame(when),
-              prev,
             };
-            this._psgVol[psgCh] = from; // initial value for MASTER recalc fallback
-            if (this._psgKeyedUntil[psgCh] > when)
-              this._psgVolSweepWrites(psgCh, when, this._psgKeyedUntil[psgCh], this._psgLastVel[psgCh] ?? 15);
+            const slot = this._slotKey(ev, "VOL");
+            this._slots.set(slot, sw);
+            for (let i = 0; i < sw.frames; i++) {
+              const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
+              const t = this._sweepFrameTime(sw, i);
+              this._step(sw.startFrame + i, SWEEP, t, () => {
+                if (this._slots.get(slot) !== sw) return;
+                this._psgVol[psgCh] = vol;
+                const n = this._psgLive[psgCh];
+                if (n) n.vol = null;
+                if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
+              });
+            }
           }
         } else if (psgTarget === "SSG_ENV") {
           // The lane's level on the envelope (a shape), or its own (-1): a
           // sounding note changes over now; the shape starts at its key-on.
           const shape = Math.round(Number(ev.args?.value ?? -1));
           this._psgEnv[psgCh] = shape < 0 ? -1 : Math.min(15, shape);
-          if (this._psgSounding[psgCh] && when < (this._psgKeyedUntil[psgCh] ?? 0) - 1e-6) {
-            const att = this._composePsgAtt(psgCh, this._psgLastVel[psgCh] ?? 15, this._psgVol[psgCh], this._masterVol ?? VOL_UNITY);
-            this._psgSetAtt(psgCh, att, when);
-          }
+          if (this._psgSounding[psgCh] && this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
         } else if (psgTarget === "ENV_SEMI" || psgTarget === "ENV_DETUNE") {
           // The lane's moves on its envelope's period: a period following
           // its notes moves now, a rate it writes at its next write.
@@ -7208,7 +6913,7 @@ export class IRPlayer {
   // at 0 (a vol is volume, so 0 mutes; vel never does).
   _fmNoteSilent(ch, when) {
     const regs = this._chRegs[ch];
-    return ((regs?.vol != null || this._fmVolSweep[ch] != null) && this._fmVolAtTime(ch, when) === 0)
+    return (regs?.vol != null && Math.round(regs.vol) === 0)
       || (this._masterVol ?? VOL_UNITY) === 0;
   }
 
@@ -7236,6 +6941,8 @@ export class IRPlayer {
     for (const [port, addr, data, at] of writes) this._write(port, addr, data, at ?? when);
   }
   _fmKey(ch, mask, when) {
+    // A key ahead (a gate's key-off, a retrigger) is its time's to write.
+    if (this._isAhead(when)) return void this._at(when, () => this._fmKey(ch, mask, when), KEYED);
     // A key-on under :lfo-sync — an operator keyed that was not: a note, a
     // :keyon retrigger, an fm3-N operator — starts the LFO over just ahead.
     const rising = mask & ~(this._fmKeyMask[ch] ?? 0) & 0xf0;
