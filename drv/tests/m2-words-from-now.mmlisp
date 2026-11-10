@@ -1,0 +1,9 @@
+; A word read as it is now: a :pan sweep without :from and a :pan* start
+; from the pan the channel has, and a relative :pitch on a tone lane from its
+; offset (language.md §11). A register word out of its range is clamped, never
+; wrapped (§5): :fb $m with m = 9 is feedback 7.
+
+(def-val m 9 -64..64 :public)
+(fm1 :tempo 120 :len 4 :pan -1 c :pan (linear :to 1 :len 1/1) c c c :pan* 0.5 c :fb $m c :ar1 40 c)
+(fm2 :len 4 :pan 1 c :pan* 0.5 c :pan+ -1 c c)
+(sqr1 :len 4 :pitch 50 c c :pitch+ 3 c c :pitch* 0.5 c c)

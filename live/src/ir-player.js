@@ -6338,7 +6338,9 @@ export class IRPlayer {
   // channel's `:snap` mask, the cents on top (as _writeFmNote).
   _psgSetPitch(psgCh, note, cents, when) {
     const hz = midiToHz(snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100);
-    this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.period(hz), when)), when);
+    const midi = snapNote(note, this._psgSnap[psgCh] ?? 0) + cents / 100;
+    // A chip the driver plays has its rule (pitchPeriod); the rest, the pitch's own.
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.tone(ch, e.pitchPeriod ? e.pitchPeriod(midi) : e.period(hz), when)), when);
     // `:env-rate note`: the envelope's period on this lane's pitch.
     this._psgHz[psgCh] = hz;
     if (this._envFollow === psgCh) this._writeEnvPeriod(hz, this._envBy(psgCh), when);
@@ -6687,15 +6689,17 @@ export class IRPlayer {
         break;
       }
 
-      // A `+` or a `*` of the fader, from where it is.
+      // A `+` or a `*` of a lane's word, from where it is.
       case "PARAM_ADD":
-      case "PARAM_MUL":
-        if (String(ev.args?.target ?? "").toUpperCase() === "VOL")
-          this._dispatchPsgEvent(
-            { ...ev, cmd: "PARAM_SET", args: { target: "VOL", value: this._writeValue(ev, this._lv(`psg:${psgCh}`).vol, when) } },
-            when,
-          );
+      case "PARAM_MUL": {
+        const target = String(ev.args?.target ?? "").toUpperCase();
+        const cur = target === "VOL" ? this._lv(`psg:${psgCh}`).vol
+          : target === "NOTE_PITCH" ? this._psgPitchOffset[psgCh] ?? 0
+          : null;
+        if (cur != null)
+          this._dispatchPsgEvent({ ...ev, cmd: "PARAM_SET", args: { target, value: this._writeValue(ev, cur, when) } }, when);
         break;
+      }
 
       // A `$slot` write lands as the PARAM_SET of the slot's value (as the FM
       // path's does).

@@ -81,6 +81,8 @@ import {
   encode80,
   fmCarrierOpsForAlg,
   FRAME_HZ_NTSC,
+  fnumBlockOf,
+  psgPeriodOf,
 } from "./ir-utils.js";
 
 // The channels the macro engine runs on: 0-9 and FM3's four operators
@@ -91,6 +93,11 @@ const MACRO_BINDS = 8;
 // The song-wide targets' own sweep slots: :master, :lfo-rate, VAL0–15.
 const GLOBAL_SWEEPS = 18;
 const LOOP_STACK_DEPTH = 4; // the track's control stack (driver.md §4.3)
+
+// A register word's value into its field: clamped to the field's range, as
+// the language has it (language.md §5: "values are clamped to the register's
+// range"), the IR preview's too — never wrapped.
+const clampReg = (value, max) => (value < 0 ? 0 : value > max ? max : value);
 
 // ── LUT construction (float math lives here and only here) ────────────────
 function buildLuts() {
@@ -723,51 +730,12 @@ export class DrvPlayer {
   // numerator, so the whole thing stays inside 16-bit integers and matches the
   // C bit-for-bit (driver.md §8; the residue against ir-player's float-space
   // pitch is ≤ 1 F-number LSB, well inside the A/B band).
+  // The driver's pitch rule (driver.md §8), the IR preview's too (ir-utils.js).
   _fnumBlockFor(note, cents) {
-    const { fnumBlock } = this._luts;
-    let n = note;
-    let c = cents | 0;
-    // Fold whole semitones out of the cent offset.
-    n += Math.trunc(c / 100);
-    c -= Math.trunc(c / 100) * 100;
-    if (c < 0) {
-      n -= 1;
-      c += 100;
-    }
-    n = n < 0 ? 0 : n > 126 ? 126 : n;
-    if (c === 0) return fnumBlock[n];
-    const e0 = fnumBlock[n];
-    const e1 = fnumBlock[n + 1];
-    const block0 = e0 >> 11;
-    const fnum0 = e0 & 0x7ff;
-    const shift = Math.max(0, (e1 >> 11) - block0); // 0 or 1 for adjacent notes
-    const v1 = (e1 & 0x7ff) << shift; // e1's F-number in block0 units
-    let block = block0;
-    let fnum = fnum0 + Math.floor(((v1 - fnum0) * c + 50) / 100); // round half up
-    while (fnum > 1023 && block < 7) {
-      block++;
-      fnum >>= 1;
-    }
-    return ((block & 0x07) << 11) | (fnum & 0x7ff);
+    return fnumBlockOf(note, cents);
   }
   _psgPeriodFor(note, cents) {
-    const { psgPeriod } = this._luts;
-    let n = note;
-    let c = cents | 0;
-    n += Math.trunc(c / 100);
-    c -= Math.trunc(c / 100) * 100;
-    if (c < 0) {
-      n -= 1;
-      c += 100;
-    }
-    n = n < 0 ? 0 : n > 126 ? 126 : n;
-    if (c === 0) return psgPeriod[n];
-    // Period decreases as pitch rises, so diff >= 0; subtract with a
-    // non-negative numerator, as the C does (round half up).
-    const p0 = psgPeriod[n];
-    const diff = p0 - psgPeriod[n + 1];
-    const p = p0 - Math.floor((diff * c + 50) / 100);
-    return p < 1 ? 1 : p > 1023 ? 1023 : p;
+    return psgPeriodOf(note, cents);
   }
 
   // Every pitch write passes its whole-semitone note through the channel's
@@ -1876,22 +1844,22 @@ export class DrvPlayer {
         return;
       }
       case target === TARGET_ID.FM_FB:
-        regs.feedback = value & 0x07;
+        regs.feedback = clampReg(value, 0x07);
         this._ym(port, 0xb0 + off, encodeB0(regs));
         return;
       case target === TARGET_ID.FM_ALG:
-        regs.algorithm = value & 0x07;
+        regs.algorithm = clampReg(value, 0x07);
         this._ym(port, 0xb0 + off, encodeB0(regs));
         return;
       case target === TARGET_ID.LFO_SYNC:
         regs.lfoSync = value !== 0;
         return;
       case target === TARGET_ID.FM_AMS:
-        regs.ams = value & 0x03;
+        regs.ams = clampReg(value, 0x03);
         this._ym(port, 0xb4 + off, encodeB4(regs));
         return;
       case target === TARGET_ID.FM_FMS:
-        regs.fms = value & 0x07;
+        regs.fms = clampReg(value, 0x07);
         this._ym(port, 0xb4 + off, encodeB4(regs));
         return;
       case target === TARGET_ID.PAN:
@@ -1917,43 +1885,43 @@ export class DrvPlayer {
       }
       case target >= TARGET_ID.FM_AR1 && target <= TARGET_ID.FM_AR4: {
         const { idx, op } = opFor(TARGET_ID.FM_AR1);
-        op.ar = value & 0x1f;
+        op.ar = clampReg(value, 0x1f);
         this._ym(port, 0x50 + OP_ADDR_OFFSET[idx] + off, (op.rs << 6) | op.ar);
         return;
       }
       case target >= TARGET_ID.FM_DR1 && target <= TARGET_ID.FM_DR4: {
         const { idx, op } = opFor(TARGET_ID.FM_DR1);
-        op.dr = value & 0x1f;
+        op.dr = clampReg(value, 0x1f);
         this._ym(port, 0x60 + OP_ADDR_OFFSET[idx] + off, encode60(op));
         return;
       }
       case target >= TARGET_ID.FM_SR1 && target <= TARGET_ID.FM_SR4: {
         const { idx, op } = opFor(TARGET_ID.FM_SR1);
-        op.d2r = value & 0x1f;
+        op.d2r = clampReg(value, 0x1f);
         this._ym(port, 0x70 + OP_ADDR_OFFSET[idx] + off, op.d2r & 0x1f);
         return;
       }
       case target >= TARGET_ID.FM_RR1 && target <= TARGET_ID.FM_RR4: {
         const { idx, op } = opFor(TARGET_ID.FM_RR1);
-        op.rr = value & 0x0f;
+        op.rr = clampReg(value, 0x0f);
         this._ym(port, 0x80 + OP_ADDR_OFFSET[idx] + off, encode80(op));
         return;
       }
       case target >= TARGET_ID.FM_SL1 && target <= TARGET_ID.FM_SL4: {
         const { idx, op } = opFor(TARGET_ID.FM_SL1);
-        op.sl = value & 0x0f;
+        op.sl = clampReg(value, 0x0f);
         this._ym(port, 0x80 + OP_ADDR_OFFSET[idx] + off, encode80(op));
         return;
       }
       case target >= TARGET_ID.FM_KS1 && target <= TARGET_ID.FM_KS4: {
         const { idx, op } = opFor(TARGET_ID.FM_KS1);
-        op.rs = value & 0x03;
+        op.rs = clampReg(value, 0x03);
         this._ym(port, 0x50 + OP_ADDR_OFFSET[idx] + off, (op.rs << 6) | op.ar);
         return;
       }
       case target >= TARGET_ID.FM_ML1 && target <= TARGET_ID.FM_ML4: {
         const { idx, op } = opFor(TARGET_ID.FM_ML1);
-        op.mul = value & 0x0f;
+        op.mul = clampReg(value, 0x0f);
         this._ym(port, 0x30 + OP_ADDR_OFFSET[idx] + off, encode30(op));
         return;
       }
@@ -1965,13 +1933,13 @@ export class DrvPlayer {
       }
       case target >= TARGET_ID.FM_SSG1 && target <= TARGET_ID.FM_SSG4: {
         const { idx, op } = opFor(TARGET_ID.FM_SSG1);
-        op.ssg = value & 0x0f;
+        op.ssg = clampReg(value, 0x0f);
         this._ym(port, 0x90 + OP_ADDR_OFFSET[idx] + off, op.ssg);
         return;
       }
       case target >= TARGET_ID.FM_AMEN1 && target <= TARGET_ID.FM_AMEN4: {
         const { idx, op } = opFor(TARGET_ID.FM_AMEN1);
-        op.amen = value & 0x01;
+        op.amen = clampReg(value, 0x01);
         this._ym(port, 0x60 + OP_ADDR_OFFSET[idx] + off, encode60(op));
         return;
       }
@@ -3067,6 +3035,7 @@ export class DrvPlayer {
       if (target === TARGET_ID.SNAP) return regs.snap;
       if (target === TARGET_ID.FM_FB) return regs.feedback;
       if (target === TARGET_ID.FM_ALG) return regs.algorithm;
+      if (target === TARGET_ID.PAN) return regs.pan ?? 0; // a sweep without :from, a + or a * starts from it
       if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
         return regs.ops[target - TARGET_ID.FM_TL1].voicedTl;
       // Op-param fields (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN, 0x16..0x3D), as

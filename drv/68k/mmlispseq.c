@@ -954,12 +954,12 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     return;
   }
   if (target == T_FM_FB) {
-    c->feedback = (uint8_t)(value & 7);
+    c->feedback = (uint8_t)clampi(value, 0, 7);
     ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
     return;
   }
   if (target == T_FM_ALG) {
-    c->algorithm = (uint8_t)(value & 7);
+    c->algorithm = (uint8_t)clampi(value, 0, 7);
     ym(s, port, (uint8_t)(0xb0 + off), enc_b0(c));
     return;
   }
@@ -968,8 +968,8 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     return;
   }
   if (target == T_FM_AMS || target == T_FM_FMS || target == T_PAN) {
-    if (target == T_FM_AMS) c->ams = (uint8_t)(value & 3);
-    else if (target == T_FM_FMS) c->fms = (uint8_t)(value & 7);
+    if (target == T_FM_AMS) c->ams = (uint8_t)clampi(value, 0, 3);
+    else if (target == T_FM_FMS) c->fms = (uint8_t)clampi(value, 0, 7);
     else c->pan = (int8_t)clampi(value, -1, 1);
     ym(s, port, (uint8_t)(0xb4 + off), enc_b4(c));
     return;
@@ -1000,26 +1000,26 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     o->tl = op_level(s, ch, idx, c->algorithm);
     ym(s, port, (uint8_t)(0x40 + oo), o->tl);
   } else if (OPRANGE(T_FM_AR1) || OPRANGE(T_FM_KS1)) {
-    if (OPRANGE(T_FM_AR1)) o->ar = (uint8_t)(value & 0x1f);
-    else o->rs = (uint8_t)(value & 3);
+    if (OPRANGE(T_FM_AR1)) o->ar = (uint8_t)clampi(value, 0, 0x1f);
+    else o->rs = (uint8_t)clampi(value, 0, 3);
     ym(s, port, (uint8_t)(0x50 + oo), (uint8_t)((o->rs << 6) | o->ar));
   } else if (OPRANGE(T_FM_DR1) || OPRANGE(T_FM_AMEN1)) {
-    if (OPRANGE(T_FM_DR1)) o->dr = (uint8_t)(value & 0x1f);
-    else o->amen = (uint8_t)(value & 1);
+    if (OPRANGE(T_FM_DR1)) o->dr = (uint8_t)clampi(value, 0, 0x1f);
+    else o->amen = (uint8_t)clampi(value, 0, 1);
     ym(s, port, (uint8_t)(0x60 + oo), enc_60(o));
   } else if (OPRANGE(T_FM_SR1)) {
-    o->d2r = (uint8_t)(value & 0x1f);
+    o->d2r = (uint8_t)clampi(value, 0, 0x1f);
     ym(s, port, (uint8_t)(0x70 + oo), (uint8_t)(o->d2r & 0x1f));
   } else if (OPRANGE(T_FM_RR1) || OPRANGE(T_FM_SL1)) {
-    if (OPRANGE(T_FM_RR1)) o->rr = (uint8_t)(value & 0x0f);
-    else o->sl = (uint8_t)(value & 0x0f);
+    if (OPRANGE(T_FM_RR1)) o->rr = (uint8_t)clampi(value, 0, 0x0f);
+    else o->sl = (uint8_t)clampi(value, 0, 0x0f);
     ym(s, port, (uint8_t)(0x80 + oo), enc_80(o));
   } else if (OPRANGE(T_FM_ML1) || OPRANGE(T_FM_DT1)) {
-    if (OPRANGE(T_FM_ML1)) o->mul = (uint8_t)(value & 0x0f);
+    if (OPRANGE(T_FM_ML1)) o->mul = (uint8_t)clampi(value, 0, 0x0f);
     else o->dt = (int8_t)value; /* signed -3..+3; enc_30 maps it to the register */
     ym(s, port, (uint8_t)(0x30 + oo), enc_30(o));
   } else if (OPRANGE(T_FM_SSG1)) {
-    o->ssg = (uint8_t)(value & 0x0f);
+    o->ssg = (uint8_t)clampi(value, 0, 0x0f);
     ym(s, port, (uint8_t)(0x90 + oo), o->ssg);
   }
 #undef OPRANGE
@@ -1067,6 +1067,7 @@ static int read_param(const MMLSeq *s, int ch, int target) {
     if (target == T_SNAP) return c->snap;
     if (target == T_FM_FB) return c->feedback;
     if (target == T_FM_ALG) return c->algorithm;
+    if (target == T_PAN) return c->pan; /* a sweep without :from, a + or a * starts from it */
     if (target >= T_FM_TL1 && target <= T_FM_TL1 + 3)
       return c->ops[target - T_FM_TL1].voiced_tl;
     if (target >= T_FM_AR1 && target <= T_FM_AMEN4) {
