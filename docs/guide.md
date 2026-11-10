@@ -2092,9 +2092,9 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   with its `:noise-rate`. The SSG's and the YM2413's volume column and
   macro are 3 dB steps, the rhythm's 0.75 dB.
 - **The DAC and the legacy sample mode.** A Genesis module's FM6 notes that
-  play samples go to `pcm1`, as `md` plays them. While the DAC plays, `fm6`
-  is the DAC's, so FM6's FM notes move to an `fm1`–`fm5` no channel takes,
-  or are left out (the log says which). A sample instrument's note plays
+  play samples go to `pcm1`, as `md` plays them. FM6's FM notes move to an
+  `fm1`–`fm5` no channel takes (the log says which), or else stay on `fm6`,
+  which they take in turn with the DAC's notes (language.md §16). A sample instrument's note plays
   its sample. In a DefleMask module, or a Furnace one of a format before
   239 (which Furnace converts the same way), `17xx` turns FM6's sample mode
   on and off, and a note plays sample 12 × bank + its place in the octave
@@ -2324,7 +2324,10 @@ them: a key-on starts a note, a key-off ends it.
   never an ADPCM-B note, the one melodic part — and the log counts the hits
   cut. A sample too long to bake into one 32 KB bank at its lowest pitch is
   cut to fit; pan is not imported (the DAC is one channel). With PCM in the
-  song, FM is offered fm1–fm5. On pc88 the YM2608's ADPCM-B is `pcm1`
+  song, FM is offered fm1–fm5; the YM2612's own FM6, which plays where the
+  song turns the DAC off, takes `fm6` in turn with the PCM when fm1–fm5 are
+  full, each PCM step ending where the song hands fm6 back. A song whose log
+  never turns the DAC on was on the DAC throughout: its FM6 is not read. On pc88 the YM2608's ADPCM-B is `pcm1`
   again: a note per key-on at its Δ-N's pitch, its level the register's as
   `:vol` (at `:vel 15`, as a mucom88 part K) and its pan the hit's — what the
   driver writes just after the key-on (level, pan, Δ-N) counts as the

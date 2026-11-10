@@ -453,7 +453,8 @@ export function defaultTrackerOptions(a, target = a.target ?? "md") {
     return { dest, phrases: true, bpm: null, target };
   }
   // The channel playing the DAC takes fm6, the DAC's (its FM notes move to
-  // a free fm1-fm5, trackerToMmlisp); no other channel is given it.
+  // a free fm1-fm5, else stay on fm6 in turn with the DAC: trackerToMmlisp);
+  // no other channel is given it.
   const dacCh = a.channels.find((c) => c.sampleNotes > 0 && c.kind !== "pcm");
   const fm = FM_DESTS.filter((f) => !(dacCh && f === "fm6"));
   const sqr = [...PSG_DESTS];
@@ -505,7 +506,9 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
   const taken = new Set();
   const used = [];
   // While the DAC plays (md's pcm1), fm6 is the DAC's: a part bound there
-  // moves to an fm1-fm5 no channel asked for, else its FM notes are left out.
+  // moves to an fm1-fm5 no channel asked for, else plays on fm6 between the
+  // DAC's notes (language.md §16) — FM6's own, whose sample and FM notes end
+  // each other; another channel's would meet them.
   const dacOn = onMd && a.channels.some((c) => c.sampleNotes > 0 && c.kind !== "pcm" && (dest[c.index] ?? "drop") !== "drop");
   const freeFm = () => FM_DESTS.filter((f) => f !== "fm6").find((f) => !taken.has(f) && !Object.values(dest).includes(f));
   for (const ch of a.channels) {
@@ -513,9 +516,10 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     if (d === "drop") continue;
     const fmNotes = ch.notes - (ch.sampleNotes ?? 0);
     if (dacOn && d === "fm6" && fmNotes > 0) {
-      d = freeFm() ?? null;
-      if (d) warnings.push(`${ch.name}: fm6 is the DAC — its FM notes on ${d}`);
-      else warnings.push(`${ch.name}: fm6 is the DAC and fm1-fm5 are taken — its ${fmNotes} FM notes are left out`);
+      const own = ch.sampleNotes > 0 && ch.kind !== "pcm";
+      d = freeFm() ?? (own ? "fm6" : null);
+      if (d && d !== "fm6") warnings.push(`${ch.name}: fm6 is the DAC — its FM notes on ${d}`);
+      else if (!d) warnings.push(`${ch.name}: fm6 is the DAC and fm1-fm5 are taken — its ${fmNotes} FM notes are left out`);
     }
     if (!d && !(ch.sampleNotes > 0)) continue;
     if (d && taken.has(d)) { warnings.push(`${ch.name}: ${d} is already taken — dropped`); continue; }

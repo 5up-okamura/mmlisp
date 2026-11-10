@@ -400,6 +400,21 @@ function dacDmf() {
   assert.deepEqual(bad(source), [], "the DAC score compiles clean");
 }
 
+// fm1-fm5 all asked for: FM6's FM notes stay on fm6, taking it in turn with
+// the DAC's (language.md §16) — its sample and FM notes end each other, so
+// they never meet.
+{
+  const t = await parseDmf(dacDmf());
+  const a = analyzeTracker(t);
+  const opt = defaultTrackerOptions(a, "md");
+  const dest = { ...opt.dest, 0: "fm1", 1: "fm2", 2: "fm3", 3: "fm4", 4: "fm5", 5: "fm6" };
+  const { source, warnings } = trackerToMmlisp(t, { ...opt, dest, fileName: "t.dmf" }, a);
+  assert.deepEqual(warnings.filter((w) => /fm6/.test(w)), [], "no FM note moved or left out");
+  assert.match(source, /\((?:def fm6-p00|fm6)\s+ins-fm[^)]*_ d \|\)/, "D-4 on fm6, after the DAC's notes");
+  const { diagnostics } = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) });
+  assert.deepEqual(diagnostics.filter((d) => d.severity === "error" || d.code === "W_TARGET").map((d) => d.code), [], "clean, and the DAC's notes meet no fm6 note");
+}
+
 // The level under a sounding note: Pulse 1's C-4 at 15 drops to 8 a row
 // on (no note there), and its D-4 slides down with 0A01, a quarter step a
 // frame — 1.5 a row of six frames, 8 to 5 over two rows. Pulse 2's C-4 at

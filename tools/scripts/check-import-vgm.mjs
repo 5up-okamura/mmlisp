@@ -12,7 +12,8 @@ import { renderVgm } from "../../live/src/export-vgm.js";
 import { parseVgm, analyzeVgm, decodeOki, decodeK053260, decodeC140, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from "../../live/src/import-vgm.js";
 import { assignBends } from "../../live/src/import-song.js";
 import { tapBeat, fitBeat, beatClock, timingLine, timingOfLine } from "../../live/src/import-timing.js";
-import { readImportSources, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
+import { readImportSources, compileScoreFile, buildMmb } from "../../drv/tools/mmb-build.mjs";
+import os from "node:os";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { targetProfile } from "../../live/src/targets.js";
 
@@ -1032,6 +1033,44 @@ for (const [start, phase] of [[1, 96], [2, 128], [5, 224], [6, null]]) {
   assert.equal(straight.tickOf(6000 + 200), 24, "a driver's frame off: on the grid");
   assert.equal(straight.tickOf(6000 + 2000) % 24 !== 0, true, "a groove: where it is");
   assert.deepEqual(timingOfLine(timingLine({ origin: 441, grid: 16, snap: 0, bar: 0, shuffle: [7, 6, 3, 4], gate: 1 }, 120)).shuffle, [7, 6, 3, 4], "a cycle in the comment");
+}
+
+// fm6 beside the YM2612's DAC (language.md §16): its notes where the song
+// turned the DAC off come back — on a free FM channel, else on fm6 itself,
+// each DAC step ending where fm6 takes the DAC, the score's $2B as the song's.
+{
+  const blip = path.join(ROOT, "drv/tests/blip.wav");
+  const bell = fs.readFileSync(path.join(ROOT, "drv/tests/m3-pcm-fm6-tie.mmlisp"), "utf8").match(/\(def-fm bell[^)]*\)/)[0];
+  const dacLog = (ir) => {
+    const log = new IRPlayer(() => {}).loadJSON(ir).captureRegisterLog();
+    return log.writes.filter((w) => w.port === 0 && (w.addr === 0x2b || (w.addr === 0x28 && (w.data & 7) === 6)))
+      .map((w) => `${w.sec.toFixed(2)} ${w.addr}=${w.data}`).join(" ");
+  };
+  for (const [name, others, fm6Dest] of [["beside", "(fm1 bell :oct 3 :len 2 c e g c)", "fm2"],
+    ["full", [1, 2, 3, 4, 5].map((n) => `(fm${n} bell :oct ${3 + (n > 2)} :len 2 c e g c)`).join("\n"), "fm6"]]) {
+    const file = path.join(os.tmpdir(), `mmlisp-vgm-fm6-${name}.mmlisp`);
+    fs.writeFileSync(file, `(def-pcm blip :file ${JSON.stringify(blip)})\n${bell}\n(pcm1 :tempo 120 :oct 4 :len 4 blip c _ c _ c _ c _)\n(fm6 bell :oct 5 :len 4 _ c _ e _ g _ c)\n${others}\n`);
+    const { ir, sampleBank, pcmEntryIds } = buildMmb(file, {});
+    fs.rmSync(file);
+    const pcm = { bank: sampleBank, entryIds: pcmEntryIds ?? {}, pcmVoices: ir.metadata.pcmVoices, frameHz: 60 };
+    const parsed = await parseVgm(new Uint8Array(renderVgm(new IRPlayer(() => {}).loadJSON(ir), {}, pcm).bytes));
+    const a = analyzeVgm(parsed);
+    const o = defaultVgmOptions(a, "md");
+    assert.equal(o.dest["YM2612 FM6"], fm6Dest, `${name}: FM6 beside the DAC on ${fm6Dest}`);
+    const { source } = vgmToMmlisp(parsed, { ...o, structure: true, fileName: "t.vgm" }, a);
+    const out = compileMMLisp(source, "t.mmlisp", { imports: readImportSources("t.mmlisp", source) });
+    assert.deepEqual(out.diagnostics.filter((d) => d.severity === "error" || d.code === "W_TARGET").map((d) => d.code), [], `${name}: no error, and the DAC's steps meet no fm6 note`);
+    const notesOn = (x, ch) => x.tracks.filter((t) => t.channel === ch).flatMap((t) => t.events).filter((e) => e.cmd === "NOTE_ON").length;
+    assert.equal(notesOn(out.ir, fm6Dest), notesOn(ir, "fm6"), `${name}: fm6's notes, every one`);
+    if (fm6Dest === "fm6") assert.equal(dacLog(out.ir), dacLog(ir), `${name}: the DAC taken and given back as the song does`);
+  }
+}
+// A YM2151 that fits keeps its own numbers on md, FM6 on fm6 with fm3 free:
+// only the YM2612's FM6 beside its DAC moves to a free channel.
+{
+  const { ir } = compileMMLisp("(def-score :target x68k)\n(fm1 :len 4 c e g c)\n(fm2 :len 4 e g c e)\n(fm6 :len 4 g c e g)\n", "t.mmlisp");
+  const a = analyzeVgm(await parseVgm(new Uint8Array(renderVgm(new IRPlayer(() => {}).loadJSON(ir), {}).bytes)));
+  assert.equal(defaultVgmOptions(a, "md").dest["YM2151 FM6"], "fm6", "the YM2151's FM6 on fm6");
 }
 
 console.log("VGM import checks passed");

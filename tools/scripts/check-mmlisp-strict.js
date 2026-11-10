@@ -357,6 +357,18 @@ async function main() {
       expected: ["W_TARGET"],
     },
     {
+      // pcm1 plays on beats 2, 4 and 5; the IR holds the loop's body once, so
+      // the note after it sits on beat 3 there, under fm6's note.
+      label: "fm6 and the PCM through a counted loop: read as they play",
+      src: '(def-pcm k :file "/k.wav")\n(pcm1 :len 4 k (x 2 _ c) c)\n(fm6 piano :len 4 _ _ e)',
+      expected: [],
+    },
+    {
+      label: "fm6 over a loop's second pass: said where they meet",
+      src: '(def-pcm k :file "/k.wav")\n(pcm1 :len 4 k (x 2 _ c) c)\n(fm6 piano :len 4 _ _ _ e)',
+      expected: ["W_TARGET"],
+    },
+    {
       label: "a ROM voice name plays everywhere",
       src: '(fm1 violin c)\n(def-score :target x68k)',
       expected: [],

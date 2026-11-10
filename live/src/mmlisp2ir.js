@@ -160,10 +160,18 @@ const isSongTarget = (t) => SONG_TARGETS.has(t) || /^VAL\d+$/.test(t ?? "");
 function warnSharedChannels(tracks, target, diagnostics) {
   for (const part of target.parts.filter((p) => p.sharesTaken)) {
     const taken = (c) => part.takes?.(c) || (!!part.claims && c?.part.kind === part.claims.kind && c.voice === part.claims.voice);
+    // Each note at the tick it plays: a counted loop's passes written out
+    // (an import's repeats fold into them).
+    const played = (t) => {
+      const copy = { events: t.events.slice() };
+      convertCountedJumps(copy);
+      return copy.events.some((e) => e.cmd === "LOOP_BEGIN") ? expandLoops(copy.events) : copy.events;
+    };
     const spans = (keep) => tracks.filter((t) => keep(t.scoreChannel ?? t.channel)).flatMap((t) =>
-      t.events.filter((e) => (e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON") && e.args?.length > 0)
+      played(t).filter((e) => (e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON") && e.args?.length > 0)
         .map((e) => ({ head: t.scoreChannel ?? t.channel, from: e.tick, to: e.tick + e.args.length })));
     const hits = spans((h) => target.partOf(h) === part);
+    if (!hits.length) continue;
     const fm = spans((h) => taken(target.channels[h]));
     const names = target.channelNames.filter((h) => taken(target.channels[h]));
     const shared = names.length > 1 ? `${names[0]}–${names[names.length - 1]}'s channels` : names[0];

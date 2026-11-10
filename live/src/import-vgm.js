@@ -133,6 +133,7 @@ const OPN_PRES = [24, 24, 72, 36], SSG_PRES = [0.5, 0.5, 2, 1];
 
 function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev, prescaled = false }) {
   let select = 2;
+  let fm6On = null; // FM6's last key-on event (the DAC taking it, write)
   const regs = [new Uint8Array(256), new Uint8Array(256)];
   const keyed = new Array(6).fill(false);
   let dac = false;
@@ -176,7 +177,19 @@ function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev, prescaled = f
     kinds: { fm: true },
     write(port, a, d, t) {
       if (port === 0 && a < 0x10) return ssg?.write(a, d, t);
-      if (port === 0 && a === 0x2b) { dac = !!(d & 0x80); return; }
+      // The DAC turned on takes fm6 (language.md §16): a note sounding there
+      // ends, as the score's next PCM note will take it from fm6's — and one
+      // keyed less than a frame before is no note (a driver's key-on as it
+      // hands fm6 to the DAC).
+      if (port === 0 && a === 0x2b) {
+        dac = !!(d & 0x80);
+        if (dac && channels > 5 && keyed[5]) {
+          if (fm6On && t - fm6On.t < RATE / 60) fm6On.kind = "unheard";
+          else ev(key(5), { t, kind: "off" });
+          keyed[5] = false;
+        }
+        return;
+      }
       if (prescaled && a >= 0x2d && a <= 0x2f) {
         select = a === 0x2f ? 0 : select | (a === 0x2d ? 2 : 1);
         divisor = OPN_PRES[select];
@@ -191,7 +204,9 @@ function opnChip(name, clock, divisor, { ssgDiv, channels = 6, ev, prescaled = f
         if (c === 5 && dac) return;
         if (on && !keyed[c]) {
           const v = voice(c);
-          ev(key(c), { t, kind: "on", pitch: pitchOf(hz(c)), voice: v, pan: v.pan, kindOf: "fm" });
+          const e = { t, kind: "on", pitch: pitchOf(hz(c)), voice: v, pan: v.pan, kindOf: "fm" };
+          ev(key(c), e);
+          if (c === 5) fm6On = e;
         } else if (!on && keyed[c]) ev(key(c), { t, kind: "off" });
         keyed[c] = on;
         return;
@@ -1468,7 +1483,7 @@ function rhythmChip() {
 /**
  * @returns {Promise<{ chips: string[], skipped: Map<string, number>, events: Map<key, ev[]>,
  *   kinds: Map<key, kind>, totalSamples, loopSample, title, author, game, system, dac: boolean,
- *   dacBank: Uint8Array, dacHits: [{t, offset, bytes, rate}],
+ *   dacBank: Uint8Array, dacHits: [{t, offset, bytes, rate}], dacOffs: [t] (the DAC turned off),
  *   pcmRoms: Map<blockType, Uint8Array>, pcmHits: [{t, src, ch, rom, start, end, loopStart, rate, db, pan, endT}] }>}
  */
 export async function parseVgm(bytes) {
@@ -1559,6 +1574,11 @@ export async function parseVgm(bytes) {
   // A hit's rate: its bytes over the time they took (a VGM waits whole
   // samples, so one gap alone reads 44100/k).
   let lastDirect = -Infinity, burst = null;
+  // The times the DAC was turned off ($2B, fm6 FM again), from the first
+  // time it was turned on (a log's start may write it off and play on): an
+  // fm6 note after one ends the hit's step there (dacTrack).
+  let dacWritten = null;
+  const dacOffs = [];
   const closeHit = () => {
     if (hit && hit.bytes > 1 && hit.last > hit.t)
       hits.push({ t: hit.t, offset: hit.offset, bytes: hit.bytes, rate: (RATE * (hit.bytes - 1)) / (hit.last - hit.t) });
@@ -1619,6 +1639,11 @@ export async function parseVgm(bytes) {
     if (c === 0x62) { t += 735; p++; continue; }
     if (c === 0x63) { t += 882; p++; continue; }
     if ((c & 0xf0) === 0x70) { t += (c & 15) + 1; p++; continue; }
+    if (c === 0x52 && u8[p + 1] === 0x2b) {
+      const on = !!(u8[p + 2] & 0x80);
+      if (!on && dacWritten) dacOffs.push(t);
+      if (on || dacWritten != null) dacWritten = on;
+    }
     // A new hit with no seek, the stream playing on from the bank (Revenge
     // of Shinobi's driver, its samples laid end to end): the driver turning
     // the DAC on again (2B), or a burst of bytes written straight to 2A — a
@@ -1872,9 +1897,12 @@ export async function parseVgm(bytes) {
     author = s[6] || s[7] || null;
   }
   const pcmHits = pcm.finish(end, roms);
+  // DAC hits in a log that never turns the DAC on (it was on before the log
+  // began): fm6 was the DAC throughout, its key-ons unheard.
+  if (hits.length && dacWritten == null) events.delete("YM2612 FM6");
   for (const [src, n] of pcm.lost) skipped.set(`${src} (the file carries no sample data for it)`, n);
   return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
-    dacBank: bank, dacHits: hits, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits, opllRhythmHits };
+    dacBank: bank, dacHits: hits, dacOffs, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits, opllRhythmHits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -2243,11 +2271,16 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
   const dests = vgmDests(targetName);
   // With PCM in the song, fm6 is the DAC: FM is offered fm1–fm5.
   // (The rhythm on the kit is PCM too.) Only the Mega Drive's: elsewhere
-  // the PCM has a part of its own.
+  // the PCM has a part of its own. The YM2612's own FM6 beside its DAC
+  // plays where the song turned the DAC off, so it alone may take fm6 in
+  // turn with the PCM (language.md §16) — where fm1–fm5 have no room.
   const pcmToo = targetProfile(targetName).hasPart("dac") && dests.pcm.length > 0 && a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm" ||
     (c.kind === "rhythm" && !dests.rhythm.length && dests.kit));
   const board = onBoard(targetProfile(targetName));
   const fm = dests.fm.filter((d) => !(pcmToo && d === "fm6") && board(d));
+  const kitToo = a.channels.some((c) => c.kind === "rhythm" && !dests.rhythm.length && dests.kit);
+  const sharesFm6 = (ch) => pcmToo && !kitToo && ch.key === "YM2612 FM6" && a.channels.some((c) => c.key === DAC_KEY)
+    && dests.fm.includes("fm6") && board("fm6");
   const sqr = dests.psg.filter(board);
   // A sample voice that is a wave channel's (the PC Engine's DDA) is the PCM's.
   const pcmOn = dests.pcm.slice(0, a.channels.some((c) => c.kind === "pcm" || c.kind === "chip-pcm") ? Math.max(1, a.pcmPoly ?? 1) : 0);
@@ -2277,6 +2310,7 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     const own = ch.kind === "opm" && opmFits ? `fm${ch.key.match(/\d+$/)?.[0]}` : expansion(target, ch.key);
     const pool = own && pools.find((l) => l.includes(own));
     if (ch.kind === "opm" && !fmNoise && ch.noisy === ch.notes) d = "drop";
+    else if (sharesFm6(ch)) d = "fm6";
     else if (pool) { d = own; pool.splice(pool.indexOf(own), 1); }
     // (A 4-op voice on the OPLL is the nearest ROM voice; on a tone or wave
     // channel its notes alone: play what can be played.)
@@ -2318,6 +2352,9 @@ export function defaultVgmOptions(a, targetName = a.target ?? "md") {
     else d = fm.shift() ?? sqr.shift() ?? "drop";
     dest[ch.key] = d;
   }
+  // The FM6 beside the DAC on an FM channel the others left free, sharing nothing.
+  const shared = sorted.find(sharesFm6);
+  if (shared && dest[shared.key] === "fm6" && fm.length) dest[shared.key] = fm.shift();
   // Two names on one physical channel (x68k's noise is fm8's fourth
   // operator): the FM channel keeps it, the noise is dropped.
   const fmVoices = new Set(Object.values(dest).filter((d) => dests.fm.includes(d)).map((d) => target.voiceKey(d)));
@@ -2829,10 +2866,6 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   const bends = assignBends([...tracks, ...rhythmOut].flatMap((tr) => tr.notes));
   rhythmOut.forEach(rhythmPre);
   const kitRhythm = rhythmOut.length > 0 && !dests.rhythm.length;
-  if (dacMix && (dacOut || chipOut || kitRhythm)) {
-    const fm6 = tracks.findIndex((tr) => tr.d === "fm6");
-    if (fm6 >= 0) { warnings.push(`${tracks[fm6].ch.key}: fm6 is the DAC in a score with PCM — dropped`); tracks.splice(fm6, 1); }
-  }
 
   songWrites(tracks, "envRate");
   songWrites(tracks, "noiseRate");
@@ -3104,8 +3137,23 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
     notes.push(note);
   }
   // A shot plays out whatever its length: a hit lasts to the next one (the
-  // last, its sample), so the track reads in steps, not in sample lengths.
-  notes.forEach((n, i) => { if (i + 1 < notes.length) n.len = notes[i + 1].tick - n.tick; });
+  // last, its sample), so the track reads in steps, not in sample lengths —
+  // or to where the song turned the DAC off for an fm6 note, which takes
+  // it there (language.md §16).
+  const fm6On = (parsed.events.get("YM2612 FM6") ?? []).filter((e) => e.kind === "on").map((e) => tickOf(e.t));
+  const offs = (parsed.dacOffs ?? []).map(tickOf);
+  let o = 0, f = 0; // (notes, offs and key-ons all in time order)
+  notes.forEach((n, i) => {
+    const next = notes[i + 1]?.tick ?? Infinity;
+    while (o < offs.length && offs[o] <= n.tick) o++;
+    let off = null;
+    for (let j = o; j < offs.length && offs[j] < next && off == null; j++) {
+      while (f < fm6On.length && fm6On[f] < offs[j]) f++;
+      if (f < fm6On.length && fm6On[f] < next) off = offs[j];
+    }
+    if (off != null) n.len = Math.max(1, off - n.tick);
+    else if (next < Infinity) n.len = next - n.tick;
+  });
   let cur = null;
   for (const n of notes) { if (n.state[0] !== cur) n.pre = [n.state[0]]; cur = n.state[0]; }
   const head = notes[0]?.pre ?? [];
