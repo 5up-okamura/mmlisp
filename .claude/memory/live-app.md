@@ -138,3 +138,16 @@ Open, in the order worth taking:
    forecast to take out — the `_pendingKeyOff` path is already the live
    form of one of them. A scaled macro (`:scale $slot`) still reads its
    slot when laid out, not per step.
+8. **A word's event is one rule** (`_word(ev, when, w)`): a value, a
+   `$slot`, `+`, `*`, a sweep, a stop — the same for every word on every
+   track; the track gives only the word, `{ read, write, sweep? }`
+   (`_fmWord` over `_readParam` / `_applyParam`, `_psgWord`, `_pcmWord`,
+   MASTER, the song's NOISE_RATE / ENV_RATE, a wave chip's LFO words).
+   `_applyParamSweep`, `_writeSongRate`'s value half and the per-kind
+   `PARAM_*` cases are gone, so a tone lane's every word takes `+` `*` and
+   a sweep (only :vol and :pitch did), and a PCM voice's :vol sweep runs
+   on through a `+` as the driver's does (it stopped; `check:loops` holds
+   the voice's fader to the driver now — the A/B gate does not see it).
+   Still on their own: the chips' sample tracks and `:target midi`
+   (`_chipPcmParam`'s lines, `_relativeLevel`) — they go with the level
+   component — and value slots (`_writeVal`, a sweep read by formula).

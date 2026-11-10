@@ -178,17 +178,17 @@
  "drv/tests/m2-vol-every-track.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "ae15206101601b8a",
-  "regs": "f77f4a52b5ce905d",
+  "regs": "3340a3710b9991a1",
   "mmb": "9dc4badc4de431c9",
-  "vgm": "d994a84ca9e63358",
+  "vgm": "716879c2d907b0cb",
   "mid": "f8680883453817e2"
  },
  "drv/tests/m2-vol-every-track.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "442f87f26d66c235",
-  "regs": "f77f4a52b5ce905d",
+  "regs": "3340a3710b9991a1",
   "mmb": "d0218aecf605d5d5",
-  "vgm": "688c162fe0a4db98",
+  "vgm": "f3c6978070932977",
   "mid": "8d7f9fb610f01314"
  },
  "drv/tests/m2-words-from-now.mmlisp": {

@@ -665,6 +665,8 @@ export class IRPlayer {
     this._laneLfoSync?.fill(false);
     this._fmKeyMask = new Array(FM_CHANNELS).fill(0); // each FM channel's key bits as last written (_fmKey)
     this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
+    this._pcmVelNow = null;
+    this._pcmPointNow = null;
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
     this._csmHold = false; // a rate rest stopped Timer A (driver.md §9)
@@ -3007,10 +3009,11 @@ export class IRPlayer {
     const midiMaster = target === "MASTER" && this._target?.name === "midi"; // its drums are sample tracks too
     if (target !== "VOL" && !midiMaster) return ev;
     const cur = midiMaster ? this._chipPcmParamAt("master", "vol", when)
-      // The Mega Drive's DAC voices keep their fader; a chip's sample track
-      // and a MIDI track, a line (_chipPcmParam).
-      : ev._route.part?.name === "dac" ? this._pcmVolNow?.[ev._chIndex ?? 0] ?? VOL_UNITY
+      // A chip's sample track and a MIDI track keep a line (_chipPcmParam);
+      // the Mega Drive's DAC voices read their own (_pcmWord).
+      : ev._route.part?.name === "dac" ? null
         : this._chipPcmParamAt(ev._trackIndex, "vol", when);
+    if (cur == null) return ev;
     const value = this._writeValue(ev, cur, when);
     return { ...ev, cmd: "PARAM_SET", args: { target: ev.args.target, value: Math.max(0, Math.min(31, value)) } };
   }
@@ -3063,16 +3066,14 @@ export class IRPlayer {
       const cur = this._waveLfo[lfoWord] ?? 0;
       const a = ev.args ?? {};
       if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
-      else if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP")
-        this._writeSongRate(ev, when, cur, (v, t) => {
+      else this._word(ev, when, {
+        read: () => this._waveLfo[lfoWord] ?? 0,
+        write: (v, t) => write((this._waveLfo[lfoWord] = Math.round(v)), t),
+        sweep: () => this._sweepUnits(ev, when, cur, (v, t) => {
           // A sweep's step is a score write of the word at its own time.
-          if (ev.cmd === "PARAM_SWEEP" && !this._scoreWrites(String(ev.args.target).toUpperCase())) return;
-          write((this._waveLfo[lfoWord] = v), t);
-        });
-      else {
-        const v = this._writeValue(ev, cur, when);
-        if (v != null) write((this._waveLfo[lfoWord] = Math.round(v)), when);
-      }
+          if (this._scoreWrites(String(ev.args.target).toUpperCase())) write((this._waveLfo[lfoWord] = v), t);
+        }),
+      });
       return;
     }
     if (core === "none") return; // a MIDI channel's: its sound is the MIDI output's
@@ -3343,40 +3344,14 @@ export class IRPlayer {
         break;
       }
 
-      case "PARAM_SET": {
-        this._applyParam(ch, ev, when);
-        break;
-      }
-
-      // A `$slot` write (§8). Resolved at dispatch time; with the Web Audio
-      // look-ahead this trails live setVal() by the scheduler window —
-      // acceptable for the reference player (the driver reads the slot as the
-      // event runs).
-      case "PARAM_FROM_VAL": {
-        const value = this._resolveSrc(ev.args?.src, when);
-        this._applyParam(
-          ch,
-          { cmd: ev.cmd, args: { target: ev.args?.target, value }, _trackIndex: ev._trackIndex },
-          when,
-        );
-        break;
-      }
+      // A word, every way it is written (_word).
+      case "PARAM_SET":
+      case "PARAM_FROM_VAL":
       case "PARAM_ADD":
-      case "PARAM_MUL": {
-        const target = ev.args?.target;
-        const value = this._writeValue(ev, this._readParam(ch, target, this._fm3OpOf(ev)), when);
-        this._applyParam(ch, { cmd: ev.cmd, args: { target, value }, _trackIndex: ev._trackIndex }, when);
-        break;
-      }
-
-      case "PARAM_SWEEP": {
-        this._applyParamSweep(ch, ev, when);
-        break;
-      }
-
-      // A stop frees its word's slot (_freeSlot): the word stays where the
-      // sweep left it.
+      case "PARAM_MUL":
+      case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._fmWord(ch, ev));
         break;
 
       case "CSM_RATE": {
@@ -3441,20 +3416,15 @@ export class IRPlayer {
       case "PCM_NOTE_OFF":
         this._pcmEv(when, { kind: ev.args?.mode === "gate" ? "cut" : "off", voice });
         break;
+      // A word, every way it is written (_word).
       case "PARAM_SET":
-        this._applyPcmParam(voice, ev.args, when);
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
+      case "PARAM_SWEEP":
+      case "PARAM_SWEEP_STOP":
+        this._word(ev, when, this._pcmWord(voice, String(ev.args?.target ?? "").toUpperCase()));
         break;
-      case "PARAM_FROM_VAL": {
-        const value = this._resolveSrc(ev.args?.src, when);
-        this._applyPcmParam(voice, { target: ev.args?.target, value }, when);
-        break;
-      }
-      case "PARAM_SWEEP": {
-        const target = (ev.args?.target ?? "").toUpperCase();
-        if (PCM_POINT_TARGETS.has(target)) this._schedulePcmLoopSweep(voice, ev, when);
-        else if (target === "VOL") this._schedulePcmVolSweep(voice, ev, when);
-        break;
-      }
       default:
         break;
     }
@@ -3479,37 +3449,38 @@ export class IRPlayer {
     return Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(sec ?? 0) * rate)));
   }
 
-  // A :vol sweep on a PCM voice: the fader stepped a frame at a time, as the
-  // driver's sweep engine steps the voice's bank (driver.md §14), from where
-  // it is unless the sweep names a :from, to the track's next :vol write.
-  _schedulePcmVolSweep(voice, ev, when) {
-    this._sweepWord(ev, when, this._pcmVolNow?.[voice] ?? VOL_UNITY, (value, t) => {
-      const v = Math.max(0, Math.min(31, Math.round(value)));
-      if (this._pcmVolNow?.[voice] !== v) this._pcmEv(t, { kind: "vol", voice, value: v });
-      (this._pcmVolNow ??= [])[voice] = v;
-    });
-  }
-
-  _applyPcmParam(voice, args, when) {
-    const target = (args?.target ?? "").toUpperCase();
-    const value = args?.value ?? 0;
-    if (target === "VOL") (this._pcmVolNow ??= [])[voice] = value;
+  // A PCM voice's word (the Mega Drive's): its fader — a sweep steps the
+  // voice's bank a frame at a time, as the driver's sweep engine does
+  // (driver.md §14), written where it moves — its :vel, and its sample's
+  // points; null for the words only FM and PSG have.
+  _pcmWord(voice, target) {
     if (target === "VOL" || target === "VEL") {
-      this._pcmEv(when, { kind: target === "VOL" ? "vol" : "vel", voice, value });
-    } else if (PCM_POINT_TARGETS.has(target)) {
-      this._pcmEv(when, { kind: "point", voice, target, value: this._pcmLoopBytes(value) });
+      const now = target === "VOL" ? (this._pcmVolNow ??= []) : (this._pcmVelNow ??= []);
+      const kind = target === "VOL" ? "vol" : "vel";
+      const fit = (v) => Math.max(0, Math.min(target === "VOL" ? 31 : 15, Math.round(v)));
+      const read = () => now[voice] ?? (target === "VOL" ? VOL_UNITY : 15);
+      const write = (v, t) => this._pcmEv(t, { kind, voice, value: (now[voice] = fit(v)) });
+      return {
+        read, write,
+        sweep: (ev, when) => this._sweepWord(ev, when, read(), (v, t) => { if (now[voice] !== fit(v)) write(v, t); }),
+      };
     }
-    // everything else is FM/PSG-only
+    if (PCM_POINT_TARGETS.has(target)) return {
+      read: () => this._pcmPointNow?.[`${voice}:${target}`] ?? 0,
+      write: (v, t) => {
+        (this._pcmPointNow ??= {})[`${voice}:${target}`] = v;
+        this._pcmEv(t, { kind: "point", voice, target, value: this._pcmLoopBytes(v) });
+      },
+      sweep: (ev, when) => this._schedulePcmLoopSweep(voice, ev, when),
+    };
+    return null;
   }
 
-  // The SSG's noise period (NOISE_RATE) and envelope rate (ENV_RATE),
-  // song-wide like LFO_RATE: a value, or a sweep stepped a frame at a time as
-  // the driver's sweeps are, written when it moves and running to the
-  // track's next write of it (its budget, as every sweep's).
-  // `scale`: the sweep's steps a whole value's fraction (ENV_RATE's Hz).
-  _writeSongRate(ev, when, start, write, scale = 1) {
-    if (ev.cmd === "PARAM_SET") write(Number(ev.args?.value ?? start), when);
-    if (ev.cmd !== "PARAM_SWEEP") return;
+  // A sweep counted in a word's own units (the SSG's noise period and
+  // envelope rate, a pulse's duty, a wave chip's LFO): the driver's integer
+  // steps, the word written where it moves.
+  // `scale`: the steps a whole value's fraction (ENV_RATE's Hz).
+  _sweepUnits(ev, when, start, write, scale = 1) {
     const a = ev.args ?? {};
     const df = this._curveFields(a, when);
     const from = Math.round(Number(df.from ?? start) * scale), to = Math.round(Number(df.to ?? from / scale) * scale);
@@ -4320,22 +4291,32 @@ export class IRPlayer {
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP": {
         if (ev.args?.target === "NOISE_RATE") {
-          if (ev.cmd === "PARAM_SET") this._noiseRateBase = Number(ev.args?.value ?? 9);
-          this._writeSongRate(ev, when, 9, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v), "noiseRate"), t));
+          const write = (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v), "noiseRate"), t);
+          this._word(ev, when, {
+            read: () => this._noiseRateBase ?? 9,
+            write: (v, t) => write((this._noiseRateBase = v), t),
+            sweep: () => this._sweepUnits(ev, when, 9, write),
+          });
           return true;
         }
         if (ev.args?.target === "ENV_RATE") {
           // 0 follows the writing track's notes (a tone lane's), from its
           // next; a rate is a cycle of the writing track's shape as it is now.
           const lane = this._toneEnc[ev._psgCh]?.part?.songWords?.("ENV_RATE") ? ev._psgCh : null;
-          if (ev.cmd === "PARAM_SET" && !Number(ev.args?.value)) {
-            this._envFollow = this._toneEnc[lane]?.part?.kind !== "noise" ? lane : null;
-            return true;
-          }
-          this._envFollow = null;
           // The writing lane's shape and moves, as they are now.
           const by = lane != null ? { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] } : {};
-          this._writeSongRate(ev, when, 0, (v, t) => this._writeEnvPeriod(v, by, t), 64);
+          this._word(ev, when, {
+            read: () => this._envRate ?? 0,
+            write: (v, t) => {
+              this._envRate = v;
+              this._envFollow = v ? null : this._toneEnc[lane]?.part?.kind !== "noise" ? lane : null;
+              if (v) this._writeEnvPeriod(v, by, t);
+            },
+            sweep: () => {
+              this._envFollow = null;
+              this._sweepUnits(ev, when, 0, (v, t) => this._writeEnvPeriod((this._envRate = v), by, t), 64);
+            },
+          });
           return true;
         }
         const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
@@ -4864,15 +4845,16 @@ export class IRPlayer {
         // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
         // F-number alone (driver.md §13.4).
         const op = this._fm3OpOf(ev);
+        const cents = Math.round(value);
         if (op) {
           const st = this._fm3Op[op - 1];
-          st.offset = value;
-          this._writeFm3OpPitch(op, st.midi, value, when);
+          st.offset = cents;
+          this._writeFm3OpPitch(op, st.midi, cents, when);
           break;
         }
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
-        regs.pitchOffset = value;
-        this._writeFmNote(ch, regs.currentMidi ?? 60, value, when);
+        regs.pitchOffset = cents;
+        this._writeFmNote(ch, regs.currentMidi ?? 60, cents, when);
         break;
       }
       case "SNAP": {
@@ -5659,41 +5641,29 @@ export class IRPlayer {
     return gaps;
   }
 
-  // A sweep written on an FM track (MASTER's from any): each word's step is
-  // its write.
-  _applyParamSweep(ch, ev, when) {
-    const target = (ev.args?.target ?? "").toUpperCase();
-    const op = this._fm3OpOf(ev);
-    if (target === "MASTER")
-      return void this._sweepWord(ev, when, this._masterVol ?? VOL_UNITY, (v, t) => this._applyMasterChange(v, t));
-    const cur = this._readParam(ch, target, op);
-    // NOTE_PITCH: the channel's offset — on an fm3-N track that operator's
-    // alone (driver.md §13.4) — on the note sounding then.
-    if (target === "NOTE_PITCH") {
-      const opState = op ? this._fm3Op[op - 1] : null;
-      return void this._sweepWord(ev, when, cur, (v, t) => {
-        const cents = Math.round(v);
-        if (opState) {
-          opState.offset = cents;
-          this._writeFm3OpPitch(op, opState.midi, cents, t);
-        } else {
-          this._chRegs[ch].pitchOffset = cents;
-          this._writeFmNote(ch, this._chRegs[ch].currentMidi ?? 60, cents, t);
-        }
-      });
-    }
-    // VOL: the fader — an fm3-N track's is that operator's, the shared
-    // (fm3 …) track's the group's over all four (§13.4, _lvWrite).
-    if (target === "VOL") {
-      const site = op ? `fm3op:${op}` : `fm:${ch}`;
-      return void this._sweepWord(ev, when, cur, (v, t) => {
-        this._lvSetVol(site, v);
-        this._lvWrite(site, t);
-      });
-    }
-    // Any other word: its write (_applyParam).
-    this._sweepWord(ev, when, cur, (v, t) =>
-      this._applyParam(ch, { cmd: "PARAM_SET", args: { target, value: v }, _trackIndex: ev._trackIndex }, t));
+  // A word's event, whatever track writes it and whatever the word: a value
+  // or a `$slot` (written), a `+` or a `*` (from the word as it is now), a
+  // sweep (from where it is unless it names a :from, a step a frame), a stop
+  // (its slot is freed, _freeSlot: the word stays where the sweep left it).
+  // `w` is the word on that track — { read(), write(v, t) }, and `sweep`
+  // where its sweep counts in units of its own — or null where the track
+  // has no such word.
+  _word(ev, when, w) {
+    if (!w || ev.cmd === "PARAM_SWEEP_STOP") return;
+    if (ev.cmd === "PARAM_SWEEP")
+      return void (w.sweep ? w.sweep(ev, when) : this._sweepWord(ev, when, w.read(), w.write));
+    const v = this._writeValue(ev, w.read(), when);
+    if (v != null && Number.isFinite(v)) w.write(v, when);
+  }
+
+  // An FM channel's word (an fm3-N track's: that operator's where it has
+  // its own, driver.md §13.4): _readParam and _applyParam.
+  _fmWord(ch, ev) {
+    const target = String(ev.args?.target ?? "").toUpperCase();
+    return {
+      read: () => this._readParam(ch, target, this._fm3OpOf(ev)),
+      write: (value, t) => this._applyParam(ch, { ...ev, cmd: "PARAM_SET", args: { target, value } }, t),
+    };
   }
 
   // A song LFO word's route into a wave chip with an LFO of its own: the
@@ -6265,10 +6235,10 @@ export class IRPlayer {
   // the master now, a sweep (from the master now unless it names a :from),
   // a stop (its slot freed, the master stays where the sweep left it).
   _masterEvent(ev, when) {
-    if (ev.cmd === "PARAM_SWEEP") return this._applyParamSweep(0, ev, when);
-    if (ev.cmd === "PARAM_SWEEP_STOP") return;
-    const v = this._writeValue(ev, this._masterVol ?? VOL_UNITY, when);
-    if (v != null && Number.isFinite(v)) this._applyMasterChange(v, when);
+    this._word(ev, when, {
+      read: () => this._masterVol ?? VOL_UNITY,
+      write: (v, t) => this._applyMasterChange(v, t),
+    });
   }
 
   // A sweep holds a slot, as the driver's do (driver.md §4 step 3): a
@@ -6483,118 +6453,142 @@ export class IRPlayer {
         break;
       }
 
-      // A `+` or a `*` of a lane's word, from where it is.
-      case "PARAM_ADD":
-      case "PARAM_MUL": {
-        const target = String(ev.args?.target ?? "").toUpperCase();
-        const cur = target === "VOL" ? this._lv(`psg:${psgCh}`).vol
-          : target === "NOTE_PITCH" ? this._psgPitchOffset[psgCh] ?? 0
-          : null;
-        if (cur != null)
-          this._dispatchPsgEvent({ ...ev, cmd: "PARAM_SET", args: { target, value: this._writeValue(ev, cur, when) } }, when);
-        break;
-      }
-
-      // A `$slot` write lands as the PARAM_SET of the slot's value (as the FM
-      // path's does).
-      case "PARAM_FROM_VAL":
-        this._dispatchPsgEvent(
-          { ...ev, cmd: "PARAM_SET", args: { target: ev.args?.target, value: this._resolveSrc(ev.args?.src, when) } },
-          when,
-        );
-        break;
-
+      // A word, every way it is written (_word).
       case "PARAM_SET":
-      case "PARAM_SWEEP": {
-        const psgTarget = (ev.args?.target ?? "").toUpperCase();
-        if (psgTarget === "SNAP") {
-          // Sticky mask (language.md §5.3); the sounding note moves onto it.
-          this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, Math.round(Number(ev.args?.value) || 0)));
-          if (!this._isNoiseLane(psgCh))
-            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, when);
-        } else if (psgTarget === "VOL") {
-          if (ev.cmd === "PARAM_SET") {
-            // The fader: a keyed lane's level moves with it now (an idle
-            // one's would drone a tone; its next note composes from it).
-            this._lvSetVol(`psg:${psgCh}`, ev.args?.value ?? VOL_UNITY);
-            if (this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
-          } else {
-            // A sweep of the fader: a keyed lane's level moves with each step.
-            const site = `psg:${psgCh}`;
-            this._sweepWord(ev, when, this._lv(site).vol, (v, t) => {
-              this._lvSetVol(site, v);
-              if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
-            });
-          }
-        } else if (psgTarget === "SSG_ENV") {
-          // The lane's level on the envelope (a shape), or its own (-1): a
-          // sounding note changes over now; the shape starts at its key-on.
-          const shape = Math.round(Number(ev.args?.value ?? -1));
-          this._psgEnv[psgCh] = shape < 0 ? -1 : Math.min(15, shape);
-          if (this._psgSounding[psgCh] && this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
-        } else if (psgTarget === "ENV_SEMI" || psgTarget === "ENV_DETUNE") {
-          // The lane's moves on its envelope's period: a period following
-          // its notes moves now, a rate it writes at its next write.
-          const v = Math.round(Number(ev.args?.value ?? 0));
-          (psgTarget === "ENV_SEMI" ? this._envSemi : this._envDetune)[psgCh] = v;
-          if (this._envFollow === psgCh && this._psgHz[psgCh] > 0)
-            this._writeEnvPeriod(this._psgHz[psgCh], this._envBy(psgCh), when);
-        } else if (psgTarget === "SSG_MIX") {
-          // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
-          this._ssgMixBase[psgCh] = Math.round(ev.args?.value ?? 0);
-          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], when)), when);
-        } else if (psgTarget === "LFO_SYNC") {
-          // :lfo-sync: the lane's key-ons start the chip's LFO over.
-          this._laneLfoSync[psgCh] = Number(ev.args?.value ?? 0) >= 0.5;
-        } else if (psgTarget === "FM_FMS") {
-          // Channel 1 taking the wave chip's LFO (chips/huc6280.js).
-          this._psgWrites(this._lane(psgCh, (e, ch) => e.lfo?.(ch, Number(ev.args?.value ?? 0)) ?? []), when);
-        } else if (psgTarget === "DUTY") {
-          // A pulse's duty in sixteenths, a value or a sweep a frame at a
-          // time; the encoder takes the nearest the chip has.
-          this._writeSongRate(ev, when, this._psgDuty[psgCh] ?? 8, (v, t) => this._psgSetDuty(psgCh, v, t));
-        } else if (psgTarget === "PAN") {
-          // A channel's own pan (the PC Engine's $05): a value, or a sweep a
-          // frame at a time, on the encoder's fifteenths of a side.
-          this._writeSongRate(ev, when, this._psgPan[psgCh], (v, t) => this._psgSetPan(psgCh, v, t), 15);
-        } else if (psgTarget === "WAVE") {
-          // A wave channel's def-wave (metadata.waves): its memory written
-          // whole (chips/k051649.js — channels 4 and 5 share one). A wave
-          // expression with a $slot (`expr`) is written now and again in
-          // each frame its slots have moved (_waveExprFrames).
-          this._laneExpr[psgCh] = null;
-          if (ev.args?.expr) {
-            this._laneWave[psgCh] = null;
-            const slots = [...waveSlots(ev.args.expr)];
-            const vals = slots.map((n) => this._resolveSrc(n, when));
-            this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals, nextFrame: this._eventFrame(when) + 1 };
-            this._writeWaveExpr(psgCh, when);
-          }
-          if (!ev.args?.expr) this._writeLaneWaveIndex(psgCh, ev.args?.value ?? -1, when);
-        } else if (psgTarget === "NOISE_MODE") {
-          // Update the persistent noise mode. Re-asserted on every noise NOTE_ON;
-          // if the channel is currently sounding, take effect immediately.
-          this._psgNoiseMode = this._snapMacroOutput(
-            "NOISE_MODE",
-            ev.args?.value ?? 0,
-          );
-          if (this._psgSounding[psgCh]) {
-            this._psgSetNoiseCfg(this._psgNoiseMode, when, psgCh);
-          }
-        } else if (psgTarget === "NOTE_PITCH") {
-          // The lane's offset: a value, or a sweep on the note sounding then.
-          const pitch = (cents, t) => {
-            this._psgPitchOffset[psgCh] = cents;
-            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, cents, t);
-          };
-          if (ev.cmd === "PARAM_SET") pitch(Number(ev.args?.value ?? 0), when);
-          else this._sweepWord(ev, when, this._psgPitchOffset[psgCh] ?? 0, (v, t) => pitch(Math.round(v), t));
+      case "PARAM_FROM_VAL":
+      case "PARAM_ADD":
+      case "PARAM_MUL":
+      case "PARAM_SWEEP":
+      case "PARAM_SWEEP_STOP":
+        // A wave expression with a $slot (`expr`) is written now and again
+        // in each frame its slots have moved (_waveExprFrames).
+        if (ev.args?.expr && String(ev.args.target).toUpperCase() === "WAVE") {
+          this._laneWave[psgCh] = null;
+          const slots = [...waveSlots(ev.args.expr)];
+          const vals = slots.map((n) => this._resolveSrc(n, when));
+          this._laneExpr[psgCh] = { tree: ev.args.expr, slots, vals, nextFrame: this._eventFrame(when) + 1 };
+          this._writeWaveExpr(psgCh, when);
+          break;
         }
+        this._word(ev, when, this._psgWord(psgCh, String(ev.args?.target ?? "").toUpperCase()));
         break;
-      }
 
       default:
         break;
+    }
+  }
+
+  // A tone lane's word: where it is read and how it is written, or null
+  // where the lane has none by that name.
+  _psgWord(psgCh, target) {
+    const int = (v) => Math.round(Number(v) || 0);
+    switch (target) {
+      // Sticky mask (language.md §5.3); the sounding note moves onto it.
+      case "SNAP": return {
+        read: () => this._psgSnap[psgCh] ?? 0,
+        write: (v, t) => {
+          this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, int(v)));
+          if (!this._isNoiseLane(psgCh))
+            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, t);
+        },
+      };
+      // The fader: a keyed lane's level moves with it now (an idle one's
+      // would drone a tone; its next note composes from it).
+      case "VOL": return {
+        read: () => this._lv(`psg:${psgCh}`).vol,
+        write: (v, t) => {
+          this._lvSetVol(`psg:${psgCh}`, v);
+          if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
+        },
+      };
+      // The lane's level on the envelope (a shape), or its own (-1): a
+      // sounding note changes over now; the shape starts at its key-on.
+      case "SSG_ENV": return {
+        read: () => this._psgEnv[psgCh] ?? -1,
+        write: (v, t) => {
+          const shape = Math.round(Number(v));
+          this._psgEnv[psgCh] = !(shape >= 0) ? -1 : Math.min(15, shape);
+          if (this._psgSounding[psgCh] && this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
+        },
+      };
+      // The lane's moves on its envelope's period: a period following its
+      // notes moves now, a rate it writes at its next write.
+      case "ENV_SEMI":
+      case "ENV_DETUNE": {
+        const of = target === "ENV_SEMI" ? this._envSemi : this._envDetune;
+        return {
+          read: () => of[psgCh] ?? 0,
+          write: (v, t) => {
+            of[psgCh] = int(v);
+            if (this._envFollow === psgCh && this._psgHz[psgCh] > 0)
+              this._writeEnvPeriod(this._psgHz[psgCh], this._envBy(psgCh), t);
+          },
+        };
+      }
+      // The SSG channel's mixer: tone, noise or both (chips/ssg.js).
+      case "SSG_MIX": return {
+        read: () => this._ssgMixBase[psgCh] ?? 0,
+        write: (v, t) => {
+          this._ssgMixBase[psgCh] = int(v);
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix(ch, this._ssgMixBase[psgCh], t)), t);
+        },
+      };
+      // :lfo-sync: the lane's key-ons start the chip's LFO over.
+      case "LFO_SYNC": return {
+        read: () => (this._laneLfoSync[psgCh] ? 1 : 0),
+        write: (v) => { this._laneLfoSync[psgCh] = Number(v) >= 0.5; },
+      };
+      // Channel 1 taking the wave chip's LFO (chips/huc6280.js).
+      case "FM_FMS": return {
+        read: () => this._laneFms?.[psgCh] ?? 0,
+        write: (v, t) => {
+          (this._laneFms ??= [])[psgCh] = Number(v);
+          this._psgWrites(this._lane(psgCh, (e, ch) => e.lfo?.(ch, Number(v)) ?? []), t);
+        },
+      };
+      // A pulse's duty in sixteenths; the encoder takes the nearest the
+      // chip has. Its sweep steps in the driver's integers.
+      case "DUTY": {
+        const read = () => this._psgDuty[psgCh] ?? 8;
+        const write = (v, t) => this._psgSetDuty(psgCh, v, t);
+        return { read, write, sweep: (ev, when) => this._sweepUnits(ev, when, read(), write) };
+      }
+      // A channel's own pan (the PC Engine's $05), its sweep on the
+      // encoder's fifteenths of a side.
+      case "PAN": {
+        const read = () => this._psgPan[psgCh];
+        const write = (v, t) => this._psgSetPan(psgCh, v, t);
+        return { read, write, sweep: (ev, when) => this._sweepUnits(ev, when, read(), write, 15) };
+      }
+      // A wave channel's def-wave (metadata.waves): its memory written
+      // whole (chips/k051649.js — channels 4 and 5 share one).
+      case "WAVE": return {
+        read: () => this._laneWaveAt?.[psgCh] ?? -1,
+        write: (v, t) => {
+          this._laneExpr[psgCh] = null;
+          (this._laneWaveAt ??= [])[psgCh] = v;
+          this._writeLaneWaveIndex(psgCh, v, t);
+        },
+      };
+      // The persistent noise mode, re-asserted on every noise NOTE_ON; a
+      // sounding channel takes it now.
+      case "NOISE_MODE": return {
+        read: () => this._psgNoiseMode,
+        write: (v, t) => {
+          this._psgNoiseMode = this._snapMacroOutput("NOISE_MODE", v);
+          if (this._psgSounding[psgCh]) this._psgSetNoiseCfg(this._psgNoiseMode, t, psgCh);
+        },
+      };
+      // The lane's offset, on the note sounding then.
+      case "NOTE_PITCH": return {
+        read: () => this._psgPitchOffset[psgCh] ?? 0,
+        write: (v, t) => {
+          const cents = Math.round(v);
+          this._psgPitchOffset[psgCh] = cents;
+          this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, cents, t);
+        },
+      };
+      default: return null;
     }
   }
 

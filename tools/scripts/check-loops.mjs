@@ -7,6 +7,7 @@
 //
 //   cd tools && npm run check:loops
 //
+// (A PCM voice's fader is compared the same way: the A/B gate does not see it.)
 // Each case plays six seconds on both (the preview on a clock stepped by
 // hand, as Live runs it) and compares a register's value frame by frame,
 // a frame's slack either way.
@@ -22,7 +23,11 @@ function parts(src, port, addr) {
   if (errs.length) throw new Error(errs.map((d) => d.message).join("; "));
   const w = [];
   const ctx = { currentTime: 10, state: "running", resume() {} };
-  const p = new IRPlayer((pt, a, d, when) => { if (typeof pt !== "object" && pt === port && a === addr) w.push([when ?? ctx.currentTime, d]); });
+  // port "pcm": a PCM voice's fader (addr the voice), the preview's event against the driver's voice.
+  const p = new IRPlayer((pt, a, d, when) => {
+    if (typeof pt === "object") { if (port === "pcm" && pt.type === "pcm-ev" && pt.kind === "vol" && pt.voice === addr) w.push([pt.when, pt.value]); }
+    else if (pt === port && a === addr) w.push([when ?? ctx.currentTime, d]);
+  });
   p.loadJSON(ir);
   p.play(ctx);
   for (let t = 10; t < 10 + SECS + 0.5; t += 0.01) {
@@ -36,7 +41,12 @@ function parts(src, port, addr) {
   const irAt = (f) => { let v = null; for (const [t, d] of w) { if (Math.round((t - 10.05) * 60) > f) break; v = d; } return v; };
   const d = new DrvPlayer();
   d.loadMMB(encodeMmb(ir).bytes);
-  const dw = d.captureRegisterLog({ maxFrames: SECS * 60 + 5 }).writes.filter((x) => x.port === port && x.addr === addr);
+  let dw;
+  if (port === "pcm") {
+    dw = [];
+    d.play?.();
+    for (let f = 0; f < SECS * 60 + 5; f++) { d.stepFrame(); dw.push({ frame: f, data: d._pcmVoices[addr].vol }); }
+  } else dw = d.captureRegisterLog({ maxFrames: SECS * 60 + 5 }).writes.filter((x) => x.port === port && x.addr === addr);
   const drvAt = (f) => { let v = null; for (const x of dw) { if (x.frame > f) break; v = x.data; } return v; };
   let n = 0;
   for (let f = 2; f <= SECS * 60; f++) if (irAt(f - 1) !== drvAt(f) && irAt(f) !== drvAt(f) && irAt(f + 1) !== drvAt(f)) n++;
@@ -52,6 +62,8 @@ const CASES = [
   ["a :master sweep on another track's loop", `(fm1 :tempo 120 :len 4 #top c c (go top))\n(fm2 :len 4 #top :master (linear 31..8 :len 2/1) c c c (go top))`, TL4],
   ["a register word's sweep in the loop", `(fm1 :tempo 120 :len 4 #top :fb (linear 0..7 :len 2/1) c c (go top))`, FB],
   ["a pitch sweep from before the loop", `(fm1 :tempo 120 :len 4 :pitch (linear 0..300 :len 2/1) #top c c (go top))`, FNUM],
+  ["a PCM voice's :vol sweep runs on through a + and a *", `(def-val m 12 0..31 :public)\n(def-pcm pad :file "pad.wav")\n(pcm1 pad :tempo 120 :vol 20 :len 4 c :vol (linear :to 4 :len 1/1) c c c :vol+ 5 c c :vol* 1.5 c :vol $m c)`, ["pcm", 0]],
+  ["a PCM voice's :vol sweep in its loop", `(def-pcm pad :file "pad.wav")\n(pcm1 pad :tempo 120 :len 4 #top :vol (linear 31..4 :len 2/1) c c (go top))`, ["pcm", 0]],
   ["a glide in the loop", `(fm1 :tempo 120 :len 4 #top c (glide 8) e g (go top))`, FNUM],
 ];
 let failed = 0;
