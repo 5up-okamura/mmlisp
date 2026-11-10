@@ -135,7 +135,8 @@ shows the score's value, a held one is the panel's through the score's
 sweeps and macros, one let go stays until the score next writes it). `check:words`
 writes every word every way (a value, `+` `*` `$slot`, sweeps) on every kind
 of Mega Drive track and holds the preview to MMLispDRV there — a word is one
-rule whatever track writes it. To write or
+rule whatever track writes it; `check:loops` holds it there over several
+passes of a track's loop, which the A/B gate's one pass does not. To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
 docs and snippets, and — with Tools > Connect to AI on — edits and plays the

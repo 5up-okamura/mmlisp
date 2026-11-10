@@ -118,3 +118,14 @@ Open, in the order worth taking:
 6. `check:words` (tools/scripts/probe-words.mjs) is the probe: every word
    every way on every kind of Mega Drive track against the driver. 0 cases
    part. A new word or way of writing goes into its tables first.
+7. **A sweep is one step of frame work at a time** (`_runSweep`,
+   `_sweepWord`): each step reads its slot, writes, and queues the next, so
+   it has no length to forecast — the next write of its word, the loop's
+   span, a glide's cut (`_resolveSweepBudgetFrames`, `_nextTargetWriteTick`,
+   `_loopCurveSpanTicks`, `_glideCut`, … are gone). A loop curve is endless
+   work (`_workFinite`: it does not keep a run alive). This also fixed what
+   no gate saw: a sweep across its track's loop (one in the loop starts over
+   each pass, one from before it runs on) — `check:loops` plays several
+   passes against the driver, which the A/B gate's one pass does not.
+   Macros are still laid out whole at their note (`_scheduleMacro`, with
+   `_nextNote` for the limit): the next thing to step the same way.

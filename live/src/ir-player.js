@@ -276,6 +276,7 @@ export class IRPlayer {
     // The work of the frames ahead (_at, _step), in the frame's order: { F, phase, t, run }.
     this._work = [];
     this._workHead = 0;
+    this._workFinite = 0; // the items a run waits for (_workLeft)
     this._stampFrom = -Infinity; // a frame's work running: its own time, and how far
     this._stampShift = 0; // its writes move to follow the frame's events (_runWork)
     this._lastEvent = { F: -Infinity, t: -Infinity }; // the last event dispatched: its frame and time
@@ -1895,8 +1896,10 @@ export class IRPlayer {
 
   // `run` as work of frame `F`, whatever the time: a sweep's step waits for
   // its frame's events even in the frame it is dispatched in.
-  _step(F, phase, t, run, ord = null) {
-    this._putWork(F, phase, t, run, ord);
+  // `endless`: one of a chain that ends only when something frees it (a
+  // loop curve's steps) — a run does not wait for those to be done.
+  _step(F, phase, t, run, ord = null, endless = false) {
+    this._putWork(F, phase, t, run, ord, endless);
   }
 
   // Whether `when` is still ahead of the run: what composes a write from the
@@ -1909,9 +1912,10 @@ export class IRPlayer {
   // `ord`: within its frame and phase, the place the item takes — a list
   // compared in turn (FM3_KEYS: the driver's order, _scheduleFm3OpKey); a
   // dispatch's timed parts by time; the rest in the order they were made.
-  _putWork(F, phase, t, run, ord = null) {
+  _putWork(F, phase, t, run, ord = null, endless = false) {
     const q = this._work;
-    const item = { F, phase, t, run, ord };
+    const item = { F, phase, t, run, ord, endless };
+    if (!endless) this._workFinite++;
     const after = (x) => {
       if (x.F !== F) return x.F > F;
       if (x.phase !== phase) return x.phase > phase;
@@ -1939,7 +1943,9 @@ export class IRPlayer {
     while (this._workHead < q.length) {
       const item = q[this._workHead];
       if (!(item.F < F || (item.F === F && item.phase === KEYED && item.t <= t))) break;
+      if (F === Infinity && !this._workFinite) break; // only endless chains are left
       this._workHead++;
+      if (!item.endless) this._workFinite--;
       this._runWork(item);
     }
     if (this._workHead > 1024 && this._workHead * 2 > q.length) {
@@ -1967,8 +1973,9 @@ export class IRPlayer {
     }
   }
 
+  // Work a run waits for: all but the endless chains.
   _workLeft() {
-    return this._workHead < this._work.length;
+    return this._workFinite > 0;
   }
 
   // The time every call to the chip's encoders before it has been made by:
@@ -1976,7 +1983,7 @@ export class IRPlayer {
   // earliest time that work can carry (an event's frame begins up to a tick
   // ahead of its time, _eventFrame).
   _settled(horizon) {
-    if (!this._workLeft()) return horizon;
+    if (this._workHead >= this._work.length) return horizon;
     const F = this._work[this._workHead].F;
     return Math.min(horizon, this._frameOrigin + F / 60 - this._secsPerTick - 1e-6);
   }
@@ -2013,6 +2020,7 @@ export class IRPlayer {
     this._aheadHead = 0;
     this._work.length = 0;
     this._workHead = 0;
+    this._workFinite = 0;
     this._stampFrom = -Infinity;
     this._stampShift = 0;
     this._lastEvent = { F: -Infinity, t: -Infinity };
@@ -2651,7 +2659,6 @@ export class IRPlayer {
     });
   }
   _writeFm3OpTl(op, when) {
-    if (this._isAhead(when)) return void this._at(when, () => this._writeFm3OpTl(op, when));
     const o = this._chRegs[2].ops[op - 1];
     o.tl = this._fm3OpTl(op, when);
     // Under CSM an operator's level is its key, and a rest on the rate track
@@ -2676,7 +2683,6 @@ export class IRPlayer {
   // The one place a normal channel's level is composed (§7), from its level
   // as it is (_lv).
   _writeFmLevel(ch, when) {
-    if (this._isAhead(when)) return void this._at(when, () => this._writeFmLevel(ch, when));
     const regs = this._chRegs[ch];
     const L = this._lv(`fm:${ch}`);
     const vel = this._lvVel(L), vol = this._lvVol(L);
@@ -2723,28 +2729,58 @@ export class IRPlayer {
   // offset `fallback`.
   _onsetPitchOffset(ev, fallback) {
     const sw = this._slots.get(this._slotKey(ev, "NOTE_PITCH"));
-    if (!sw || sw.next == null || sw.next >= sw.steps) return fallback;
-    return Math.round(this._sweepAt(sw, sw.frameOffset + sw.next));
+    return sw ? Math.round(this._sweepAt(sw, sw.next)) : fallback;
   }
 
-  // A pitch sweep (a glide, a bend across notes) in its slot: each step, in
-  // its frame (SWEEP), moves the offset and writes the pitch of the note
-  // sounding then (`write(cents, t)`). A bounded glide lands exactly on its
-  // target one step past its last frame — the frames can stop a fraction
-  // short, and the offset left would be every later note's.
-  _pitchSweep(ev, sw, budgetFrames, endTick, write) {
-    const slot = this._slotKey(ev, "NOTE_PITCH");
+  // ---- a sweep ----
+  // A sweep holds its word's slot and takes one step a frame from the frame
+  // it is dispatched in (driver.md §4 step 3): a one-shot for its length,
+  // its last step on its target; a loop curve until the slot is freed. A
+  // step is made when the one before it has run — nothing of a sweep is
+  // known ahead, so a track's loop that writes the word again starts it
+  // over, and one from before the loop runs on through it, as the driver's.
+  // `write(value, t)` moves the word. sw.valueAt / sw.timeOf: a sweep with
+  // its own steps (a song rate's integers, a PCM point's).
+  _runSweep(slot, phase, sw, write) {
     sw.next = 0;
-    sw.steps = budgetFrames;
     this._slots.set(slot, sw);
-    const step = (i, cents, t) => this._step(sw.startFrame + i, SWEEP, t, () => {
-      if (this._slots.get(slot) !== sw) return;
-      sw.next = i + 1;
-      write(cents, t);
-    });
-    for (let i = 0; i < budgetFrames; i++)
-      step(i, Math.round(this._sweepAt(sw, sw.frameOffset + i)), this._sweepFrameTime(sw, i));
-    if (ev.args?.bounded && !this._glideCut(ev, endTick)) step(budgetFrames, sw.to, sw.startWhen + budgetFrames / 60);
+    const len = sw.loop ? Infinity : sw.baseFrames;
+    const step = (i) => {
+      const t = sw.timeOf ? sw.timeOf(i) : this._sweepFrameTime(sw, i);
+      this._step(sw.startFrame + i, phase, t, () => {
+        if (this._slots.get(slot) !== sw) return; // freed: a value, a sweep, a stop
+        sw.next = i + 1;
+        write(sw.valueAt ? sw.valueAt(i) : this._sweepAt(sw, i), t);
+        if (this._slots.get(slot) !== sw) return;
+        if (i + 1 < len) step(i + 1);
+        else this._slots.delete(slot);
+      }, null, sw.loop);
+    };
+    step(0);
+  }
+
+  // A word's sweep from any track: from where the word is (`cur`) unless it
+  // names a :from (language.md §11), its length in frames — ticks at the
+  // tempo of its start, or frames as written, or a slot's (by its :unit).
+  _sweepWord(ev, when, cur, write) {
+    const a = ev.args ?? {};
+    const target = String(a.target ?? "").toUpperCase();
+    const df = this._curveFields(a, when);
+    const from = df.from != null ? Number(df.from) : cur;
+    const sw = {
+      from, to: Number(df.to ?? from), curve: a.curve ?? "linear", params: df.params,
+      baseFrames: this._sweepLen(a, when), loop: !!a.loop,
+      startWhen: when, startFrame: this._eventFrame(when),
+    };
+    this._runSweep(this._slotKey(ev, target), SONG_WORDS.has(target) ? SONG : SWEEP, sw, write);
+    return sw;
+  }
+  _sweepLen(a, when) {
+    return a.dyn?.len != null
+      ? this._resolveLenFrames(a, null, when)
+      : a.lenFrames
+        ? Math.max(1, Math.round(Number(a.frames ?? 1)))
+        : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
   }
 
   // Every pitch write passes its whole-semitone note through the channel's
@@ -3439,31 +3475,11 @@ export class IRPlayer {
   // driver's sweep engine steps the voice's bank (driver.md §14), from where
   // it is unless the sweep names a :from, to the track's next :vol write.
   _schedulePcmVolSweep(voice, ev, when) {
-    const a = ev.args ?? {};
-    const df = this._curveFields(a, when);
-    const from = Math.max(0, Math.min(31, Number(df.from ?? this._pcmVolNow?.[voice] ?? VOL_UNITY)));
-    const baseFrames = a.lenFrames
-      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
-    const sw = {
-      from, to: Math.max(0, Math.min(31, Number(df.to ?? from))), curve: a.curve ?? "linear",
-      params: df.params, baseFrames, loop: !!a.loop, startFrame: this._eventFrame(when), startWhen: when,
-    };
-    const budget = this._resolveSweepBudgetFrames(ev);
-    // Each step in its frame, while the sweep holds the fader's slot: the
-    // fader moves, and the voice hears of it when it changes.
-    const slot = this._slotKey(ev, "VOL");
-    this._slots.set(slot, sw);
-    for (let f = 0; f < budget; f++) {
-      const v = Math.round(this._sweepAt(sw, f));
-      const t = this._sweepFrameTime(sw, f);
-      this._step(sw.startFrame + f, SWEEP, t, () => {
-        if (this._slots.get(slot) !== sw) return;
-        if (this._pcmVolNow?.[voice] !== v) this._pcmEv(t, { kind: "vol", voice, value: v });
-        (this._pcmVolNow ??= [])[voice] = v;
-      });
-      if (!sw.loop && f >= baseFrames - 1) break;
-    }
+    this._sweepWord(ev, when, this._pcmVolNow?.[voice] ?? VOL_UNITY, (value, t) => {
+      const v = Math.max(0, Math.min(31, Math.round(value)));
+      if (this._pcmVolNow?.[voice] !== v) this._pcmEv(t, { kind: "vol", voice, value: v });
+      (this._pcmVolNow ??= [])[voice] = v;
+    });
   }
 
   _applyPcmParam(voice, args, when) {
@@ -3489,31 +3505,20 @@ export class IRPlayer {
     const a = ev.args ?? {};
     const df = this._curveFields(a, when);
     const from = Math.round(Number(df.from ?? start) * scale), to = Math.round(Number(df.to ?? from / scale) * scale);
-    const len = a.lenFrames
-      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
-    const loop = !!a.loop;
-    const budget = this._resolveSweepBudgetFrames(ev);
-    const id = curveId(a.curve);
-    // Each step in its frame, while the sweep holds its word's slot.
+    const len = this._sweepLen(a, when), loop = !!a.loop, id = curveId(a.curve);
     const target = String(a.target ?? "").toUpperCase();
-    const slot = this._slotKey(ev, target);
-    const sw = {};
-    this._slots.set(slot, sw);
-    const F0 = this._eventFrame(when);
     let last = null;
-    for (let f = 0; f < budget; f++) {
-      const v = sweepFrameValue(id, from, to, len, loop, f) / scale;
-      if (v !== last) {
-        const t = when + f / 60;
-        this._step(F0 + f, SONG_WORDS.has(target) ? SONG : SWEEP, t, () => {
-          if (this._slots.get(slot) === sw) write(v, t);
-        });
-      }
+    // The driver's integer steps; the word is written where it moves.
+    this._runSweep(this._slotKey(ev, target), SONG_WORDS.has(target) ? SONG : SWEEP, {
+      loop, baseFrames: len, startWhen: when, startFrame: this._eventFrame(when),
+      valueAt: (f) => sweepFrameValue(id, from, to, len, loop, f) / scale,
+      timeOf: (f) => when + f / 60,
+    }, (v, t) => {
+      if (v !== last) write(v, t);
       last = v;
-      if (!loop && f >= len - 1) break;
-    }
+    });
   }
+
 
   // The ADPCM-B's RAM (chips/adpcm-b.js bakeAdpcmB): which range each sample
   // is, and the rate it plays C4 at. Without it a note writes nothing.
@@ -4178,28 +4183,15 @@ export class IRPlayer {
     const target = (a.target ?? "").toUpperCase();
     const df = this._curveFields(a, when);
     const from = this._pcmLoopBytes(df.from), to = this._pcmLoopBytes(df.to);
-    const len = a.lenFrames
-      ? Math.max(1, Math.round(Number(a.frames ?? 1)))
-      : Math.max(1, Math.round(Number(a.frames ?? 1) * this._secsPerTick * 60));
-    const loop = !!a.loop;
-    const budget = this._resolveSweepBudgetFrames(ev);
-    const id = curveId(a.curve);
+    const len = this._sweepLen(a, when), loop = !!a.loop, id = curveId(a.curve);
     const step16 = sweepStep(len, loop);
-    const slot = this._slotKey(ev, target), sw = {}, F0 = this._eventFrame(when);
-    this._slots.set(slot, sw);
-    let phase16 = 0;
-    for (let f = 0; f < budget; f++) {
-      const last = !loop && f >= len - 1;
-      const value = last ? to : sweepValue(from, to, curveUnit8(id, phase16 >> 8));
-      phase16 = (phase16 + step16) & 0xffff;
-      // A step in its frame, after that frame's dispatch: a sweep that
-      // starts with a note moves that note's loop, not the one before it.
-      const t = when + f / 60 + PCM_SWEEP_AFTER;
-      this._step(F0 + f, SWEEP, t, () => {
-        if (this._slots.get(slot) === sw) this._pcmEv(t, { kind: "point", voice, target, value });
-      });
-      if (last) break;
-    }
+    this._runSweep(this._slotKey(ev, target), SWEEP, {
+      loop, baseFrames: len, startWhen: when, startFrame: this._eventFrame(when),
+      valueAt: (f) => (!loop && f >= len - 1 ? to : sweepValue(from, to, curveUnit8(id, ((f * step16) & 0xffff) >> 8))),
+      // After its frame's dispatch: a sweep that starts with a note moves
+      // that note's loop, not the one before it.
+      timeOf: (f) => when + f / 60 + PCM_SWEEP_AFTER,
+    }, (value, t) => this._pcmEv(t, { kind: "point", voice, target, value }));
   }
 
   _dispatchPcmNoteOn(ev, when) {
@@ -4551,7 +4543,6 @@ export class IRPlayer {
   }
 
   _applyParam(ch, ev, when) {
-    if (this._isAhead(when)) return void this._at(when, () => this._applyParam(ch, ev, when));
     const regs = this._chRegs[ch];
     const target = (ev.args?.target ?? "").toUpperCase();
     // A register in the panel's hand: the score's write waits while it is
@@ -5094,136 +5085,6 @@ export class IRPlayer {
 
   // A glide ended by its target's next write before it ran its length.
   // `endTick`: the sweep's end, when the dispatch has resolved it already.
-  _glideCut(ev, endTick = this._resolveSweepEndTick(ev)) {
-    return endTick < ev.tick + Math.max(1, ev.args?.frames ?? 1);
-  }
-
-  _resolveSweepEndTick(ev) {
-    const trackIndex = ev._trackIndex;
-    if (trackIndex == null) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
-
-    const track = this._tracks[trackIndex];
-    if (!track) return ev.tick + Math.max(1, ev.args?.frames ?? 1);
-
-    const target = (ev.args?.target ?? "").toUpperCase();
-    // A bounded sweep (a glide) lasts its `frames` and then stops — unless the
-    // next write to its target (the next note's glide, or the hold sweep of a
-    // note that does not glide) ends it first, as on the driver.
-    if (ev.args?.bounded)
-      return Math.min(
-        ev.tick + Math.max(1, ev.args?.frames ?? 1),
-        this._nextTargetWriteTick(track, target),
-      );
-    const loopDuration = track.loopDuration ?? 1;
-    const loopStartTick = track.loopStartTick ?? 0;
-    const jumpTick = loopStartTick + loopDuration;
-    const isLoopCurve = !!ev.args?.loop;
-
-    // Default sweep horizon is one structural loop. If sweep starts in the intro
-    // section (before loopStartTick), it must at least survive until first jump.
-    // A track that does not loop has no structural loop to bound it: as on
-    // the driver, a one-shot runs its length and a loop curve runs to the
-    // song's end — and a song with a looping track has none, so there it
-    // runs as far as a looping track's loop curve does (below): a note-less
-    // (fm3-csm …) track's :rr sweep went quiet after the first pass.
-    const songEndTick = (t) => (t.hasLoop
-      ? (t.loopStartTick ?? 0) + (t.loopDuration ?? 1) + this._loopCurveSpanTicks(t)
-      : t.endTick ?? 0);
-    let endTick = !track.hasLoop
-      ? isLoopCurve
-        ? Math.max(ev.tick + 1, ...this._tracks.map(songEndTick))
-        : Infinity
-      : ev.tick < loopStartTick
-        ? jumpTick
-        : ev.tick + loopDuration;
-    const nextWrite = this._nextTargetWriteTick(track, target);
-    const hasExplicitStop = nextWrite !== Infinity;
-    if (hasExplicitStop) endTick = nextWrite;
-
-    // Looping curves (sin/triangle/square/saw/ramp) should not freeze at the
-    // first loop boundary when there is no explicit overwrite. Keep them alive
-    // for multiple loop iterations so channel-level LFO-style sweeps persist.
-    if (!hasExplicitStop && isLoopCurve && track.hasLoop) {
-      endTick = Math.max(endTick, jumpTick + this._loopCurveSpanTicks(track));
-    }
-
-    return endTick;
-  }
-
-  // How far past a track's first pass a loop curve is scheduled (its writes
-  // go out ahead, so it needs an end): sixteen passes, or five minutes when
-  // that is longer — a short loop's LFO-style sweep (a 1.6 s pass) went quiet
-  // after half a minute of play.
-  _loopCurveSpanTicks(track) {
-    const pass = track.loopDuration ?? 1;
-    const minutes = Math.ceil((300 / Math.max(1e-6, this._secsPerTick)) / pass) * pass;
-    return Math.max(pass * 16, minutes);
-  }
-
-  // The tick of the next PARAM_SET / PARAM_SWEEP / PARAM_SWEEP_STOP on `target`
-  // after the event being dispatched on `track`, or Infinity.
-  _nextTargetWriteTick(track, target) {
-    for (let i = track.flatIndex + 1; i < track.events.length; i++) {
-      const nextEv = track.events[i];
-      if ((nextEv.args?.target ?? "").toUpperCase() !== target) continue;
-      if (
-        nextEv.cmd === "PARAM_SET" ||
-        nextEv.cmd === "PARAM_SWEEP" ||
-        nextEv.cmd === "PARAM_SWEEP_STOP"
-      )
-        return nextEv.tick;
-    }
-    return Infinity;
-  }
-
-  // Frames a sweep runs. Given its start time, counted on the driver's frame
-  // grid: every frame from the one it starts in up to the one its end falls in.
-  _resolveSweepBudgetFrames(ev, when = null, endTick = this._resolveSweepEndTick(ev)) {
-    const secsPerTick = this._secsPerTick;
-    if (when != null) {
-      const endWhen = when + Math.max(0, endTick - ev.tick) * secsPerTick;
-      return Math.max(1, this._eventFrame(endWhen) - this._eventFrame(when));
-    }
-    return Math.max(
-      1,
-      Math.floor(Math.max(0, endTick - ev.tick) * secsPerTick * 60),
-    );
-  }
-
-  // Compute sweep iteration parameters for the current loop:
-  //   budgetFrames      – total frames to write this invocation
-  //   nonLoopStartFrame – absolute frame index at start of this iteration
-  //   iterFrames        – how many frames to actually write (capped to remaining sweep)
-  //   loopPhaseOffset   – phase offset for looping curves (sin/tri/saw/…)
-  //   endTick           – the sweep's end tick, resolved once for the dispatch
-  _sweepFrameParams(ev, baseFrames, loop, when = null) {
-    const secsPerTick = this._secsPerTick;
-    const endTick = this._resolveSweepEndTick(ev);
-    const budgetFrames = Math.min(
-      this._resolveSweepBudgetFrames(ev, when, endTick),
-      loop ? Infinity : Math.max(1, baseFrames), // an unbounded one-shot: its length
-    );
-    const track = ev._trackIndex != null ? this._tracks[ev._trackIndex] : null;
-    const spansLoopBoundary =
-      track != null && endTick >= ev.tick + (track.loopDuration ?? 0);
-    const loopPhaseOffset =
-      loop && spansLoopBoundary && track != null
-        ? track.loopCount * budgetFrames
-        : 0;
-    const loopDurationFrames = track?.hasLoop
-      ? Math.max(1, Math.floor((track.loopDuration ?? 1) * secsPerTick * 60))
-      : budgetFrames;
-    const loopCount = track?.loopCount ?? 0;
-    const nonLoopStartFrame = !loop ? loopCount * loopDurationFrames : 0;
-    const iterFrames = !loop
-      ? Math.max(
-          0,
-          Math.min(loopDurationFrames, budgetFrames, baseFrames - nonLoopStartFrame),
-        )
-      : budgetFrames;
-    return { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset, endTick };
-  }
-
   // Resolve a NOTE_ON `step` spec ({ unit, value }) to seconds per step.
   // Absent → one frame (1/60 s), the default :step.
   _stepSecs(stepSpec) {
@@ -5781,46 +5642,20 @@ export class IRPlayer {
     return gaps;
   }
 
+  // A sweep written on an FM track (MASTER's from any): each word's step is
+  // its write.
   _applyParamSweep(ch, ev, when) {
     const target = (ev.args?.target ?? "").toUpperCase();
-    // Dynamic :from/:to/:rate ($name) resolved once at sweep start.
-    const df = this._curveFields(ev.args ?? {}, when);
-    // No :from: the sweep starts where the parameter is now (language.md §11).
-    const from = df.from != null
-      ? Number(df.from)
-      : target === "VOL"
-        ? this._readParam(ch, "VOL", this._fm3OpOf(ev))
-        : target === "MASTER"
-          ? this._masterVol ?? VOL_UNITY
-          : this._readParam(ch, target, this._fm3OpOf(ev));
-    const to = Number(df.to ?? 0);
-    const curve = ev.args?.curve ?? "linear";
-    const params = df.params;
-    const secsPerTick = this._secsPerTick;
-    // ev.args.frames is ticks by default; an Nf `:len` sets lenFrames so it is
-    // an absolute 60 Hz frame count (mirrors NOTE_ON macro curves via
-    // _resolveLenFrames). Tempo is resolved at onset — a mid-sweep tempo change
-    // drifts the wall-clock duration, matching the note-length Nf stance.
-    // A slot-fed `:len` reads the slot at the sweep's start, by its :unit.
-    const baseFrames = ev.args?.dyn?.len != null
-      ? this._resolveLenFrames(ev.args, null, when)
-      : ev.args?.lenFrames
-        ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-        : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
-    const loop = !!ev.args?.loop;
-    const { budgetFrames, nonLoopStartFrame, iterFrames, loopPhaseOffset, endTick } =
-      this._sweepFrameParams(ev, baseFrames, loop, when);
-
+    const op = this._fm3OpOf(ev);
+    if (target === "MASTER")
+      return void this._sweepWord(ev, when, this._masterVol ?? VOL_UNITY, (v, t) => this._applyMasterChange(v, t));
+    const cur = this._readParam(ch, target, op);
     // NOTE_PITCH: the channel's offset — on an fm3-N track that operator's
-    // alone (driver.md §13.4) — stepped in its frames on the note sounding then.
+    // alone (driver.md §13.4) — on the note sounding then.
     if (target === "NOTE_PITCH") {
-      const op = this._fm3OpOf(ev);
       const opState = op ? this._fm3Op[op - 1] : null;
-      const sw = {
-        from, to, curve, params, baseFrames, loop,
-        frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
-      };
-      this._pitchSweep(ev, sw, budgetFrames, endTick, (cents, t) => {
+      return void this._sweepWord(ev, when, cur, (v, t) => {
+        const cents = Math.round(v);
         if (opState) {
           opState.offset = cents;
           this._writeFm3OpPitch(op, opState.midi, cents, t);
@@ -5829,77 +5664,19 @@ export class IRPlayer {
           this._writeFmNote(ch, this._chRegs[ch].currentMidi ?? 60, cents, t);
         }
       });
-      return;
     }
-
-    // VOL: the channel's fader, stepped in its frames (SWEEP).
-    const regs = this._chRegs[ch];
+    // VOL: the fader — an fm3-N track's is that operator's, the shared
+    // (fm3 …) track's the group's over all four (§13.4, _lvWrite).
     if (target === "VOL") {
-      // FM3 independent-OP: a :vol sweep on an fm3-N track fades THAT operator,
-      // not the channel's carriers — which belong to the other operators too
-      // (driver.md §13.4). On the shared (fm3 …) track it is the group fader
-      // and moves all four.
-      const volOp = this._fm3OpOf(ev);
-      const groupSweep = !volOp && ch === 2 && this._fm3Ops;
-      const sw = {
-        from, to, curve, params, baseFrames, loop,
-        frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
-        frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
-      };
-      // The fader's slot (_slotKey): a value, a sweep or a stop on it ends
-      // the sweep. Each step moves the fader and composes the level from
-      // what the channel is then.
-      const slot = this._slotKey(ev, "VOL");
-      this._slots.set(slot, sw);
-      const site = volOp ? `fm3op:${volOp}` : `fm:${ch}`;
-      for (let i = 0; i < iterFrames; i++) {
-        const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
-        const t = this._sweepFrameTime(sw, i);
-        this._step(sw.startFrame + i, SWEEP, t, () => {
-          if (this._slots.get(slot) !== sw) return;
-          this._lvSetVol(site, vol);
-          this._lvWrite(site, t);
-        });
-      }
-      return;
-    }
-
-    // MASTER: the song's sweep, stepped after every channel's in its frame
-    // (driver.md §4 step 3); each step moves the master and composes every
-    // level from what it is then.
-    if (target === "MASTER") {
-      const ms = {
-        from, to, curve, params, baseFrames, loop,
-        frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
-        frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
-      };
-      this._slots.set("song:MASTER", ms);
-      for (let i = 0; i < iterFrames; i++) {
-        const t = this._sweepFrameTime(ms, i);
-        const master = this._sweepAt(ms, ms.frameOffset + i);
-        this._step(ms.startFrame + i, SONG, t, () => {
-          if (this._slots.get("song:MASTER") === ms) this._applyMasterChange(master, t);
-        });
-      }
-      return;
-    }
-
-    // All other FM parameters: route through _applyParam (handles register encoding).
-    const sw = {
-      target, from, to, curve, params, baseFrames, loop,
-      frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
-      frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
-      trackIndex: ev._trackIndex,
-    };
-    const slot = this._slotKey(ev, target);
-    this._slots.set(slot, sw);
-    for (let i = 0; i < iterFrames; i++) {
-      const t = this._sweepFrameTime(sw, i);
-      const set = { cmd: "PARAM_SET", args: { target, value: this._sweepAt(sw, sw.frameOffset + i) }, _trackIndex: ev._trackIndex };
-      this._step(sw.startFrame + i, SONG_WORDS.has(target) ? SONG : SWEEP, t, () => {
-        if (this._slots.get(slot) === sw) this._applyParam(ch, set, t);
+      const site = op ? `fm3op:${op}` : `fm:${ch}`;
+      return void this._sweepWord(ev, when, cur, (v, t) => {
+        this._lvSetVol(site, v);
+        this._lvWrite(site, t);
       });
     }
+    // Any other word: its write (_applyParam).
+    this._sweepWord(ev, when, cur, (v, t) =>
+      this._applyParam(ch, { cmd: "PARAM_SET", args: { target, value: v }, _trackIndex: ev._trackIndex }, t));
   }
 
   // A song LFO word's route into a wave chip with an LFO of its own: the
@@ -6725,39 +6502,12 @@ export class IRPlayer {
             this._lvSetVol(`psg:${psgCh}`, ev.args?.value ?? VOL_UNITY);
             if (this._psgKeyed(psgCh, when)) this._psgRecompose(psgCh, when);
           } else {
-            // A sweep of the fader, stepped in its frames (SWEEP) while it
-            // holds the fader's slot. No :from: from where the fader is (§11).
-            const df = this._curveFields(ev.args ?? {}, when);
-            const from = Math.max(0, Math.min(31, Number(df.from ?? this._lv(`psg:${psgCh}`).vol)));
-            const to = Math.max(0, Math.min(31, Number(df.to ?? from)));
-            const baseFrames = ev.args?.lenFrames
-              ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-              : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * this._secsPerTick * 60));
-            const loop = !!ev.args?.loop;
-            const { budgetFrames, nonLoopStartFrame, loopPhaseOffset } =
-              this._sweepFrameParams(ev, baseFrames, loop, when);
-            const sw = {
-              from, to, curve: ev.args?.curve ?? "linear", params: df.params,
-              baseFrames, loop,
-              frameOffset: loop ? loopPhaseOffset : nonLoopStartFrame,
-              // One-shot: its last frame writes `to`, and the level holds.
-              frames: loop
-                ? budgetFrames
-                : Math.min(budgetFrames, Math.max(1, baseFrames - nonLoopStartFrame)),
-              startWhen: when,
-              startFrame: this._eventFrame(when),
-            };
-            const slot = this._slotKey(ev, "VOL");
-            this._slots.set(slot, sw);
-            for (let i = 0; i < sw.frames; i++) {
-              const vol = Math.max(0, Math.min(31, this._sweepAt(sw, sw.frameOffset + i)));
-              const t = this._sweepFrameTime(sw, i);
-              this._step(sw.startFrame + i, SWEEP, t, () => {
-                if (this._slots.get(slot) !== sw) return;
-                this._lvSetVol(`psg:${psgCh}`, vol);
-                if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
-              });
-            }
+            // A sweep of the fader: a keyed lane's level moves with each step.
+            const site = `psg:${psgCh}`;
+            this._sweepWord(ev, when, this._lv(site).vol, (v, t) => {
+              this._lvSetVol(site, v);
+              if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
+            });
           }
         } else if (psgTarget === "SSG_ENV") {
           // The lane's level on the envelope (a shape), or its own (-1): a
@@ -6815,34 +6565,13 @@ export class IRPlayer {
             this._psgSetNoiseCfg(this._psgNoiseMode, when, psgCh);
           }
         } else if (psgTarget === "NOTE_PITCH") {
-          const from = Number(ev.args?.from ?? ev.args?.value ?? this._psgPitchOffset[psgCh] ?? 0);
-          const to = Number(ev.args?.to ?? from);
-          const curve = ev.args?.curve ?? "linear";
-          const secsPerTick = this._secsPerTick;
-          // ev.args.frames is ticks, or frames when an Nf `:len` set
-          // lenFrames — as on the FM path.
-          const baseFrames = ev.args?.dyn?.len != null
-            ? this._resolveLenFrames(ev.args, null, when)
-            : ev.args?.lenFrames
-              ? Math.max(1, Math.round(Number(ev.args?.frames ?? 1)))
-              : Math.max(1, Math.round(Number(ev.args?.frames ?? 1) * secsPerTick * 60));
-          const loop = !!ev.args?.loop;
-          const framesPerTick = secsPerTick * 60;
-          const { budgetFrames, loopPhaseOffset, endTick } =
-            ev.cmd === "PARAM_SWEEP"
-              ? this._sweepFrameParams(ev, baseFrames, loop, when)
-              : { budgetFrames: 1, loopPhaseOffset: 0, endTick: undefined };
+          // The lane's offset: a value, or a sweep on the note sounding then.
           const pitch = (cents, t) => {
             this._psgPitchOffset[psgCh] = cents;
             this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, cents, t);
           };
-          if (ev.cmd === "PARAM_SET") pitch(from, when);
-          // Stepped as the FM path steps it: the driver's integer curve and
-          // its frame grid, on the note sounding then.
-          else this._pitchSweep(ev, {
-            from, to, curve, params: ev.args?.params, baseFrames, loop,
-            frameOffset: loopPhaseOffset, startWhen: when, startFrame: this._eventFrame(when),
-          }, budgetFrames, endTick, pitch);
+          if (ev.cmd === "PARAM_SET") pitch(Number(ev.args?.value ?? 0), when);
+          else this._sweepWord(ev, when, this._psgPitchOffset[psgCh] ?? 0, (v, t) => pitch(Math.round(v), t));
         }
         break;
       }
