@@ -802,12 +802,12 @@ export class IRPlayer {
    * @param {{sec?: number, line?: number}} at
    * @returns {number} the point's time from the top, in seconds
    */
-  // `hands`: the panel's hands to carry over (hands()) — the player's own by
-  // default: a seek (a pause's resume, a jump while playing) keeps what the
-  // panel holds and what it let go, where a stop and play starts afresh.
-  seek(audioContext, { sec = null, line = null, hands = null } = {}) {
+  // A seek reads the score: its values at the point. `hands`: the panel's
+  // hands to carry over instead (hands()) — a pause's resume goes on as it
+  // was, held or let go.
+  seek(audioContext, { sec = null, line = null, hands = [] } = {}) {
     if (!this._ir) throw new Error("No IR loaded");
-    const keep = hands ?? this.hands();
+    const keep = hands;
     this.stop();
     // A line names no time until the song is run to it: find that first, and
     // stop just short of its event, so the event itself plays live.
@@ -1182,8 +1182,8 @@ export class IRPlayer {
 
   /**
    * The controls in the panel's hand now — held, or let go and not yet
-   * written over by the score — with the value each has: what a seek, or a
-   * score built while paused, carries over (`seek`'s `hands`).
+   * written over by the score — with the value each has: what a pause's
+   * resume carries over (`seek`'s `hands`), a score built while paused too.
    * @returns {{ c: object, v: number, held: boolean }[]}
    */
   hands() {

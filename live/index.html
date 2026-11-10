@@ -10205,14 +10205,15 @@
       if (!player || !_paused) return;
       // Edited while paused: build, and play the new score from the same point
       // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
-      // The panel's hands carry over, as a resume's own do (IRPlayer.seek).
+      // The panel's hands carry over, as a resume's do (IRPlayer.seek).
       if (editorView.state.doc.toString() !== _runSrc) {
         onPlay(null, { fromSec: _pausedSec, se: _runSe, hands: player.hands?.() ?? null });
         return;
       }
       // Resume is a seek back to where pause left it: the song's clock and state
       // pick up from there.
-      player.seek(audioCtx, { sec: _pausedSec });
+      // The panel's values go on as they were (a seek alone reads the score's).
+      player.seek(audioCtx, { sec: _pausedSec, hands: player.hands?.() ?? [] });
       _paused = false;
       _vizFrozen = null;
       playingStarted();

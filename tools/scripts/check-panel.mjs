@@ -317,9 +317,9 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
   }
 }
 
-// A seek (a pause's resume, a jump while playing) keeps the panel's hands:
-// what it holds, what it let go, each over the score's value at the point;
-// a play from the top starts with the score's.
+// A pause's resume keeps the panel's hands (seek with hands()): what it
+// holds, what it let go, each over the score's value at the point; a seek
+// alone, and a play from the top, read the score's.
 {
   try {
     const ir = compile(`(fm1 :tempo 120 :vol 25 :len 4 #top c c c c (go top))`);
@@ -353,14 +353,24 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
     assert.notEqual(heldTl, scoreTl, "the strip moves the chip");
     player.stop(); // pause
     ctx.currentTime += 1;
-    player.seek(ctx, { sec: 0.7 }); // resume
+    player.seek(ctx, { sec: 0.7, hands: player.hands() }); // resume
     to(0.3);
     assert.deepEqual(player.read(vol("fm1", [0])), { v: 9, hand: true, score: 25 }, "the strip let go");
     assert.equal(player.read(word("MASTER")).v, 20, "MASTER held");
     assert.equal(player.read(reg(0, "FM_FB")).v, 5, "a register held");
     assert.equal(tl(), heldTl, `the chip after the resume (TL ${heldTl}, the score's ${scoreTl})`);
     assert.equal(player.hands().find((h) => h.c.id === "vol:fm1")?.held, false, "let go, still");
+    // A jump: what the run sent ahead goes (the page flushes the worklet).
+    const flush = () => { for (let i = writes.length - 1; i >= 0; i--) if (writes[i].when > ctx.currentTime) writes.splice(i, 1); };
+    flush();
+    player.seek(ctx, { sec: 0.2 });
+    to(0.3);
+    assert.equal(player.read(vol("fm1", [0])).hand, false, "a seek: the score's");
+    assert.equal(player.read(word("MASTER")).hand, false, "a seek: the score's MASTER");
+    assert.equal(tl(), scoreTl, "and its TL");
+    player.hold(vol("fm1", [0]), 9);
     player.stop();
+    flush();
     player.play(ctx);
     to(0.3);
     assert.equal(player.read(vol("fm1", [0])).hand, false, "a play from the top: the score's");
