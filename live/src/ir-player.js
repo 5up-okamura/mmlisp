@@ -664,8 +664,6 @@ export class IRPlayer {
     this._psgDuty?.fill(8);
     this._laneLfoSync?.fill(false);
     this._fmKeyMask = new Array(FM_CHANNELS).fill(0); // each FM channel's key bits as last written (_fmKey)
-    this._pcmVolNow = null; // each PCM voice's :vol, where a sweep starts from
-    this._pcmVelNow = null;
     this._pcmPointNow = null;
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
@@ -1287,8 +1285,7 @@ export class IRPlayer {
     const when = this._audioContext?.currentTime ?? 0;
     const [kind, at] = site.split(":");
     const n = Number(at);
-    const score = Math.round(kind === "fm" || kind === "fm3op" || kind === "psg" ? this._lvScoreVol(this._lv(site))
-      : kind === "pcm" ? this._pcmVolNow?.[n] ?? VOL_UNITY
+    const score = Math.round(kind === "fm" || kind === "fm3op" || kind === "psg" || kind === "pcm" ? this._lvScoreVol(this._lv(site))
       : kind === "midi" ? this._lineAt(this._midiVolLines?.get(strip.tracks[0]), when) ?? this._chipPcmParamAt(strip.tracks[0], "vol", when)
       : this._chipPcmParamAt(strip.tracks[0], "vol", when));
     const hand = this._lv(site).hand;
@@ -1334,7 +1331,7 @@ export class IRPlayer {
       for (const site of hand.sites) {
         this._lv(site).hand = null;
         const [kind, n] = site.split(":");
-        if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._pcmVolNow?.[Number(n)] ?? VOL_UNITY });
+        if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._lv(site).vol });
       }
     }
   }
@@ -3455,14 +3452,15 @@ export class IRPlayer {
   // points; null for the words only FM and PSG have.
   _pcmWord(voice, target) {
     if (target === "VOL" || target === "VEL") {
-      const now = target === "VOL" ? (this._pcmVolNow ??= []) : (this._pcmVelNow ??= []);
+      // Its level's (_lv): the engine's model composes it, from these.
+      const L = this._lv(`pcm:${voice}`);
       const kind = target === "VOL" ? "vol" : "vel";
       const fit = (v) => Math.max(0, Math.min(target === "VOL" ? 31 : 15, Math.round(v)));
-      const read = () => now[voice] ?? (target === "VOL" ? VOL_UNITY : 15);
-      const write = (v, t) => this._pcmEv(t, { kind, voice, value: (now[voice] = fit(v)) });
+      const read = () => L[kind];
+      const write = (v, t) => this._pcmEv(t, { kind, voice, value: (L[kind] = fit(v)) });
       return {
         read, write,
-        sweep: (ev, when) => this._sweepWord(ev, when, read(), (v, t) => { if (now[voice] !== fit(v)) write(v, t); }),
+        sweep: (ev, when) => this._sweepWord(ev, when, read(), (v, t) => { if (L[kind] !== fit(v)) write(v, t); }),
       };
     }
     if (PCM_POINT_TARGETS.has(target)) return {
