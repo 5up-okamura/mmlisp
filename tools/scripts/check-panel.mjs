@@ -382,6 +382,49 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
   }
 }
 
+// A hot-swap while a full-gate note rings (its key-off waits for the
+// track's next event, which the outgoing score no longer plays): the note
+// keys off at its gate's end unless the incoming score keys the channel.
+{
+  for (const [name, incoming, keyedAtEnd] of [
+    ["fm1 gone", `(fm2 :tempo 120 :len 4 #t c e (go t))`, false],
+    ["fm1 rests", `(fm1 :tempo 120 :len 4 #t _ _ (go t))\n(fm2 :len 4 #t c e (go t))`, false],
+    ["fm1 plays on", `(fm1 :tempo 120 :len 4 #t d f (go t))`, true],
+  ]) {
+    try {
+      const ctx = { currentTime: 10, state: "running", resume() {} };
+      let key = 0;
+      const player = new IRPlayer((port, addr, data, when) => {
+        if (port === 0 && addr === 0x28 && (data & 7) === 0 && (when ?? ctx.currentTime) <= ctx.currentTime + 1e-9) key = data >> 4;
+      });
+      const pend = [];
+      const sink = player._sink;
+      player._sink = (port, addr, data, when) => {
+        if (port === 0 && addr === 0x28 && (data & 7) === 0) pend.push([when ?? ctx.currentTime, data >> 4]);
+        sink(port, addr, data, when);
+      };
+      player.loadJSON(compile(`(fm1 :tempo 120 :len 1 #t c e (go t))\n(sqr1 :len 4 #t c (go t))`));
+      player.play(ctx);
+      const to = (sec) => {
+        for (const end = ctx.currentTime + sec; ctx.currentTime <= end + 1e-9; ctx.currentTime += 0.005) {
+          clearTimeout(player._schedulerTimer);
+          player._scheduleLoop();
+          clearTimeout(player._schedulerTimer);
+        }
+      };
+      to(0.7);
+      player.swapAtNextBar(compile(incoming));
+      to(4);
+      const last = pend.filter(([t]) => t <= ctx.currentTime).sort((x, y) => x[0] - y[0]).at(-1);
+      assert.equal(!!last?.[1], keyedAtEnd, `${name}: fm1 ${keyedAtEnd ? "keyed" : "keyed off"} after the swap`);
+      player.stop();
+    } catch (e) {
+      failed++;
+      console.error(`FAIL a hot-swap, ${name}: ${e.message}`);
+    }
+  }
+}
+
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);
 console.log(`check:panel ok${open.length ? ` (${open.length} open)` : ""}`);
