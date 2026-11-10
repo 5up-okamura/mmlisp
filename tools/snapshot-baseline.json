@@ -95,6 +95,22 @@
   "vgm": "ddd89603f2acbbc8",
   "mid": "5c31abf1caef2bbc"
  },
+ "drv/tests/m2-master-freed.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "8a7c8eaf6834ed5a",
+  "regs": "4f0281c6f6d71639",
+  "mmb": "1d5bacae78dcd043",
+  "vgm": "e65730f435d665d0",
+  "mid": "4a050d17d08c6474"
+ },
+ "drv/tests/m2-master-freed.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "52d5fec02ba8efdf",
+  "regs": "4f0281c6f6d71639",
+  "mmb": "3c9824ea09177109",
+  "vgm": "e65730f435d665d0",
+  "mid": "3913dfce78c3bea8"
+ },
  "drv/tests/m2-motion.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef11ab299d3fb33f",

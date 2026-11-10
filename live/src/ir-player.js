@@ -693,6 +693,7 @@ export class IRPlayer {
     this._psgVolSweep.fill(null);
     this._psgKeyedUntil.fill(0);
     this._masterSweep = null;
+    this._masterSlot = null; // the running :master sweep whose frames may still write (_syncMasterSweep)
     for (const m of this._paramSweeps) m.clear();
   }
 
@@ -5823,6 +5824,7 @@ export class IRPlayer {
         prev: this._masterAt(when),
       };
       this._masterSweep = null;
+      this._masterSlot = ms;
       for (let i = 0; i < iterFrames; i++) {
         const t = this._sweepFrameTime(ms, i);
         const master = Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + i))));
@@ -5831,6 +5833,7 @@ export class IRPlayer {
         // composed as its note is dispatched (_schedulePsgEnvelope), so its
         // frames of this sweep are the ones known now.
         this._at(t, () => {
+          if (this._masterSlot !== ms) return; // freed by a later :master
           this._masterVol = master;
           this._recomposeFmLevels(master, t, F);
           this._pcmEv(t, { kind: "master", value: master });
@@ -6454,6 +6457,8 @@ export class IRPlayer {
   // Before each event: the master state is the sweep's value at its time
   // (the sweep's frames were scheduled at once); a PARAM_SET MASTER ends it.
   _syncMasterSweep(ev, when) {
+    if (/^PARAM_(SET|SWEEP|SWEEP_STOP|ADD|MUL|FROM_VAL)$/.test(ev.cmd) && String(ev.args?.target ?? "").toUpperCase() === "MASTER")
+      this._masterSlot = null;
     const ms = this._masterSweep;
     if (!ms) return;
     this._masterVol = this._masterAt(when);
@@ -6464,6 +6469,10 @@ export class IRPlayer {
     )
       this._masterSweep = null;
   }
+
+  // A :master write from any track frees the song's MASTER slot, as the
+  // driver's does (driver.md §4 step 3): a running sweep's frames still
+  // waiting stop there (each carries its sweep, _at).
 
   _psgVolAtNoteOn(psgCh, when) {
     const sw = this._psgVolSweep[psgCh];
