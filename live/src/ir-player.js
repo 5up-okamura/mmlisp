@@ -1376,6 +1376,93 @@ export class IRPlayer {
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
 
+  // ---- the keys ----
+  // Live's keys play the score's machine through this player: a channel of
+  // the running song they take over, or, stopped, the panel's own player. A
+  // key's level is a note's: its velocity composed with its lane's :vol and
+  // the master as the panel shows them (the score's, or the panel's hand), so
+  // a key sounds at what is shown. `when` is now when absent.
+
+  /** The machine's name, and its FM encoder (chips/) for a key's own writes. */
+  machine() {
+    return this._target.name;
+  }
+  fmEncoder() {
+    return this._fmEnc;
+  }
+  /** The machine's ROM rhythm encoder, for a key's hit; null without one. */
+  rhythmEncoder() {
+    return this._rhythmEnc ?? null;
+  }
+  /** The seconds a tick lasts at the tempo now. */
+  secsPerTick() {
+    return this._secsPerTick;
+  }
+  /** The chips' resting voices, written now (a player made for the keys). */
+  initVoices() {
+    this._initDefaultVoices();
+  }
+
+  /** A tone lane keyed at `midi` (a noise lane triggered), at `vel` (0-15). */
+  keyTone(lane, midi, vel = 15, when = this._keyNow()) {
+    if (this._isNoiseLane(lane)) this._psgTriggerNoise(when, lane);
+    else this._psgSetPitch(lane, midi, 0, when);
+    this.keyToneLevel(lane, vel, when);
+  }
+  /** A keyed tone lane's level at `vel` — a wave role's envelope steps it. */
+  keyToneLevel(lane, vel, when = this._keyNow()) {
+    const vol = this._playing ? this._psgVolAtTime(lane, when) : this._psgVol[lane] ?? VOL_UNITY;
+    this._psgSetAtt(lane, this._composePsgAtt(lane, Math.max(0, Math.min(15, vel)), vol, this._keyMaster(when)), when);
+  }
+  keyToneOff(lane, when = this._keyNow()) {
+    this._psgSetAtt(lane, this._psgOff(lane), when);
+  }
+
+  /** An FM channel's carriers at `vel`, composed as a note's are. */
+  keyFmLevel(ch, vel, when = this._keyNow()) {
+    this._writeFmLevel(ch, when, { vel });
+  }
+  /** An OPN's CH3 in its special mode: every operator at `midi`, as one voice. */
+  keyFm3Unison(midi) {
+    for (let op = 1; op <= 4; op++) this._writeFm3OpPitch(op, midi, 0);
+  }
+  /**
+   * A patch for a channel the keys borrow from the song, as writes (the
+   * song's shadow stays the song's): its carriers at `vel` composed as a
+   * note's on that channel are — its :vol and the master as shown — or at
+   * the voiced level without one; the channel's own pan.
+   */
+  keyPatchWrites(ch, regs, vel, when = this._keyNow()) {
+    const fm = this._fmEnc;
+    const carriers = this._carrierOps(regs);
+    const vol = this._handVol(`fm:${ch}`) ?? this._fmScoreVolAt(ch, when);
+    const ops = regs.ops.map((o, i) => {
+      const voiced = o.voicedTl ?? o.tl ?? 0;
+      const tl = vel != null && carriers.includes(i)
+        ? this._carrierTl({ voicedTl: voiced, velK: o.velK }, vel, vol, this._handMaster() ?? this._keyMaster(when))
+        : voiced;
+      return { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
+    });
+    // The OPLL's encoder keeps the song's voice as timelines: a held
+    // channel's patch goes past them (chips/ym2413.js `held`).
+    if (fm.held) return fm.held.patch(ch, { ...regs, ops }, ops[carriers[0]]?.tl);
+    const out = [];
+    ops.forEach((op, i) => {
+      for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg"]) out.push(...fm.op(ch, i, reg, op));
+    });
+    out.push(...fm.alg(ch, regs));
+    out.push(...fm.pan(ch, { pan: this._chRegs[ch]?.pan ?? 0, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));
+    return out;
+  }
+
+  _keyNow() {
+    return this._audioContext?.currentTime;
+  }
+  // The score's master at a key's time (the panel's hand is laid over it where the level is composed).
+  _keyMaster(when) {
+    return this._playing && when != null ? this._masterAt(when) : this._masterVol ?? VOL_UNITY;
+  }
+
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
   getBpm() {
     return this._bpm;

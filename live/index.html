@@ -5049,7 +5049,7 @@
     function itHeardAt() {
       if (!player?.isPlaying?.() || !player.trackTickAt) return null; // (the A/B reference has no clock to read)
       const at = player.trackTickAt(0, audioCtx.currentTime - (audioCtx.outputLatency || 0));
-      return at ? at.tick * player._secsPerTick * RATE + _it.zero : null;
+      return at ? at.tick * player.secsPerTick() * RATE + _it.zero : null;
     }
     // One write at a time: what is asked meanwhile is written next, the song
     // going on from where it was once the last is built.
@@ -5173,7 +5173,7 @@
       // (The score's ticks are the shuffle's, warped: the beat is where it plays.)
       const t = itTiming(), { warp, unwarp } = warpOf(t.shuffle, t.grid);
       const beat = Math.ceil(unwarp(at.tick) / PPQN);
-      const when = now + (warp(beat * PPQN) - at.tick) * player._secsPerTick;
+      const when = now + (warp(beat * PPQN) - at.tick) * player.secsPerTick();
       if (when - now > 0.1 || when < _it.clickAt + 0.05) return;
       _it.clickAt = when;
       const bar = Number(leEl('itBar').value);
@@ -10852,7 +10852,8 @@
       const w = at(wave);
       if (w != null) player.previewWave(lane, waves[w].data, waves[w].name);
       const l = at(level);
-      if (l != null) player._psgSetAtt(lane, player._composePsgAtt(lane, Math.max(0, Math.round(l) - (15 - v.vel)), VOL_UNITY, VOL_UNITY), audioCtx?.currentTime);
+      // The role's level is a note's :vel macro: on the key's velocity, under its strip and MASTER.
+      if (l != null) player.keyToneLevel(lane, Math.round(l) - (15 - v.vel), audioCtx?.currentTime);
       if (v.off && ++v.released >= (level?.released.length ?? 0)) { _keyVoices.delete(lane); previewPsgNoteOff(lane); }
       else if (!v.off) v.frame++;
     }
@@ -12803,24 +12804,17 @@
 
 
     // `vel` (0-15) is given only by a MIDI keyboard with Velocity on; without
-    // it a preview plays at the level the channel already has.
+    // it a key plays at full velocity. Either way under the lane's :vol and
+    // the master as the panel shows them (IRPlayer keyTone): what is shown
+    // is what the key plays at.
     function previewPsgNoteOn(psgCh, midi, vel) {
-      if (!player || typeof player._psgSetAtt !== 'function') return;
-      const when = audioCtx?.currentTime;
-      if (psgCh === 3) {
-        player._psgTriggerNoise(when);
-      } else {
-        player._psgSetPitch(psgCh, midi, 0, when);
-      }
-      // 0 = loudest attenuation, 15 = silent
-      // The lane's :vol and the master as the panel shows them (a strip's
-      // knob, MASTER): what is shown is what the key plays at.
-      player._psgSetAtt(psgCh, vel == null ? 0 : player._composePsgAtt(psgCh, vel, player._psgVol?.[psgCh] ?? VOL_UNITY, masterNow()), when);
+      if (!(player instanceof IRPlayer)) return;
+      player.keyTone(psgCh, midi, vel ?? 15, audioCtx?.currentTime);
     }
 
     function previewPsgNoteOff(psgCh) {
-      if (!player || typeof player._psgSetAtt !== 'function') return;
-      player._psgSetAtt(psgCh, player._psgOff(psgCh), audioCtx?.currentTime);
+      if (!(player instanceof IRPlayer)) return;
+      player.keyToneOff(psgCh, audioCtx?.currentTime);
     }
 
     // A preview's own register write: it reaches a channel the keys hold over
@@ -12837,12 +12831,12 @@
 
     function previewFmNoteOn(ch, midi, vel) {
       if (!player) return;
-      const fm = player._fmEnc;
+      const fm = player.fmEncoder();
       const borrowed = _borrowedKeyMask.get(ch);
       if (borrowed != null && fm.held) { writePreviews(fm.held.note(ch, midi)); return; }
       // The carriers' TL at this velocity, composed as a note's would be (a
       // borrowed channel had its level written with its patch).
-      if (vel != null && borrowed == null) player._writeFmLevel(ch, audioCtx?.currentTime, { vel });
+      if (vel != null && borrowed == null) player.keyFmLevel(ch, vel, audioCtx?.currentTime);
       writePreviews(fm.pitch(ch, midi));
       // An OPN's CH3 may be left in FM3 special mode (separate per-operator
       // frequencies) after editing/playing an fm3-N score; the channel's
@@ -12850,14 +12844,14 @@
       // every operator's F-number so all keyed operators play in unison.
       // These supplementary registers are inert in normal mode.
       if (ch === 2 && fm.csm) {
-        for (let op = 1; op <= 4; op++) player._writeFm3OpPitch(op, midi, 0);
+        player.keyFm3Unison(midi);
       }
       writePreviews(fm.key(ch, borrowed ?? player.getOpMask(ch)));
     }
 
     function previewFmNoteOff(ch) {
       if (!player) return;
-      const fm = player._fmEnc;
+      const fm = player.fmEncoder();
       writePreviews(_borrowedKeyMask.has(ch) && fm.held ? fm.held.off(ch) : fm.key(ch, 0));
     }
 
@@ -12888,7 +12882,7 @@
     // A key meant for an FM channel the score's chip lacks (none on the MSX)
     // plays sqr1 instead.
     function previewChannelOf(slot) {
-      if (isToneSlot(slot) || slot.ch < (player?._fmEnc?.channels ?? 0)) return slot;
+      if (isToneSlot(slot) || slot.ch < (player?.fmEncoder?.().channels ?? 0)) return slot;
       return TONE_SLOTS[0];
     }
 
@@ -12966,7 +12960,7 @@
         const machine = targetProfile(_lastGoodIR?.metadata?.target);
         if (machine.hasPart('rhythm') && !_rhythmRom) { log('The rhythm plays from your ROM — File > Import > YM2608 Rhythm ROM…', 'err'); return; }
         const part = machine.parts.find((p) => p.kit);
-        const enc = player?._rhythmEnc ?? machine.chipFor(part.name).rhythm;
+        const enc = player?.rhythmEncoder?.() ?? machine.chipFor(part.name).rhythm;
         for (const [p, a, d] of enc.hit(rhythm.voice, part.level.steps - 1, 0)) writePreview(p, a, d);
         return;
       }
@@ -13672,30 +13666,9 @@
 
     // A patch onto a borrowed channel, register by register, past the player:
     // its shadow stays the song's, which the song's own relative edits read
-    // and the channel goes back to. Carriers at the voiced level, or at `vel`
-    // composed as a note's would be; the pan stays the channel's.
+    // and the channel goes back to (IRPlayer keyPatchWrites).
     function writeBorrowedPatch(ch, regs, vel) {
-      const fm = player._fmEnc;
-      const carriers = player._carrierOps(regs);
-      const ops = regs.ops.map((o, i) => {
-        const voiced = o.voicedTl ?? o.tl ?? 0;
-        const tl = vel != null && carriers.includes(i)
-          ? player._carrierTl({ voicedTl: voiced }, vel, VOL_UNITY, player._masterVol ?? VOL_UNITY)
-          : voiced;
-        return { ...o, tl: tl & 0x7f, rs: o.rs ?? 0, ar: o.ar ?? 0, d2r: o.d2r ?? 0, ssg: o.ssg ?? 0 };
-      });
-      // The OPLL's encoder keeps the song's voice as timelines: a held
-      // channel's patch goes past them (chips/ym2413.js `held`).
-      if (fm.held) {
-        writePreviews(fm.held.patch(ch, { ...regs, ops }, ops[carriers[0]]?.tl));
-        return;
-      }
-      ops.forEach((op, i) => {
-        for (const reg of ['dt-ml', 'tl', 'ks-ar', 'am-dr', 'sr', 'sl-rr', 'ssg-eg']) writePreviews(fm.op(ch, i, reg, op));
-      });
-      writePreviews(fm.alg(ch, regs));
-      const pan = player._chRegs?.[ch]?.pan ?? 0;
-      writePreviews(fm.pan(ch, { pan, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));
+      writePreviews(player.keyPatchWrites(ch, regs, vel, audioCtx?.currentTime));
     }
 
     async function onPhysicalKeyDown(e) {
@@ -16061,7 +16034,7 @@
     function keysFollowTarget(ir) {
       if (player?.isPlaying?.() || _paused) return;
       const name = targetProfile(ir?.metadata?.target).name;
-      if (player instanceof IRPlayer && player._target.name !== name) player = null;
+      if (player instanceof IRPlayer && player.machine() !== name) player = null;
       if (workletNode) setWorkletMachine(name);
     }
 
@@ -16073,7 +16046,7 @@
       const target = _lastGoodIR?.metadata?.target;
       const encodes = target && !notYet(targetProfile(target), 'encode');
       player.loadJSON({ ppqn: 120, tracks: [], ...(encodes ? { metadata: { target } } : {}) });
-      player._initDefaultVoices();
+      player.initVoices();
       syncParamUI();
     }
 

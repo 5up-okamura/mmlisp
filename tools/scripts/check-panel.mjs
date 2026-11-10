@@ -225,6 +225,52 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
     assert.deepEqual([back.v, back.hand], [28, false], "taken back");
   });
 
+// The keys: a key sounds at what the panel shows — its velocity under the
+// lane's :vol and the master, the score's or the panel's hand — composed as a
+// note's is, stopped (the panel's own player) and over a running song.
+{
+  const keysPlayer = (ir) => {
+    const w = [];
+    const p = new IRPlayer((port, addr, data) => { if (typeof port !== "object") w.push({ port, addr, data }); });
+    p.loadJSON(ir);
+    p.initVoices();
+    return { p, w };
+  };
+  const lastAtt = (w, ch) => w.filter((x) => x.port === 2 && isAtt(x.data, ch)).at(-1)?.data & 15;
+  const ir = compile(`(sqr1 :tempo 120 :len 4 c)`);
+  try {
+    const { p, w } = keysPlayer(ir);
+    p.keyTone(0, 60, 15);
+    const full = lastAtt(w, 0);
+    assert.equal(full, 0, "a key at full velocity, unity :vol and master: full level");
+    p.hold(vol("sqr1", [0]), 25);
+    p.keyTone(0, 60, 15);
+    const knob = lastAtt(w, 0);
+    assert.ok(knob > full, `the strip's knob turns a key down (att ${full} → ${knob})`);
+    p.hold(word("MASTER"), 25);
+    p.keyTone(0, 60, 15);
+    assert.ok(lastAtt(w, 0) > knob, "MASTER under it");
+    const both = lastAtt(w, 0);
+    p.keyToneLevel(0, 8);
+    assert.ok(lastAtt(w, 0) > both, "a role's level step on the key's lane composes the same way");
+    // An FM channel the keys borrow from the song: its carriers at the key's
+    // velocity under the strip and MASTER the panel shows.
+    const fm = compile(`(fm1 :tempo 120 :len 4 c)`);
+    const k = keysPlayer(fm);
+    const regs = k.p.getChRegs(0);
+    const tlOf = (writes) => writes.filter(([port, addr]) => port === 0 && addr === 0x4c).at(-1)?.[2];
+    const plain = tlOf(k.p.keyPatchWrites(0, regs, 15));
+    k.p.hold(vol("fm1", [0]), 15);
+    const turned = tlOf(k.p.keyPatchWrites(0, regs, 15));
+    assert.ok(turned > plain, `a borrowed channel's patch under the strip's knob (TL ${plain} → ${turned})`);
+    k.p.hold(word("MASTER"), 15);
+    assert.ok(tlOf(k.p.keyPatchWrites(0, regs, 15)) > turned, "and under MASTER");
+  } catch (e) {
+    failed++;
+    console.error(`FAIL the keys: ${e.message}`);
+  }
+}
+
 for (const o of open) console.log(`open: ${o}`);
 if (failed) process.exit(1);
 console.log(`check:panel ok${open.length ? ` (${open.length} open)` : ""}`);
