@@ -129,7 +129,10 @@ conversion keeps a score's samples beside its melody by) to the renders
 (`gen:part-levels`).
 `npm run check:snapshot` holds the toolchain's whole output (IR, the
 preview's register log, MMB, VGM) for every test score to its baseline: a
-refactor that must not change behavior keeps it green. To write or
+refactor that must not change behavior keeps it green. `check:panel` holds
+the panel's controls on both players (hold / release / read: a control
+shows the score's value, a held one is the panel's through the score's
+sweeps and macros, one let go stays until the score next writes it). To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
 docs and snippets, and — with Tools > Connect to AI on — edits and plays the
