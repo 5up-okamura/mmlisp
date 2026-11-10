@@ -1,0 +1,8 @@
+; A write of a song-wide word on another track frees the song's slot for it
+; (driver.md §4 step 3): fm1's :master and :lfo-rate sweeps stop at fm2's
+; writes, and the IR preview's frames still waiting for their time stop
+; with them.
+
+(fm1 :tempo 120 :len 1 :fms 7
+  :master (linear 31..0 :len 2/1) :lfo-rate (linear 0..8 :len 2/1) c c c)
+(fm2 :len 2 _ :master 31 :lfo-rate 1 c c c)

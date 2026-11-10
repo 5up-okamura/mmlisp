@@ -379,11 +379,6 @@ export class IRPlayer {
     this._fmVolSweep = new Array(FM_CHANNELS).fill(null);
     this._fmLevelLines = new Array(FM_CHANNELS).fill(null); // a note's :vel/:vol macro timelines
     this._fm3LevelLines = new Array(FM_OPS).fill(null); // ...an FM3 operator note's
-    // Inline sweeps on the other FM params, per channel: target → sweep. The
-    // sweep's frames are scheduled at once (leaving the shadow state at `to`),
-    // so later events on the channel first re-sync their state to the sweep's
-    // value at their own time (_syncParamSweeps).
-    this._paramSweeps = Array.from({ length: FM_CHANNELS }, () => new Map());
 
     // Mute / solo state keyed by track index (a track == one sounding channel,
     // e.g. fm3-1, pcm1). Solo overrides mute: when any track is soloed, only
@@ -395,6 +390,7 @@ export class IRPlayer {
     this._mutedVoices = new Set();
     this._soloVoices = new Set();
     this._masterHand = null; // { v, held }: the panel's MASTER, laid over the score's (_handMaster)
+    this._slots = new Map(); // a sweep's slot (_slotKey) → its sweep (_resetRunState)
     this._panelWrite = false; // the panel's own write, which no hand stops
     this._volHands = new Map(); // a level's site ("fm:0", "psg:1", "pcm:0", "voice:adpcm") → its strip's hand (_holdVol)
 
@@ -693,8 +689,7 @@ export class IRPlayer {
     this._psgVolSweep.fill(null);
     this._psgKeyedUntil.fill(0);
     this._masterSweep = null;
-    this._masterSlot = null; // the running :master sweep whose frames may still write (_syncMasterSweep)
-    for (const m of this._paramSweeps) m.clear();
+    this._slots = new Map(); // a sweep's slot (_slotKey) → the sweep whose frames may still write
   }
 
   /** Returns true if playback is currently running. */
@@ -2823,6 +2818,7 @@ export class IRPlayer {
       && String(ev.args?.target ?? "").toUpperCase() === "MASTER") this._masterHand = null;
     if (this._volHands.size && ev._trackIndex != null && writesVol(ev)) this._volTakeBack(ev._trackIndex, when);
     this._syncMasterSweep(ev, when);
+    this._freeSlot(ev);
     if (this._dispatchGlobalEvent(ev, when)) return;
     if (ev.cmd === "PCM_NOTE_ON" && this._onPosition && ev.args?.sample && this._isTrackAudible(ev._trackIndex))
       this._reportSample(ev, when);
@@ -2876,12 +2872,6 @@ export class IRPlayer {
     }
 
     const ch = ev._chIndex ?? 0;
-    this._syncParamSweeps(ch, when);
-    // A write to a swept target ends that sweep (the driver frees its slot).
-    if (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP")
-      this._paramSweeps[ch].delete(
-        this._paramSweepKey(ev, String(ev.args.target).toUpperCase()),
-      );
 
     switch (ev.cmd) {
       case "NOTE_ON": {
@@ -5824,7 +5814,7 @@ export class IRPlayer {
         prev: this._masterAt(when),
       };
       this._masterSweep = null;
-      this._masterSlot = ms;
+      this._slots.set("song:MASTER", ms);
       for (let i = 0; i < iterFrames; i++) {
         const t = this._sweepFrameTime(ms, i);
         const master = Math.max(0, Math.min(31, Math.round(this._sweepAt(ms, ms.frameOffset + i))));
@@ -5833,7 +5823,7 @@ export class IRPlayer {
         // composed as its note is dispatched (_schedulePsgEnvelope), so its
         // frames of this sweep are the ones known now.
         this._at(t, () => {
-          if (this._masterSlot !== ms) return; // freed by a later :master
+          if (this._slots.get("song:MASTER") !== ms) return; // freed by a later :master
           this._masterVol = master;
           this._recomposeFmLevels(master, t, F);
           this._pcmEv(t, { kind: "master", value: master });
@@ -5853,18 +5843,14 @@ export class IRPlayer {
       frames: iterFrames, startWhen: when, startFrame: this._eventFrame(when),
       trackIndex: ev._trackIndex,
     };
+    const slot = this._slotKey(ev, target);
+    this._slots.set(slot, sw);
     for (let i = 0; i < iterFrames; i++) {
-      this._applyParam(
-        ch,
-        { cmd: "PARAM_SET", args: { target, value: this._sweepAt(sw, sw.frameOffset + i) }, _trackIndex: ev._trackIndex },
-        this._sweepFrameTime(sw, i),
-      );
-    }
-    // The frames above leave the state at the last one; put it back to the
-    // first so an event at this same time composes from what the chip holds.
-    if (iterFrames > 1) {
-      this._paramSweeps[ch].set(this._paramSweepKey(ev, target), sw);
-      this._syncParamSweeps(ch, when);
+      const t = this._sweepFrameTime(sw, i);
+      const set = { cmd: "PARAM_SET", args: { target, value: this._sweepAt(sw, sw.frameOffset + i) }, _trackIndex: ev._trackIndex };
+      this._at(t, () => {
+        if (this._slots.get(slot) === sw) this._applyParam(ch, set, t);
+      });
     }
   }
 
@@ -6325,24 +6311,6 @@ export class IRPlayer {
   // (its frames were all scheduled up front, leaving the state at `to`), so an
   // event composing from it — a NOTE_ON's carrier TL, a PARAM_ADD — reads what
   // the chip holds then. The re-write is the value that frame writes anyway.
-  _syncParamSweeps(ch, when) {
-    const sweeps = this._paramSweeps[ch];
-    if (!sweeps?.size) return;
-    for (const [key, sw] of sweeps) {
-      // Past its last frame the state is that frame's value, and stays.
-      const f = this._sweepFrameOf(sw, when);
-      if (f >= sw.frames - 1) sweeps.delete(key);
-      const frame = sw.frameOffset + Math.max(0, Math.min(sw.frames - 1, f));
-      this._applyParam(
-        ch, { args: { target: sw.target, value: this._sweepAt(sw, frame) }, _trackIndex: sw.trackIndex },
-        when,
-      );
-    }
-  }
-
-  _paramSweepKey(ev, target) {
-    return `${this._fm3OpOf(ev)}:${target}`;
-  }
 
   // Set noise configuration (FB + NF bits) for PSG noise channel (ch 3).
   // modeVal: 0-7 encoding FB(1bit) + NF(2bits) → bits 5-3 of noise register
@@ -6457,8 +6425,6 @@ export class IRPlayer {
   // Before each event: the master state is the sweep's value at its time
   // (the sweep's frames were scheduled at once); a PARAM_SET MASTER ends it.
   _syncMasterSweep(ev, when) {
-    if (/^PARAM_(SET|SWEEP|SWEEP_STOP|ADD|MUL|FROM_VAL)$/.test(ev.cmd) && String(ev.args?.target ?? "").toUpperCase() === "MASTER")
-      this._masterSlot = null;
     const ms = this._masterSweep;
     if (!ms) return;
     this._masterVol = this._masterAt(when);
@@ -6470,9 +6436,20 @@ export class IRPlayer {
       this._masterSweep = null;
   }
 
-  // A :master write from any track frees the song's MASTER slot, as the
-  // driver's does (driver.md §4 step 3): a running sweep's frames still
-  // waiting stop there (each carries its sweep, _at).
+  // A sweep holds a slot, as the driver's do (driver.md §4 step 3): a
+  // song-wide word's (MASTER, LFO_RATE …) is the song's, any other its
+  // channel's — an fm3 operator's its own. A write of the word from any
+  // track frees the slot, and the sweep's frames still waiting for their
+  // time (_at) stop there.
+  _slotKey(ev, target) {
+    if (target === "MASTER" || LFO_TARGETS.has(target)) return `song:${target}`;
+    const r = ev._route;
+    return `${r?.core}${r?.lane}:${this._fm3OpOf(ev)}:${target}`;
+  }
+  _freeSlot(ev) {
+    if (!this._slots.size || !ev.cmd.startsWith("PARAM_")) return;
+    this._slots.delete(this._slotKey(ev, String(ev.args?.target ?? "").toUpperCase()));
+  }
 
   _psgVolAtNoteOn(psgCh, when) {
     const sw = this._psgVolSweep[psgCh];

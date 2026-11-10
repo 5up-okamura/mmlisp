@@ -35,12 +35,6 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
-  "m2-master-freed.mmlisp": {
-    "ok": true,
-    "mismatches": 0,
-    "compileErrors": 0,
-    "digest": "811c9dc5"
-  },
   "m2-motion.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -54,6 +48,12 @@
     "digest": "811c9dc5"
   },
   "m2-pcmloop.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "m2-slot-freed.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,

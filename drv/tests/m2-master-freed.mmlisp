@@ -1,6 +1,0 @@
-; A :master write on another track frees the song's MASTER slot (driver.md
-; §4 step 3): fm1's sweep stops at fm2's :master 31, and the IR preview's
-; frames still waiting for their time stop with it.
-
-(fm1 :tempo 120 :len 1 :master (linear 31..0 :len 2/1) c c c)
-(fm2 :len 2 _ :master 31 c c c)
