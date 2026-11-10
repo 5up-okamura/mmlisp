@@ -89,6 +89,8 @@ const SAMPLE_HANDLERS = {
   dac: "_dispatchDacEvent",
   "midi-drums": "_dispatchNothing",
 };
+// A frame's order (driver.md §4): the places work takes in it (IRPlayer._at).
+const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3;
 // The writes that free a sweep's slot (driver.md §4 step 3).
 const SLOT_FREEING = new Set(["PARAM_SET", "PARAM_SWEEP", "PARAM_SWEEP_STOP"]);
 // The song-wide LFO words: the OPN's rate, the OPM's own (chips/ym2151.js).
@@ -271,9 +273,14 @@ export class IRPlayer {
     // A write on a timer of the machine's own, not the video frame (the PC
     // Engine's DDA, a sample a CPU timer tick): the writer itself, unmoved.
     Object.defineProperty(this, "_writeTimer", { get: () => rawWrite, configurable: true });
-    // The writes still ahead (_write), in time order: { t, write } | { t, run }.
+    // The plain writes still ahead (_write), in time order: { t, write }.
     this._ahead = [];
     this._aheadHead = 0; // the first not yet sent
+    // The work of the frames ahead (_at, _step), in the frame's order: { F, phase, t, run }.
+    this._work = [];
+    this._workHead = 0;
+    this._stampFloor = -Infinity; // the time a frame's work writes no earlier than (_runWork)
+    this._lastEvent = { F: -Infinity, t: -Infinity }; // the last event dispatched: its frame and time
     this._writeCursor = Infinity; // the time the run has reached; Infinity with no run
     this._ir = null;
     this._playing = false;
@@ -1858,29 +1865,55 @@ export class IRPlayer {
     return done;
   }
 
-  // ---- the writes ahead ----
-  // An event is dispatched ahead of its time (the lookahead), and what it
-  // sets going — a note's key-off, a sweep's and a macro's frames — lies
-  // further ahead still. A write whose time the run has not reached waits
-  // here, in time order, and goes out when the run reaches it: before any
-  // event at or after its time is dispatched, and at each pass's horizon. So
-  // nothing is with the chip's queue (the worklet's) further ahead than the
-  // lookahead, and what waits can still be decided at its own time (_at).
-  // Writes of one time go out in the order they were made.
+  // ---- the frame's order ----
+  // The driver renders a frame in a fixed order (driver.md §4): it dispatches
+  // the frame's events, then steps each channel's engines — sweeps, then
+  // macros — then the song's own sweeps. This player dispatches an event its
+  // lookahead ahead of the chip, at the event's own time; what the event sets
+  // going is work for later frames, and waits here (_at) keyed by its frame
+  // and its place in that order:
+  //
+  //   KEYED  a timed part of a dispatch (a gate's key-off), at its time
+  //   SWEEP  a channel's sweep step        MACRO  a macro's step
+  //   SONG   a song-wide sweep's step (MASTER, the LFO)
+  //
+  // A frame's work runs once every event of that frame is dispatched, in that
+  // order, and reads the player's state as it is then — the state is the
+  // song's at its cursor, never a forecast. What it writes is stamped no
+  // earlier than the frame's last event, so the chip takes the frame as the
+  // driver makes it: dispatch, then engines.
+  //
+  // A plain write ahead of the run (_write) waits by its time and goes out
+  // as the run reaches it, so nothing is with the chip's queue (the
+  // worklet's) further ahead than the lookahead.
 
   /** A register write (port, addr, data) or a message ({ type, when, … }), at `when` — now when absent. */
   _write(portOrMsg, addr, data, when) {
-    let t = portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg) ? portOrMsg.when : when;
+    const msg = portOrMsg && typeof portOrMsg === "object" && !Array.isArray(portOrMsg);
+    let t = msg ? portOrMsg.when : when;
+    // Work of a frame writes after that frame's events (_runWork).
+    if (t != null && t < this._stampFloor) {
+      t = this._stampFloor;
+      if (msg) portOrMsg = { ...portOrMsg, when: t };
+      else when = t;
+    }
     // On a frame-clocked target a write's time is its frame's (_sink).
     if (t != null && this._target?.frameClock) t = this._frameTime(t);
     if (t == null || t <= this._writeCursor) this._sink(portOrMsg, addr, data, when);
     else this._putAhead({ t, write: [portOrMsg, addr, data, when] });
   }
 
-  // `run` at time `t`, among the writes: now when the run has reached `t`.
-  _at(t, run) {
+  // `run` at time `t`: now when the run has reached `t`, else as work of
+  // `t`'s frame, in `phase`'s place in the frame's order.
+  _at(t, run, phase = MACRO) {
     if (t == null || t <= this._writeCursor) run();
-    else this._putAhead({ t: this._target?.frameClock ? this._frameTime(t) : t, run });
+    else this._putWork(this._eventFrame(t), phase, t, run);
+  }
+
+  // `run` as work of frame `F`, whatever the time: a sweep's step waits for
+  // its frame's events even in the frame it is dispatched in.
+  _step(F, phase, t, run) {
+    this._putWork(F, phase, t, run);
   }
 
   // Whether `when` is still ahead of the run: what composes a write from the
@@ -1888,6 +1921,61 @@ export class IRPlayer {
   // reads the state — and the panel's hand — as it is at that time.
   _isAhead(when) {
     return when != null && when > this._writeCursor;
+  }
+
+  _putWork(F, phase, t, run) {
+    const q = this._work;
+    const item = { F, phase, t, run };
+    // After every item not later than it: frame, then phase, then — for a
+    // dispatch's timed parts — time; the rest in the order they were made.
+    const later = (x) => x.F > F || (x.F === F && (x.phase > phase || (x.phase === phase && phase === KEYED && x.t > t)));
+    let lo = this._workHead, hi = q.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (later(q[mid])) hi = mid;
+      else lo = mid + 1;
+    }
+    if (lo === q.length) q.push(item);
+    else q.splice(lo, 0, item);
+  }
+
+  // The run reaches an event of frame `F` at time `t` (or a pass's horizon):
+  // the work before it runs — every earlier frame's, and this frame's timed
+  // parts up to `t` — then the plain writes up to `t` go out.
+  _advance(F, t) {
+    const q = this._work;
+    while (this._workHead < q.length) {
+      const item = q[this._workHead];
+      if (!(item.F < F || (item.F === F && item.phase === KEYED && item.t <= t))) break;
+      this._workHead++;
+      this._runWork(item);
+    }
+    if (this._workHead > 1024 && this._workHead * 2 > q.length) {
+      q.splice(0, this._workHead);
+      this._workHead = 0;
+    }
+    this._sendAhead(t);
+  }
+
+  _runWork(item) {
+    // No earlier than its frame's last event: the driver's engines follow its dispatch.
+    // (An event's time runs up to a frame past the frame's own, the driver
+    // dispatching the ticks ahead of it: the work stays within half a frame
+    // of its time, so the next frame's keeps its distance.)
+    const ts = item.phase !== KEYED && this._lastEvent.F === item.F
+      ? Math.max(item.t, Math.min(this._lastEvent.t, item.t + 0.49 / 60)) : item.t;
+    this._sendAhead(ts);
+    const floor = this._stampFloor;
+    this._stampFloor = ts;
+    try {
+      item.run();
+    } finally {
+      this._stampFloor = floor;
+    }
+  }
+
+  _workLeft() {
+    return this._workHead < this._work.length;
   }
 
   _putAhead(item) {
@@ -1902,14 +1990,13 @@ export class IRPlayer {
     else q.splice(lo, 0, item);
   }
 
-  // The run reaches `until`: everything ahead up to it goes out.
+  // The run reaches time `until`: the plain writes up to it go out.
   _sendAhead(until) {
     const q = this._ahead;
     while (this._aheadHead < q.length && q[this._aheadHead].t <= until) {
       const item = q[this._aheadHead++];
       if (item.t > this._writeCursor) this._writeCursor = item.t;
-      if (item.run) item.run();
-      else this._sink(...item.write);
+      this._sink(...item.write);
     }
     if (until > this._writeCursor) this._writeCursor = until;
     if (this._aheadHead > 1024 && this._aheadHead * 2 > q.length) {
@@ -1921,6 +2008,10 @@ export class IRPlayer {
   _dropAhead() {
     this._ahead.length = 0;
     this._aheadHead = 0;
+    this._work.length = 0;
+    this._workHead = 0;
+    this._stampFloor = -Infinity;
+    this._lastEvent = { F: -Infinity, t: -Infinity };
   }
 
   _scheduleEvents(now, horizon) {
@@ -1947,9 +2038,10 @@ export class IRPlayer {
     const dispatched =
       !willLoopAny &&
       this._tracks.every((t) => t.flatIndex >= t.events.length);
-    // ...and what they set going has gone out: the writes ahead (_write).
-    this._sendAhead(horizon);
-    const done = dispatched && this._aheadHead >= this._ahead.length;
+    // ...and the work of the frames before the horizon's own (its events may
+    // not all be dispatched yet; with none left to dispatch, its own too).
+    this._advance(this._eventFrame(horizon) + (dispatched ? 1 : 0), horizon);
+    const done = dispatched && !this._workLeft() && this._aheadHead >= this._ahead.length;
     if (done) this._writeCursor = Infinity; // the run is over: what follows (a key, the panel) is written at once
     // Every event up to the horizon is dispatched, so the frames before the
     // horizon's own have all their FM3 key edges.
@@ -2023,9 +2115,10 @@ export class IRPlayer {
         // falls in, so a note's key-on and its macros' steps count from one
         // frame (_frameTime).
         const when = this._target.frameClock ? this._frameStart(evTime) : evTime;
-        // What was ahead of this event is before it now — on a frame clock,
-        // what comes before it in its frame (_frameTime keeps that order).
-        this._sendAhead(this._target.frameClock ? this._frameTime(evTime) : evTime);
+        // The work of the frames before this event's runs first.
+        const F = this._eventFrame(when);
+        this._advance(F, when);
+        this._lastEvent = { F, t: when };
         this._dispatchEvent(ev, when);
         // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
         if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
@@ -2246,7 +2339,7 @@ export class IRPlayer {
 
         elapsed += stepSec;
       }
-      this._sendAhead(Infinity);
+      this._advance(Infinity, Infinity);
       this._flushFm3Keys();
     } finally {
       this._sink = saved.write;

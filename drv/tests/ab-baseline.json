@@ -36,10 +36,10 @@
     "digest": "811c9dc5"
   },
   "m2-master-every-track.mmlisp": {
-    "ok": false,
-    "mismatches": 40,
+    "ok": true,
+    "mismatches": 0,
     "compileErrors": 0,
-    "digest": "97c6a9b7"
+    "digest": "811c9dc5"
   },
   "m2-motion.mmlisp": {
     "ok": true,
