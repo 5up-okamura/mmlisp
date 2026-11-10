@@ -12799,12 +12799,13 @@
 
 
     // `vel` (0-15) is given only by a MIDI keyboard with Velocity on; without
-    // it a key plays at full velocity. Either way under the lane's :vol and
-    // the master as the panel shows them (IRPlayer keyTone): what is shown
-    // is what the key plays at.
+    // it a key plays at the lane's level — its last note's velocity — as an
+    // FM key does. Either way under the lane's :vol and the master as the
+    // panel shows them (IRPlayer keyTone): what is shown is what the key
+    // plays at.
     function previewPsgNoteOn(psgCh, midi, vel) {
       if (!(player instanceof IRPlayer)) return;
-      player.keyTone(psgCh, midi, vel ?? 15, audioCtx?.currentTime);
+      player.keyTone(psgCh, midi, vel ?? null, audioCtx?.currentTime);
     }
 
     function previewPsgNoteOff(psgCh) {
@@ -12894,7 +12895,7 @@
         previewPsgNoteOn(slot.lane, midi, vel);
         _keyVoices.delete(slot.lane);
         const role = wave?.set && waveLanes().includes(slot.lane) ? keyRole(wave) : null;
-        if (role) startKeyVoice(slot.lane, role, vel ?? 15);
+        if (role) startKeyVoice(slot.lane, role, vel ?? player.keyToneVel(slot.lane));
         return;
       }
 

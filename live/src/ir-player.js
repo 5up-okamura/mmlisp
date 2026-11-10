@@ -348,6 +348,7 @@ export class IRPlayer {
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
     this._psgVol = new Array(PSG_LANES).fill(VOL_UNITY); // channel vol 0-31 per PSG ch
     this._psgLive = new Array(PSG_LANES).fill(null); // each lane's note: { vel, vol } as they are (_psgRecompose)
+    this._psgKeys = new Array(PSG_LANES).fill(null); // a key of Live's held on a lane: { vel, vol } (keyTone)
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att under its off). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
@@ -1364,7 +1365,7 @@ export class IRPlayer {
       // A fader move must never un-silence an idle lane into a tone. A run
       // knows a lane keyed at its cursor, not at the chip's now: its level
       // moves where the sent writes end. Stopped, the keys' lane is live.
-      if (this._playing && !(when != null && when >= this._writeCursor - 1e-9)) return;
+      if (this._playing && !this._psgKeys[n] && !(when != null && when >= this._writeCursor - 1e-9)) return;
       if (this._psgKeyed(n, when)) this._psgRecompose(n, when);
     } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
   }
@@ -1396,21 +1397,29 @@ export class IRPlayer {
     this._initDefaultVoices();
   }
 
-  /** A tone lane keyed at `midi` (a noise lane triggered), at `vel` (0-15). */
-  keyTone(lane, midi, vel = 15, when = this._keyNow()) {
+  /**
+   * A tone lane keyed at `midi` (a noise lane triggered). At `vel` (0-15);
+   * without one at the level the lane has — its last note's velocity — as an
+   * FM key without one sounds at its channel's level.
+   */
+  keyTone(lane, midi, vel = null, when = this._keyNow()) {
     if (this._isNoiseLane(lane)) this._psgTriggerNoise(when, lane);
     else this._psgSetPitch(lane, midi, 0, when);
-    this.keyToneLevel(lane, vel, when);
+    this.keyToneLevel(lane, vel ?? this._psgLive[lane]?.vel ?? 15, when);
   }
   /** A keyed tone lane's level at `vel` — a wave role's envelope steps it. */
   keyToneLevel(lane, vel, when = this._keyNow()) {
-    // The key is the lane's note until it is let go (_psgRecompose).
-    this._psgLive[lane] = { vel: Math.max(0, Math.min(15, vel)), vol: null };
-    this._psgKeyedUntil[lane] = Infinity;
+    // The key has the lane's level until it is let go (_psgRecompose); the
+    // song's note there stays the song's, and has the lane back then.
+    this._psgKeys[lane] = { vel: Math.max(0, Math.min(15, vel)), vol: null };
     this._psgRecompose(lane, when);
   }
+  /** The velocity a key holds the lane at (keyTone), 15 with none held. */
+  keyToneVel(lane) {
+    return this._psgKeys[lane]?.vel ?? 15;
+  }
   keyToneOff(lane, when = this._keyNow()) {
-    this._psgKeyedUntil[lane] = 0;
+    this._psgKeys[lane] = null;
     this._psgSetAtt(lane, this._psgOff(lane), when);
   }
 
@@ -6414,7 +6423,7 @@ export class IRPlayer {
   // note's key-on, a macro's step, a :vol or :master write, a sweep's step —
   // as the driver re-composes a keyed channel (driver.md §7).
   _psgRecompose(lane, when) {
-    const n = this._psgLive[lane];
+    const n = this._psgKeys[lane] ?? this._psgLive[lane]; // a key held on the lane has its level
     if (!n) return;
     this._psgSetAtt(lane, this._composePsgAtt(lane, n.vel, n.vol ?? this._psgVol[lane] ?? VOL_UNITY, this._masterVol ?? VOL_UNITY), when);
   }
@@ -6423,6 +6432,7 @@ export class IRPlayer {
   // :master or a sweep moves a keyed lane's level only — written to an idle
   // lane, a level would drone a tone.
   _psgKeyed(lane, t) {
+    if (this._psgKeys[lane]) return true; // a key of Live's holds it
     return this._psgLive[lane] != null && (t ?? -Infinity) < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
   }
 

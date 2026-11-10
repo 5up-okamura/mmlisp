@@ -253,6 +253,24 @@ scene("MASTER let go follows the score's next write; the score's own ran on unde
     const both = lastAtt(w, 0);
     p.keyToneLevel(0, 8);
     assert.ok(lastAtt(w, 0) > both, "a role's level step on the key's lane composes the same way");
+    // Without a velocity a key sounds at the lane's level — its last note's
+    // velocity — and the song's note has its lane back once the key is let go.
+    {
+      const song = RIGS.ir(compile(`(sqr1 :tempo 60 :len 1 :vel 9 c :vol 25 c)`));
+      const sp = song.player;
+      song.to(0.3);
+      const noteAtt = song.att(0);
+      sp.keyTone(0, 72, null, 10.05 + 0.3);
+      song.to(0.32);
+      assert.equal(song.att(0), noteAtt, "a key without velocity at the lane's level");
+      sp.keyTone(0, 72, 15, 10.05 + 0.35);
+      song.to(0.4);
+      assert.ok(song.att(0) < noteAtt, "a key with velocity at its own");
+      sp.keyToneOff(0, 10.05 + 0.5);
+      song.to(4.5); // the song's :vol 25 on its next note's lane
+      assert.ok(song.att(0) > 0 && song.att(0) < 15, "the song's lane follows the song again");
+      assert.equal(sp.read(vol("sqr1", [0])).v, 25);
+    }
     // An FM channel the keys borrow from the song: its carriers at the key's
     // velocity under the strip and MASTER the panel shows.
     const fm = compile(`(fm1 :tempo 120 :len 4 c)`);
