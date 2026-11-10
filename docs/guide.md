@@ -2640,6 +2640,11 @@ machine's channels or dropped:
   free, else a square. On a 4-operator chip each operator track gets a
   one-operator voice made from the patch's (`kit-op2`); CSM's notes play as
   plain notes.
+- Onto `md` with samples, `fm6` is left to the PCM (its DAC): a row on
+  `fm6` goes to a free FM channel. Where the score's FM is six parts, its
+  `fm6` row keeps `fm6` and takes it from the samples in turn; with more
+  (x68k's eight), it goes to a square with the rows past six, so the
+  samples play whole.
 - A square goes to a free square, else to a free FM channel.
 - The noise stays the noise. Notes a channel plays as noise by its `:mode` —
   x68k `fm8`'s `:mode noise`, an SSG square's `:mode noise` / `both` (a PSG

@@ -489,11 +489,15 @@ function planRows(s, from, to, loopOf = () => null) {
   // a source's fm6 row goes to a free FM channel — but where fm1-fm5 are
   // all the source's, its own fm6 row keeps fm6, the two taking it in turn
   // (language.md §16: the later note takes it; the user, 2026-11-10 — a
-  // mucom88 kick on FM6 under its ADPCM snare stays an FM kick).
+  // mucom88 kick on FM6 under its ADPCM snare stays an FM kick). Only where
+  // the source's FM fits md's six: with more (an X68000's eight) rows go to
+  // the squares anyway, and its fm6 row going there too keeps the drums
+  // whole — taking turns, its notes cut the samples (the user, 2026-11-10).
   // (Counted as the source's FM voices: fm3-1…fm3-4 are one.)
   const fmRows = keys.filter((k) => kindOf(from, k) === "fm" && s.heads.get(k)?.notes > 0);
   const fmVoices = new Set(fmRows.map((k) => from.voiceKey(k) ?? k)).size;
-  const ownFm6 = fmRows.includes("fm6") && fmVoices > channelsOf(to, "fm").length - 1;
+  const mdFm = channelsOf(to, "fm").length;
+  const ownFm6 = fmRows.includes("fm6") && fmVoices > mdFm - 1 && fmVoices <= mdFm;
   if (to.name === "md" && sampleRows && !ownFm6) takenBy.set(to.voiceKey("fm6"), "dac");
   const srcKey = (k) => srcKeyOf(from, k);
   const free = (k, h) => {

@@ -1014,6 +1014,11 @@ const port = (src, to, rows, options) => {
   const f = portScore(fOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), fOwn) });
   assert.match(f.text, /\(fm6 [^)]*c _ c _/, "part J keeps fm6 beside the PCM when fm1-fm5 are taken");
   assert.match(f.text, /\(pcm\d/, "the drums still on the PCM");
+  // With more FM than md has (an X68000's eight), rows go to the squares
+  // anyway: its fm6 row goes there too, leaving the DAC to the drums whole.
+  const x8 = port('(def-score :target x68k)\n(import "presets/rx5/set.mmlisp")\n' + [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `(fm${n} :len 8 c d e f g a b c)`).join("\n") + "\n(pcm1 :len 4 kick c snare c)", "md");
+  assert.ok(x8.map.fm6 !== "fm6" && !Object.values(x8.map).includes("fm6"), `an 8-FM source leaves fm6 to the PCM: ${JSON.stringify(x8.map)}`);
+  assert.match(x8.map.fm6, /^sqr/, "its fm6 row on a square");
   assert.deepEqual(compile(j.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
 }
 
