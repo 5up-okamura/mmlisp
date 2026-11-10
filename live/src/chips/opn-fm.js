@@ -3,7 +3,7 @@
 // independent-operator and CSM tracks.
 import { words } from "./parts.js";
 import { fmWords } from "./fm-words.js";
-import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80, midiToFnumBlock } from "../ir-utils.js";
+import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80, fnumBlockOf, noteCents } from "../ir-utils.js";
 
 export const opnFm = {
   name: "fm",
@@ -54,10 +54,13 @@ export function opnFmEncoder(fnumRate, clock) {
       const [port, off] = at(ch);
       return [[port, 0xb4 + off, encodeB4(regs)]];
     },
-    // A (fractional) MIDI note: the block and F-number, high byte first.
+    // A (fractional) MIDI note: the block and F-number, high byte first —
+    // by the driver's rule, its semitone table and the cents between
+    // (driver.md §8, ir-utils.js fnumBlockOf).
     pitch(ch, midi) {
       const [port, off] = at(ch);
-      const { fnum, block } = midiToFnumBlock(midi, fnumRate);
+      const fb = fnumBlockOf(...noteCents(midi), fnumRate);
+      const block = fb >> 11, fnum = fb & 0x7ff;
       return [[port, 0xa4 + off, ((block & 0x07) << 3) | ((fnum >> 8) & 0x07)], [port, 0xa0 + off, fnum & 0xff]];
     },
     // The key: `mask` the operators' bits 0x10 (op1) … 0x80 (op4), 0 off.
@@ -84,7 +87,8 @@ export function opnFmEncoder(fnumRate, clock) {
     // chip (Nuked-OPN2's fnum_3ch decode) OP1 reads $AD/$A9, OP2 $AE/$AA and
     // OP3 $AC/$A8.
     ch3OpPitch(op, midi) {
-      const { fnum, block } = midiToFnumBlock(midi, fnumRate);
+      const fb = fnumBlockOf(...noteCents(midi), fnumRate);
+      const block = fb >> 11, fnum = fb & 0x7ff;
       const high = ((block & 0x07) << 3) | ((fnum >> 8) & 0x07), low = fnum & 0xff;
       if (op === 4) return [[0, 0xa6, high], [0, 0xa2, low]];
       const idx = [1, 2, 0][op - 1];
