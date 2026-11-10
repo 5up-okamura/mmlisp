@@ -2927,7 +2927,6 @@ export class IRPlayer {
           this._fmLevelLines[ch] = null;
           regs.vel = ev.args?.vel ?? 15; // track sticky vel for later VOL/MASTER recalcs
           this._writeFmLevel(ch, when, { master: this._masterVol ?? VOL_UNITY });
-          this._followMasterSweep(ch, when);
         }
 
         // An encoder that reads whether a write is inside a note (the
@@ -4735,7 +4734,6 @@ export class IRPlayer {
         this._fmVolSweep[ch] = null; // a PARAM_SET overrides a running sweep
         regs.vol = vol;
         this._writeFmLevel(ch, when, { vol, master: this._masterVol ?? VOL_UNITY });
-        this._followMasterSweep(ch, when);
         break;
       }
 
@@ -5811,12 +5809,12 @@ export class IRPlayer {
       }
       this._fmVolSweep[ch] = sw;
       regs.vol = to;
-      this._followMasterSweep(ch, when); // final value for MASTER recalc fallback
       return;
     }
 
     // MASTER: every channel's level, stepped frame by frame; later events
-    // read it at their own time (_masterAt) and re-follow it (_followMasterSweep).
+    // read it at their own time (_masterAt); each frame composes every channel
+    // as it is then.
     if (target === "MASTER") {
       const ms = {
         from, to, curve, params, baseFrames, loop,
@@ -6465,19 +6463,6 @@ export class IRPlayer {
       (t === "MASTER" && (ev.cmd === "PARAM_SET" || ev.cmd === "PARAM_SWEEP_STOP"))
     )
       this._masterSweep = null;
-  }
-
-  // A channel whose level inputs just changed (a note's vel, its :vol) re-writes
-  // its carriers over the rest of a running :master sweep — the sweep's own
-  // frames were composed from the channel as it was when it started.
-  _followMasterSweep(ch, when) {
-    const ms = this._masterSweep;
-    if (!ms || (ch === 2 && this._fm3Ops)) return;
-    for (let k = Math.max(0, this._sweepFrameOf(ms, when) + 1); k < ms.frames; k++) {
-      const t = this._sweepFrameTime(ms, k);
-      const F = ms.startFrame + k;
-      this._writeFmLevel(ch, t, { vol: this._fmVolAtFrame(ch, F), master: this._masterAtFrame(F) });
-    }
   }
 
   _psgVolAtNoteOn(psgCh, when) {
