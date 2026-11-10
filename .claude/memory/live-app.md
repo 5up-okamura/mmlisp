@@ -123,13 +123,11 @@ Open, in the order worth taking:
    pass's horizon used to be lost when the next frame was a new hit's. The other
    words a sample track writes (`:pan`, `:pitch`) are still per dispatcher;
    probe each against the driver as MASTER and :vol were.
-5a. **A pause's resume keeps the panel's hands** (`hands()`, `seek(…, {
-   hands })`): the page passes them on a resume, and on a score built while
-   paused (the old player's) — each control back over the score's value at
-   the point, held or let go as it was. A seek alone (the TIME bar, play
-   from a line — while paused too: `_pausedSeek`) reads the score's, and
-   so does stop → play. User's call
-   (2026-11): "シークはスコアを読む / 一時停止と同じではない"; stop → play resets.
+5a. **Pause → play with nothing done in between goes on as it was**, the
+   panel's values too (`seek(…, { hands: player.hands() })`, the page's
+   `_pausedAsLeft`). Anything else — a seek (paused or not), an edit, stop →
+   play — reads the score's. User's rule (2026-11): only that one case,
+   kept simple; the rest may change as long as the reason is clear.
 5. Bounds of the lookahead, as they are: a hand has the chip within it
    (0.2 s visible) while a sweep or macro runs; a score event's gate is
    judged when it is dispatched, so a hand let go less than the lookahead

@@ -9642,7 +9642,7 @@
     // one, unless `exactLine`, when a line with no note plays nothing);
     // fromSec: from that far into the song. Both chase the run (IRPlayer.seek).
     // se: an effect's index, null for the song; left out, the cursor decides.
-    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride, prepared = null, guard = () => true, hands = null } = {}) {
+    async function onPlay(fromLine = null, { fromSec = null, exactLine = false, se: seOverride, prepared = null, guard = () => true } = {}) {
       const request = ++_playEpoch;
       const epoch = _docEpoch;
       const current = () => request === _playEpoch && epoch === _docEpoch && guard();
@@ -9795,7 +9795,7 @@
         rebuildVizNotes(); // note model for the piano roll / VU (matches the playing IR)
         // From a point in the song, chased; an effect always plays from its top.
         if (fromSec != null && se == null) {
-          _auditionCue = player.seek(audioCtx, { sec: fromSec, hands: hands ?? [] });
+          _auditionCue = player.seek(audioCtx, { sec: fromSec });
         } else if (fromLine != null && _lastSourceMap && se == null) {
           _auditionCue = player.playFromLine(audioCtx, fromLine, _lastSourceMap);
         } else {
@@ -10176,7 +10176,7 @@
     // -----------------------------------------------------------------------
     let _paused = false;
     let _pausedSec = 0; // where pause left the song (IRPlayer.positionSec)
-    let _pausedSeek = false; // the TIME bar moved while paused: the resume is a seek, the score's values
+    let _pausedAsLeft = false; // nothing done since the pause: the resume goes on as it was, the panel's values too
     let _runSrc = null; // the source the playing (or paused) run was compiled from
     let _runSe = null;  // the effect it plays, or null for the song
     let _vizFrozen = null; // per-track clocks the piano roll holds when not playing (pause, TIME bar)
@@ -10190,7 +10190,7 @@
       // The MMLispDRV reference cannot seek; pause degrades to stop.
       if (!(player instanceof IRPlayer)) { onStop(); return; }
       _pausedSec = player.positionSec();
-      _pausedSeek = false;
+      _pausedAsLeft = true;
       // Freeze each track's playhead so the piano roll stops in place (not reset).
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
       player.stop();
@@ -10207,17 +10207,15 @@
       if (!player || !_paused) return;
       // Edited while paused: build, and play the new score from the same point
       // (a phone has no Build shortcut, so ▶ is the one tap that applies it).
-      // The panel's values go on as they were — but after a seek while
-      // paused, which reads the score's (IRPlayer.seek).
-      const hands = _pausedSeek ? [] : player.hands?.() ?? [];
-      _pausedSeek = false;
       if (editorView.state.doc.toString() !== _runSrc) {
-        onPlay(null, { fromSec: _pausedSec, se: _runSe, hands });
+        onPlay(null, { fromSec: _pausedSec, se: _runSe });
         return;
       }
       // Resume is a seek back to where pause left it: the song's clock and state
       // pick up from there.
-      player.seek(audioCtx, { sec: _pausedSec, hands });
+      // Nothing done since the pause: the panel's values go on as they were.
+      // (Anything else — a seek, an edit — reads the score's.)
+      player.seek(audioCtx, { sec: _pausedSec, hands: _pausedAsLeft ? player.hands() : [] });
       _paused = false;
       _vizFrozen = null;
       playingStarted();
@@ -14807,8 +14805,8 @@
         _vizFrozen = null;
         startFmLiveLoop();
       } else if (_paused) {
-        _pausedSec = sec; // Resume picks up here, as a seek
-        _pausedSeek = true;
+        _pausedSec = sec; // Resume picks up here
+        _pausedAsLeft = false;
         holdRollAt(player._ir, sec);
       } else {
         _timeCue = sec;   // Play starts here

@@ -1183,7 +1183,7 @@ export class IRPlayer {
   /**
    * The controls in the panel's hand now — held, or let go and not yet
    * written over by the score — with the value each has: what a pause's
-   * resume carries over (`seek`'s `hands`), a score built while paused too.
+   * resume carries over (`seek`'s `hands`).
    * @returns {{ c: object, v: number, held: boolean }[]}
    */
   hands() {
