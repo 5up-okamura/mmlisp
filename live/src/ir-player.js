@@ -303,6 +303,8 @@ export class IRPlayer {
     this._onTrig = null; // (trackIdx, code) => void — a (trig N) cue plays
     this._onHold = null; // (trackIdx) => void — a track stops at a `:len 0` hold
     this._onPosition = null; // (record) => void — where a note's macro or sample will be (setOnPosition)
+    this._noteOf = []; // per track: its note now (a macro's steps are that note's)
+    this._noteScope = null;
     this._markStep = null; // (step, time) => void — _scheduleMacro's marks, while it asks
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
@@ -2130,7 +2132,13 @@ export class IRPlayer {
         const F = this._eventFrame(when);
         this._advance(F, when);
         this._lastEvent = { F, t: when };
-        this._dispatchEvent(ev, when);
+        const isNote = ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON";
+        if (isNote) this._noteScope = { ti: tIdx, note: (this._noteOf[tIdx] = {}) };
+        try {
+          this._dispatchEvent(ev, when);
+        } finally {
+          this._noteScope = null;
+        }
         // `:len 0`: the track waits here for its key-off (_resumeHeldTrack).
         if ((ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") && ev.args?.length === 0) {
           track.held = { tick: ev.tick, when: evTime };
@@ -5115,11 +5123,20 @@ export class IRPlayer {
     const marks = spec?.src && this._onPosition ? [] : null;
     // Each step is work of its frame, after that frame's sweeps (MACRO) —
     // or, for a caller only reading the macro's values, handed over now.
-    const step = this._macroDry ? writeFn : (v, t) => this._at(t, () => writeFn(v, t), MACRO);
+    // A note's macros are its own until the track's next note, which takes
+    // the lane over on its frame (the driver's dispatch runs before the
+    // frame's macros): each step asks as it runs, so nothing is cut ahead.
+    // (limitSecs is left to what is told ahead: a caller reading the values
+    // now, and the end this returns.)
+    const scope = this._macroDry ? null : this._noteScope;
+    const endLimit = limitSecs;
+    if (scope) limitSecs = Infinity;
+    const step = this._macroDry ? writeFn
+      : (v, t) => this._at(t, () => { if (!scope || this._noteOf[scope.ti] === scope.note) writeFn(v, t); }, MACRO);
     const run = (at, gate, lim) => {
       const w = [], m = [];
       const mark = this._markStep;
-      this._markStep = marks && ((step, t) => { if (t < lim) m.push([step, t]); });
+      this._markStep = marks && ((step, t) => { if (t < Math.min(lim, endLimit)) m.push([step, t]); });
       let end;
       try {
         end = this._scheduleMacroImpl(
@@ -5143,7 +5160,7 @@ export class IRPlayer {
       seg = run(starts[i], gateSecs, Math.min(limitSecs, starts[i + 1] ?? Infinity));
     }
     flush(seg);
-    let endTime = seg.end;
+    let endTime = seg.end == null ? seg.end : Math.min(seg.end, endLimit);
     if (marks?.length)
       this._onPosition({ kind: "macro", src: spec.src, marks, end: Math.max(endTime ?? gateSecs, marks.at(-1)[1] + stepSecs) });
     // The source outlines a step vector while it sounds.

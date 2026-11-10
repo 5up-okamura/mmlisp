@@ -127,5 +127,14 @@ Open, in the order worth taking:
    no gate saw: a sweep across its track's loop (one in the loop starts over
    each pass, one from before it runs on) — `check:loops` plays several
    passes against the driver, which the A/B gate's one pass does not.
-   Macros are still laid out whole at their note (`_scheduleMacro`, with
-   `_nextNote` for the limit): the next thing to step the same way.
+   A macro's values are still laid out at its note, but each step asks as
+   it runs whether the track's note is still its own (`_noteOf`,
+   `_noteScope`) — the next note takes the lane over on its frame, as the
+   driver's dispatch does before the frame's macros; no score's output
+   moved. `_nextNote` stays for what is decided ahead of the next note's
+   dispatch: the key edges (a slur, a note that abuts the next, a :keyon
+   macro's last key-off, a level tail's silence) and the callers reading a
+   macro's values now (sample voices, midi). Those key edges are the next
+   forecast to take out — the `_pendingKeyOff` path is already the live
+   form of one of them. A scaled macro (`:scale $slot`) still reads its
+   slot when laid out, not per step.
