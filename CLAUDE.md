@@ -22,7 +22,7 @@ Source (.mmlisp) → AST → IR (JSON) → Player
 | `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
 | `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
 | `targets.js` (+ `targets/`, `chips/`, `chips/fm-words.js`) | `:target md`/`pc88`/`x68k`/`msx`/`pce`/`fc`/`gb`/`midi`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
-| `ir-player.js`                  | Runtime: schedule IR events, run macros, write chip registers           |
+| `ir-player.js` (+ `ir-player-*.js`) | Runtime: schedule IR events, run macros, write chip registers; its parts mixed into the class — `-work` (the frame-ordered work queue), `-words` (a word's event, slots, sweeps), `-macros` (a macro a step at a time), `-levels` (a voice's level, a full gate's key-off), `-samples` (the sample voices), `-panel` (hold / release / read), `-keys` (the keys' surface), `-shared` (constants) |
 | `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
 | `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
 | `sample-bank.js`                | A score's samples baked as its machine's sample part says (`bank`: the ADPCM-B's RAM, PCM8's mix, the DDA's / DMC's frames, the Mega Drive's bank), for Live's play and exports and the MCP render alike |

@@ -38,6 +38,11 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
 
 ## The panel and the players — how it is built, and what is open
 
+`ir-player.js` is split into parts (`ir-player-work / -words / -macros /
+-levels / -samples / -panel / -keys / -shared .js`), each a set of methods
+mixed into IRPlayer: the function names below are where they were, in
+the part their topic names.
+
 Investigated 2026-11-10 (the user: fixing the knobs one by one kept
 surfacing new faults; structure over behaviour, regressions accepted).
 
