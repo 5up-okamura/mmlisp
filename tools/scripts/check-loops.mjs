@@ -38,7 +38,7 @@ function parts(src, port, addr) {
   }
   p.stop();
   w.sort((a, b) => a[0] - b[0]);
-  const irAt = (f) => { let v = port === "pcm" ? 31 : null; // a voice's fader starts at unity for (const [t, d] of w) { if (Math.round((t - 10.05) * 60) > f) break; v = d; } return v; };
+  const irAt = (f) => { let v = port === "pcm" ? 31 : null; /* a voice's fader starts at unity */ for (const [t, d] of w) { if (Math.round((t - 10.05) * 60) > f) break; v = d; } return v; };
   const d = new DrvPlayer();
   d.loadMMB(encodeMmb(ir).bytes);
   let dw;
