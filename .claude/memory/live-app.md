@@ -127,7 +127,8 @@ Open, in the order worth taking:
    hands })`): the page passes them on a resume, and on a score built while
    paused (the old player's) — each control back over the score's value at
    the point, held or let go as it was. A seek alone (the TIME bar, play
-   from a line) reads the score's, and so does stop → play. User's call
+   from a line — while paused too: `_pausedSeek`) reads the score's, and
+   so does stop → play. User's call
    (2026-11): "シークはスコアを読む / 一時停止と同じではない"; stop → play resets.
 5. Bounds of the lookahead, as they are: a hand has the chip within it
    (0.2 s visible) while a sweep or macro runs; a score event's gate is
