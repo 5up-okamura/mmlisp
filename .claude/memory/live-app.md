@@ -169,3 +169,5 @@ gate before each push (drv `verify:all`, `node tools/ab-gate.mjs`,
   GM note-off fix (cce183d); a stop on an external MIDI port (each key
   gets its own off now); a :noise-rate / :env-rate / :lfo-rate sweep with
   no :from, and their `+` (from the value now).
+  A Mega Drive pcm track's `:pan` (fm6's L / R, every voice's): heard
+  in the preview, not yet on hardware.
