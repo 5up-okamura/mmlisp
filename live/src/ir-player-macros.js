@@ -5,7 +5,7 @@
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
 import { clampForTarget, sampleCurveUnit, KEY_OFF_LEAD_SECS } from "./ir-utils.js";
-import { KEYED, scaleMacroSample, MACRO } from "./ir-player-shared.js";
+import { scaleMacroSample, MACRO } from "./ir-player-shared.js";
 
 export const macroMethods = {
   // A glide ended by its target's next write before it ran its length.
@@ -479,62 +479,6 @@ export const macroMethods = {
     if (!h || h.note !== this._noteOf[ti] || !h.release.length) return null;
     for (const f of h.release) f(off);
     return off;
-  },
-
-  // `run(t)` at each of `retrigs`' times, one after the other, as work at
-  // its time while the track's note is still the one dispatching now.
-  _eachTime(retrigs, run, phase = KEYED, onEnd = null, ord = null) {
-    if (!retrigs) return;
-    // The note's gate (a held note's open until it is let go, below).
-    const G = { secs: Infinity, frames: Infinity };
-    const times = retrigs.endless ? retrigs(G) : retrigs();
-    if (retrigs.endless) G.secs = retrigs.when + 1e9;
-    const scope = this._noteScope;
-    const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
-    let endless = !!retrigs.endless, mine = {}, pending = null, parked = false;
-    const next = () => {
-      for (;;) {
-        const r = times.next();
-        if (r.done) return;
-        if (r.value === null) { parked = true; return; } // the gate, when the note is let go
-        if ("end" in r.value) return void onEnd?.(r.value.end);
-        const { t, valid } = r.value;
-        if (t <= this._writeCursor) {
-          // Behind the run: at once. With no run (it is over, or stopped) a
-          // minute is laid out, and a held note's not at all (_scheduleMacro).
-          if (!Number.isFinite(this._writeCursor) && (endless || t > (this._audioContext?.currentTime ?? 0) + 60)) return;
-          if (!ours()) return;
-          run(t);
-          continue;
-        }
-        const token = mine;
-        pending = { t, valid };
-        this._putWork(this._eventFrame(t), phase, t, () => {
-          if (token !== mine || !ours()) return;
-          pending = null;
-          run(t);
-          next();
-        }, ord, endless);
-        return;
-      }
-    };
-    // Let go at `off`: the gate closes there and the times go on — one
-    // waiting that is no longer the note's goes (_scheduleMacro).
-    if (endless && scope) this._heldNote(scope).push((off) => {
-      if (!ours()) return;
-      G.secs = off - KEY_OFF_LEAD_SECS;
-      G.frames = Math.max(1, Math.floor((off - retrigs.when) * 60 + 1e-6));
-      endless = false;
-      if (pending?.valid && !pending.valid()) {
-        mine = {};
-        pending = null;
-        next();
-      } else if (parked) {
-        parked = false;
-        next();
-      }
-    });
-    next();
   },
 
 };

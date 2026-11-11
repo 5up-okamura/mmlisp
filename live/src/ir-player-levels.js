@@ -5,7 +5,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, pitchToMidi, VOL_UNITY } from "./ir-utils.js";
+import { clampForTarget, pitchToMidi, VOL_UNITY, KEY_OFF_LEAD_SECS } from "./ir-utils.js";
 import { KEYON, MACRO } from "./ir-player-shared.js";
 
 export const levelMethods = {
@@ -424,14 +424,69 @@ export const levelMethods = {
   _noteRetriggers(ti, retrigger, keyOff = null) {
     const o = this._open[ti];
     if (!o?.retrigs || o.note !== this._noteOf[ti]) return;
+    const retrigs = o.retrigs;
     const tail = (end) => {
       if (keyOff && end != null && end > o.closedAt + 1e-9) this._whileNote(ti, end, () => keyOff(end));
     };
-    // (a frame's retriggers in track order, as the driver steps its channels')
-    this._eachTime(o.retrigs, (t) => retrigger(t, o.closedAt != null && t >= o.closedAt - 1e-9), KEYON, (end) => {
+    const onEnd = (end) => {
       if (o.closedAt != null) tail(end);
       else o.closed.push(() => tail(end));
-    }, [ti]);
+    };
+    const run = (t) => retrigger(t, o.closedAt != null && t >= o.closedAt - 1e-9);
+    // Each time is work of its frame in the KEYON phase — after the frame's
+    // dispatch and sweeps, before its macros, in track order, as the driver
+    // steps its channels' KEYON slots — while the track's note is still this
+    // one. The note's gate as the times read it: a held note's open until it
+    // is let go (below).
+    const G = { secs: Infinity, frames: Infinity };
+    const times = retrigs.endless ? retrigs(G) : retrigs();
+    if (retrigs.endless) G.secs = retrigs.when + 1e9;
+    const scope = this._noteScope;
+    const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
+    let endless = !!retrigs.endless, mine = {}, pending = null, parked = false;
+    const next = () => {
+      for (;;) {
+        const r = times.next();
+        if (r.done) return;
+        if (r.value === null) { parked = true; return; } // the gate, when the note is let go
+        if ("end" in r.value) return void onEnd(r.value.end);
+        const { t, valid } = r.value;
+        if (t <= this._writeCursor) {
+          // Behind the run: at once. With no run (it is over, or stopped) a
+          // minute is laid out, and a held note's not at all (_scheduleMacro).
+          if (!Number.isFinite(this._writeCursor) && (endless || t > (this._audioContext?.currentTime ?? 0) + 60)) return;
+          if (!ours()) return;
+          run(t);
+          continue;
+        }
+        const token = mine;
+        pending = { t, valid };
+        this._putWork(this._eventFrame(t), KEYON, t, () => {
+          if (token !== mine || !ours()) return;
+          pending = null;
+          run(t);
+          next();
+        }, [ti], endless);
+        return;
+      }
+    };
+    // Let go at `off`: the gate closes there and the times go on — one
+    // waiting that is no longer the note's goes (_scheduleMacro).
+    if (endless && scope) this._heldNote(scope).push((off) => {
+      if (!ours()) return;
+      G.secs = off - KEY_OFF_LEAD_SECS;
+      G.frames = Math.max(1, Math.floor((off - retrigs.when) * 60 + 1e-6));
+      endless = false;
+      if (pending?.valid && !pending.valid()) {
+        mine = {};
+        pending = null;
+        next();
+      } else if (parked) {
+        parked = false;
+        next();
+      }
+    });
+    next();
   },
   // What closing track `ti`'s note does on its voice: `close(t, how)`, how
   // { next, legato, keys } at the track's next note, { host } at the host's

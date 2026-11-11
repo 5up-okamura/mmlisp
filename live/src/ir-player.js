@@ -387,7 +387,7 @@ export class IRPlayer {
     this._writeCursor = Infinity;
     // All notes off (FM)
     for (let ch = 0; ch < this._fmEnc.channels; ch++) {
-      this._writeKeyOff(ch);
+      this._fmKey(ch, 0);
     }
     // Silence all PSG channels
     for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) {
@@ -613,7 +613,7 @@ export class IRPlayer {
       if (this._ramPorts.has(w.port)) continue;
       this._write(w.port, w.addr, w.data, at);
     }
-    for (let ch = 0; ch < this._fmEnc.channels; ch++) this._writeKeyOff(ch);
+    for (let ch = 0; ch < this._fmEnc.channels; ch++) this._fmKey(ch, 0);
     for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) this._psgSetAtt(psgCh, this._psgOff(psgCh), at);
     for (let v = 0; v < pcmVoices; v++) this._pcmEv(at, { kind: "off", voice: v });
     this._silenceChipPcm(at);
@@ -3582,10 +3582,6 @@ export class IRPlayer {
     // its envelopes — PSG has no hardware one, this is the whole of it).
     this._psgRecompose(psgCh, when);
     return { close, retrigger };
-  }
-
-  _writeKeyOff(chIndex) {
-    this._fmKey(chIndex, 0); // all operators off
   }
 
   // Whether a note at `when` keys nothing: its channel's vol or the master
