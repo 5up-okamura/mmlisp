@@ -2488,14 +2488,14 @@
  "tools/tests/x68k/pcm.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "31f48b9564112a42",
-  "regs": "bd520d30c3548deb",
+  "regs": "9ca6c33a46b4c8d5",
   "vgm": "16fb35388c94950d",
   "mid": "9324b44005989653"
  },
  "tools/tests/x68k/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5f3d9cff4ba81e27",
-  "regs": "fa77979d55f0f25f",
+  "regs": "5d5f4a1cc6bb969e",
   "vgm": "3849895922b924e0",
   "mid": "9f27e8fd18e5cdc4"
  }

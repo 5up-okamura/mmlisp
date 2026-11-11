@@ -27,6 +27,24 @@ function rangeWords(st, loop = true) {
   };
 }
 
+// A sample note's span, in its sample's frames at the note's pitch
+// (`perSec`: frames a second as heard): the track's range and loop (seconds
+// as heard, rangeWords) or the sample's own loop, clamped to the sample and
+// the loop to the range — as PCM8's mix clamps a note (chips/msm6258.js).
+// PCM8's, the DDA's and the DMC's notes alike; the ADPCM-B's is its RAM's
+// 8-sample blocks (_dispatchAdpcmEvent).
+function sampleSpan(st, entry, perSec) {
+  const len = entry.data.length;
+  const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
+  const r = st.range ?? {}, l = st.loop ?? {};
+  const start = Math.min(at(r.start) ?? 0, len);
+  const end = Math.max(start, Math.min(len, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : len));
+  const inRange = (x) => Math.max(start, Math.min(end, x));
+  const loopStart = inRange(l.start != null ? at(l.start) : entry.loopStart ?? start);
+  const loopEnd = inRange(l.end != null ? at(l.end) : l.len != null ? loopStart + at(l.len) : entry.loopEnd ?? end);
+  return { start, end, loopStart, loopEnd };
+}
+
 // A chip-own sample voice's level from vel + vol + master + its strip, on
 // its part's ladder (chips/parts.js `level`): the rhythm's IL attenuation
 // (unclamped — a sound falling past what the IL reaches is dumped), the
@@ -418,14 +436,9 @@ export const sampleMethods = {
         if (!entry) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // sample frames a second, as heard
-        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
-        const r = st.range ?? {}, l = st.loop ?? {};
-        const start = at(r.start) ?? 0;
-        const end = r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length;
-        const loopStart = l.start != null ? at(l.start) : undefined;
-        const loopEnd = l.end != null ? at(l.end) : l.len != null ? (loopStart ?? entry.loopStart) + at(l.len) : undefined;
+        const { start, end, loopStart, loopEnd } = sampleSpan(st, entry, perSec);
         const mode = ev.args?.mode;
-        const shotEnd = when + Math.max(0, Math.min(end, entry.data.length) - start) / perSec;
+        const shotEnd = when + (end - start) / perSec;
         this._chipPcmHit(key, ev, when, mode === "shot" || !mode ? shotEnd : Infinity,
           { rate: entry.rate, midi, pcm8: voice }, (t, h) => {
             h.gain = pcm8Gain(this._chipPcmLevelAt(h, t));
@@ -482,12 +495,7 @@ export const sampleMethods = {
         if (!enc || !entry?.data.length) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
-        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
-        const r = st.range ?? {}, l = st.loop ?? {};
-        const start = Math.min(at(r.start) ?? 0, entry.data.length);
-        const end = Math.min(entry.data.length, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length);
-        const loopStart = Math.min(end, l.start != null ? at(l.start) : entry.loopStart ?? start);
-        const loopEnd = Math.min(end, l.end != null ? at(l.end) : l.len != null ? loopStart + at(l.len) : entry.loopEnd ?? end);
+        const { start, end, loopStart, loopEnd } = sampleSpan(st, entry, perSec);
         const mode = ev.args?.mode ?? "shot";
         // Where it stops: a shot when its sample runs out, a loop held for
         // a while; a gate or loop note at its close (below: on its frame,
@@ -568,10 +576,7 @@ export const sampleMethods = {
         if (!entry?.data.length) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
-        const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
-        const r = st.range ?? {};
-        const start = Math.min(at(r.start) ?? 0, entry.data.length);
-        const end = Math.min(entry.data.length, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length);
+        const { start, end } = sampleSpan(st, entry, perSec);
         if (end <= start) break;
         const mode = ev.args?.mode ?? "shot";
         // The note's path is every voice's (_playNote); its level is baked
