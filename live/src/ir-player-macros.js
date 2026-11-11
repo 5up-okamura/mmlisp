@@ -32,11 +32,13 @@ export const macroMethods = {
   // envelope's scheduling): a run per keyed segment, each cut at the next
   // retrigger. A retrigger after key-off (an echo tail) leaves the release
   // playing: the taps step through it.
-  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60, onEnd = null) {
+  // `at`: where its steps take their place in a frame — MACRO's by the order
+  // they come, or another phase's (a :keyon's, KEYON, by track: _noteRetriggers).
+  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60, onEnd = null, at = { phase: MACRO, ord: null }) {
     if (!spec) return void onEnd?.(null);
     // The note's gate as its steps read it (_macroSteps): a held note's —
     // a hold, a note the track's next event closes (a full gate) — is open
-    // until it is let go (_heldNote, below), and the steps wait at the
+    // until it is let go (_onLetGo, below), and the steps wait at the
     // release for it.
     const G = { secs: gateSecs, frames: noteFrames };
     let endless = gateSecs > when + 1e8; // a run does not wait for a held note's
@@ -90,12 +92,12 @@ export const macroMethods = {
         }
         const mine = run;
         pending = { t, valid: value.valid };
-        this._putWork(this._eventFrame(t), MACRO, t, () => {
+        this._putWork(this._eventFrame(t), at.phase, t, () => {
           if (mine !== run || !ours()) return;
           pending = null;
           writeFn(this._macroValue(spec, v, t), t);
           pull();
-        }, null, endless);
+        }, at.ord, endless);
         return;
       }
     };
@@ -104,7 +106,7 @@ export const macroMethods = {
     // where they are — a step waiting that is no longer the note's (by its
     // own rule: a sustain's in the key-off's frame or after it, a curve's
     // past the note's frames) goes, and what follows it comes.
-    if (endless && scope) this._heldNote(scope).push((off) => {
+    if (endless && scope) this._onLetGo(scope).push((off) => {
       if (!ours()) return;
       G.secs = off - KEY_OFF_LEAD_SECS;
       G.frames = Math.max(1, Math.floor((off - when) * 60 + 1e-6));
@@ -458,27 +460,9 @@ export const macroMethods = {
     times.endless = own.gateSecs > when + 1e8; // a held note's: until it is let go
     times.when = when;
     times.step = stepSecs;
+    times.spec = keyonSpec;
+    times.gateTicks = gateTicks;
     return times;
-  },
-
-
-  // What a held note (`scope`: its track and note) does when it is let go.
-  _heldNote(scope) {
-    let h = this._heldNotes.get(scope.ti);
-    if (h?.note !== scope.note) this._heldNotes.set(scope.ti, (h = { note: scope.note, release: [] }));
-    return h.release;
-  },
-
-  // The host's key-off of track `ti`'s held note at `when`: its macros take
-  // their release where the steps the run has sent end, its retriggers stop.
-  // Returns that time (null: the track holds no note with macros).
-  _letGoNote(ti, when) {
-    const off = Math.max(when, this._sentUntil() ?? when);
-    const h = this._heldNotes.get(ti);
-    this._heldNotes.delete(ti);
-    if (!h || h.note !== this._noteOf[ti] || !h.release.length) return null;
-    for (const f of h.release) f(off);
-    return off;
   },
 
 };

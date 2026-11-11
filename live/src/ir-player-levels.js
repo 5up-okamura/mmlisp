@@ -5,7 +5,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, pitchToMidi, VOL_UNITY, KEY_OFF_LEAD_SECS } from "./ir-utils.js";
+import { clampForTarget, pitchToMidi, VOL_UNITY } from "./ir-utils.js";
 import { KEYON, MACRO } from "./ir-player-shared.js";
 
 export const levelMethods = {
@@ -399,9 +399,11 @@ export const levelMethods = {
     const gate = this._noteGate(ev, when);
     const o = (this._open[ti] = {
       note: this._noteOf[ti], gate, at: gate.end, close: null, key: this._holdKey(ev),
-      // its :keyon retriggers, one stream (_noteRetriggers); where it closed,
-      // and what waits for that
-      retrigs: this._keyonRetrigs(ev.args?.keyon, when, gate.macroGate), closedAt: null, closed: [],
+      // its :keyon retriggers, one stream (_noteRetriggers); what it does when
+      // let go — its held macros' release (_onLetGo) — and where it closed
+      // and what waits for that (an echo tail's key-off)
+      retrigs: this._keyonRetrigs(ev.args?.keyon, when, gate.macroGate),
+      release: [], closedAt: null, closed: [],
     });
     if (gate.timed) this._whileNote(ti, gate.end, () => { if (this._open[ti] === o) this._closeNote(ti, gate.end, { gate: true }); });
     return gate;
@@ -424,69 +426,21 @@ export const levelMethods = {
   _noteRetriggers(ti, retrigger, keyOff = null) {
     const o = this._open[ti];
     if (!o?.retrigs || o.note !== this._noteOf[ti]) return;
-    const retrigs = o.retrigs;
+    const { spec, when, gateTicks } = o.retrigs;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const tail = (end) => {
       if (keyOff && end != null && end > o.closedAt + 1e-9) this._whileNote(ti, end, () => keyOff(end));
     };
-    const onEnd = (end) => {
+    // The :keyon macro stepped as every macro is (_scheduleMacro), in the
+    // KEYON phase — after the frame's dispatch and sweeps, before its
+    // macros, in track order, as the driver steps its channels' KEYON slots
+    // — each step >= 0.5 but the note's own attack a retrigger.
+    this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
+      if (v >= 0.5 && t > when + 1e-6) retrigger(t, o.closedAt != null && t >= o.closedAt - 1e-9);
+    }, o.retrigs.step, (end) => {
       if (o.closedAt != null) tail(end);
       else o.closed.push(() => tail(end));
-    };
-    const run = (t) => retrigger(t, o.closedAt != null && t >= o.closedAt - 1e-9);
-    // Each time is work of its frame in the KEYON phase — after the frame's
-    // dispatch and sweeps, before its macros, in track order, as the driver
-    // steps its channels' KEYON slots — while the track's note is still this
-    // one. The note's gate as the times read it: a held note's open until it
-    // is let go (below).
-    const G = { secs: Infinity, frames: Infinity };
-    const times = retrigs.endless ? retrigs(G) : retrigs();
-    if (retrigs.endless) G.secs = retrigs.when + 1e9;
-    const scope = this._noteScope;
-    const ours = () => !scope || this._noteOf[scope.ti] === scope.note;
-    let endless = !!retrigs.endless, mine = {}, pending = null, parked = false;
-    const next = () => {
-      for (;;) {
-        const r = times.next();
-        if (r.done) return;
-        if (r.value === null) { parked = true; return; } // the gate, when the note is let go
-        if ("end" in r.value) return void onEnd(r.value.end);
-        const { t, valid } = r.value;
-        if (t <= this._writeCursor) {
-          // Behind the run: at once. With no run (it is over, or stopped) a
-          // minute is laid out, and a held note's not at all (_scheduleMacro).
-          if (!Number.isFinite(this._writeCursor) && (endless || t > (this._audioContext?.currentTime ?? 0) + 60)) return;
-          if (!ours()) return;
-          run(t);
-          continue;
-        }
-        const token = mine;
-        pending = { t, valid };
-        this._putWork(this._eventFrame(t), KEYON, t, () => {
-          if (token !== mine || !ours()) return;
-          pending = null;
-          run(t);
-          next();
-        }, [ti], endless);
-        return;
-      }
-    };
-    // Let go at `off`: the gate closes there and the times go on — one
-    // waiting that is no longer the note's goes (_scheduleMacro).
-    if (endless && scope) this._heldNote(scope).push((off) => {
-      if (!ours()) return;
-      G.secs = off - KEY_OFF_LEAD_SECS;
-      G.frames = Math.max(1, Math.floor((off - retrigs.when) * 60 + 1e-6));
-      endless = false;
-      if (pending?.valid && !pending.valid()) {
-        mine = {};
-        pending = null;
-        next();
-      } else if (parked) {
-        parked = false;
-        next();
-      }
-    });
-    next();
+    }, { phase: KEYON, ord: [ti] });
   },
   // What closing track `ti`'s note does on its voice: `close(t, how)`, how
   // { next, legato, keys } at the track's next note, { host } at the host's
@@ -495,6 +449,20 @@ export const levelMethods = {
     const o = this._open[ti];
     if (o && o.note === this._noteOf[ti]) o.close = close;
   },
+  // What the note of `scope` (its track and note) does when it is let go:
+  // its record's list (a throwaway where it has none — a key of Live's).
+  _onLetGo(scope) {
+    const o = this._open[scope.ti];
+    return o && o.note === scope.note ? o.release : [];
+  },
+  // Note `o` let go at `when` — closed, or a hot-swap's boundary while it
+  // holds: its macros take their release where the steps the run has sent
+  // end, its retriggers stop (each once).
+  _letGo(o, when) {
+    const off = Math.max(when, this._sentUntil() ?? when);
+    for (const f of o.release.splice(0)) f(off);
+  },
+
   // Track `ti`'s note closed at `t`: on its voice first, then its macros
   // take their release, as the driver's dispatch keys off before its
   // frame's macros step — but at the track's next note, which takes the
@@ -505,7 +473,7 @@ export const levelMethods = {
     this._open[ti] = null;
     o.closedAt = t;
     o.close?.(t, how);
-    if (!how.next) this._letGoNote(ti, t);
+    if (!how.next) this._letGo(o, t);
     for (const f of o.closed) f();
   },
 

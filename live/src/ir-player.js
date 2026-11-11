@@ -107,7 +107,6 @@ export class IRPlayer {
     this._onHold = null; // (trackIdx) => void — a track stops at a `:len 0` hold
     this._onPosition = null; // (record) => void — where a note's macro or sample will be (setOnPosition)
     this._noteOf = []; // per track: its note now (a macro's steps are that note's)
-    this._heldNotes = new Map(); // track → { note, release: [fn] }: a held note's macros (_heldNote)
     this._noteScope = null;
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
@@ -434,7 +433,6 @@ export class IRPlayer {
   _resetRunState() {
     this._dropAhead();
     this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
-    this._heldNotes.clear();
     this._hands.clear(); // a run starts with the score's own values
     this._handCtl.clear();
     this._levels.clear();
@@ -1048,7 +1046,7 @@ export class IRPlayer {
   // unless an incoming note has taken its channel by then.
   _settlePending(boundary) {
     // The notes still held — a hold, a full gate — take their release.
-    for (const ti of [...this._heldNotes.keys()]) this._letGoNote(ti, boundary);
+    for (const o of this._open) if (o) this._letGo(o, boundary);
     this._open.forEach((o, ti) => {
       if (!o || !Number.isFinite(o.at)) return;
       const t = Math.max(boundary, o.at);
