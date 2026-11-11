@@ -83,7 +83,7 @@ export const panelMethods = {
   _applyHands(list, at) {
     for (const { c, v, held } of list) {
       this.hold(c, v);
-      if (c.kind === "vol") for (const site of this._volSites(c.strip)) this._levelNow(site, at);
+      if (c.kind === "vol") for (const site of this._volSites(c.strip)) this._lvWrite(site, at, "hand");
       else if (c.word === "MASTER") this._recomposeLevels(at);
       else if (c.kind !== "val" && c.word !== "tempo") {
         this._panelWrite = true;
@@ -197,8 +197,8 @@ export const panelMethods = {
     hand.held = true;
     const sent = this._sentUntil();
     for (const site of sites) {
-      this._levelNow(site, this._playing ? this._audioContext?.currentTime : undefined);
-      if (sent != null) this._levelNow(site, sent);
+      this._lvWrite(site, this._playing ? this._audioContext?.currentTime : undefined, "hand");
+      if (sent != null) this._lvWrite(site, sent, "hand");
     }
   },
 
@@ -266,27 +266,6 @@ export const panelMethods = {
         if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._lv(site).vol });
       }
     }
-  },
-
-  // A level recomposed at `when` (now when absent), after the panel moved
-  // it: an FM channel, a keyed PSG lane, a Mega Drive PCM voice; a chip's
-  // sample voice its sounding hit's (_chipPcmWrite).
-  _levelNow(site, when) {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    if (kind === "fm") {
-      if (n === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
-      else this._writeFmLevel(n, when);
-    } else if (kind === "fm3op") {
-      if (this._fm3Ops) this._writeFm3OpTl(n, when);
-    } else if (kind === "psg") {
-      // A fader move must never un-silence an idle lane into a tone. A run
-      // knows a lane keyed at its cursor, not at the chip's now: its level
-      // moves where the sent writes end. Stopped, the keys' lane is live.
-      if (this._playing && !this._lv(site).key && !(when != null && when >= this._writeCursor - 1e-9)) return;
-      if (this._psgKeyed(n, when)) this._psgRecompose(n, when);
-    } else if (kind === "pcm") this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._handVol(site) });
-    else if (kind === "voice") this._chipPcmWrite(at, when ?? this._audioContext?.currentTime ?? 0, true);
   },
 
   // ---- the keys ----

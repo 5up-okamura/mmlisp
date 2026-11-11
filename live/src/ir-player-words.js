@@ -212,6 +212,51 @@ export const wordMethods = {
     if (v != null && Number.isFinite(v)) w.write(v, when);
   },
 
+  // ---- a voice's pan ----
+  // -1 (left) .. 1 (right), each chip writing it at its own resolution
+  // (ir-utils panSide), kept by the site the track writes:
+  //   fm    an FM channel's ($B4, with its AMS / FMS: chRegs)
+  //   psg   a lane's own (the PC Engine's $05, the Game Boy's NR51)
+  //   strk  a sample track's, which its hits key on with (_panOf)
+  // A part has :pan where it says so (chips/parts.js `words`).
+  _panSite(ev) {
+    const r = ev._route;
+    if (r?.core === "fm") return `fm:${ev._chIndex ?? 0}`;
+    if (r?.core === "psg") return `psg:${ev._psgCh ?? 0}`;
+    if (r?.core === "sample") return `strk:${ev._trackIndex}`;
+    return null; // a MIDI channel's: the output's
+  },
+  _panOf(site) {
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    if (kind === "fm") return this._chRegs[n]?.pan ?? 0;
+    if (kind === "psg") return this._psgPan[n] ?? 0;
+    return this._trackPans?.get(n) ?? 0;
+  },
+  _setPan(site, v, when) {
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    const pan = Math.max(-1, Math.min(1, Number(v) || 0));
+    if (kind === "fm") {
+      this._chRegs[n].pan = pan;
+      this._fmWrites(this._fmEnc.pan(n, this._chRegs[n]), when);
+    } else if (kind === "psg") {
+      this._psgPan[n] = pan;
+      this._psgWrites(this._lane(n, (e, ch) => e.pan?.(ch, pan, when) ?? []), when);
+    } else (this._trackPans ??= new Map()).set(n, pan);
+  },
+  // :pan, on any track that has it: a value, `+` `*` `$slot`, a sweep — a
+  // lane's on the encoder's fifteenths of a side, as its driver steps it.
+  _panWord(ev) {
+    const site = this._panSite(ev);
+    if (!site) return null;
+    const read = () => this._panOf(site);
+    const write = (v, t) => this._setPan(site, v, t);
+    return site.startsWith("psg:")
+      ? { read, write, sweep: (e, when) => this._sweepUnits(e, when, read(), write, 15) }
+      : { read, write };
+  },
+
   // An FM channel's word (an fm3-N track's: that operator's where it has
   // its own, driver.md §13.4): _readParam and _applyParam.
   _fmWord(ch, ev) {
@@ -233,15 +278,6 @@ export const wordMethods = {
         write: (v, t) => {
           this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, int(v)));
           if (!this._isNoiseLane(psgCh)) this._ptOffset(`psg:${psgCh}`, null, t);
-        },
-      };
-      // The fader: a keyed lane's level moves with it now (an idle one's
-      // would drone a tone; its next note composes from it).
-      case "VOL": return {
-        read: () => this._lv(`psg:${psgCh}`).vol,
-        write: (v, t) => {
-          this._lvSetVol(`psg:${psgCh}`, v);
-          if (this._psgKeyed(psgCh, t)) this._psgRecompose(psgCh, t);
         },
       };
       // The lane's level on the envelope (a shape), or its own (-1): a
@@ -295,13 +331,6 @@ export const wordMethods = {
         const read = () => this._psgDuty[psgCh] ?? 8;
         const write = (v, t) => this._psgSetDuty(psgCh, v, t);
         return { read, write, sweep: (ev, when) => this._sweepUnits(ev, when, read(), write) };
-      }
-      // A channel's own pan (the PC Engine's $05), its sweep on the
-      // encoder's fifteenths of a side.
-      case "PAN": {
-        const read = () => this._psgPan[psgCh];
-        const write = (v, t) => this._psgSetPan(psgCh, v, t);
-        return { read, write, sweep: (ev, when) => this._sweepUnits(ev, when, read(), write, 15) };
       }
       // A wave channel's def-wave (metadata.waves): its memory written
       // whole (chips/k051649.js — channels 4 and 5 share one).

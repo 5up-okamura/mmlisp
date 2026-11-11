@@ -99,21 +99,20 @@ export const sampleMethods = {
     return Math.max(0, Math.min(PCM_LOOP_MAX, Math.round(Number(sec ?? 0) * rate)));
   },
 
-  // A PCM voice's word (the Mega Drive's): its fader — a sweep steps the
-  // voice's bank a frame at a time, as the driver's sweep engine does
-  // (driver.md §14), written where it moves — its :vel, and its sample's
-  // points; null for the words only FM and PSG have.
+  // A PCM voice's word (the Mega Drive's; its fader is every track's,
+  // _volWord): its :vel — a sweep steps the voice's bank a frame at a time,
+  // as the driver's sweep engine does (driver.md §14), written where it
+  // moves — and its sample's points; null for the words only FM and PSG have.
   _pcmWord(voice, target) {
-    if (target === "VOL" || target === "VEL") {
+    if (target === "VEL") {
       // Its level's (_lv): the engine's model composes it, from these.
       const L = this._lv(`pcm:${voice}`);
-      const kind = target === "VOL" ? "vol" : "vel";
-      const fit = (v) => Math.max(0, Math.min(target === "VOL" ? 31 : 15, Math.round(v)));
-      const read = () => L[kind];
-      const write = (v, t) => this._pcmEv(t, { kind, voice, value: (L[kind] = fit(v)) });
+      const fit = (v) => Math.max(0, Math.min(15, Math.round(v)));
+      const read = () => L.vel;
+      const write = (v, t) => this._pcmEv(t, { kind: "vel", voice, value: (L.vel = fit(v)) });
       return {
         read, write,
-        sweep: (ev, when) => this._sweepWord(ev, when, read(), (v, t) => { if (L[kind] !== fit(v)) write(v, t); }),
+        sweep: (ev, when) => this._sweepWord(ev, when, read(), (v, t) => { if (L.vel !== fit(v)) write(v, t); }),
       };
     }
     if (PCM_POINT_TARGETS.has(target)) return {
@@ -144,17 +143,13 @@ export const sampleMethods = {
     });
   },
 
-  // A sample track's word: its fader and its pitch, which its sounding hits
-  // follow, and the words of its part (`own`: { WORD: { read, write } }).
+  // A sample track's word: its pitch, which its sounding hits follow, and
+  // the words of its part (`own`: { WORD: { read, write } }; its fader is
+  // every track's, _volWord).
   _sampleWord(ev, own = {}) {
     const ti = ev._trackIndex;
     const target = String(ev.args?.target ?? "").toUpperCase();
     const st = this._chipPcmState();
-    const moved = (t) => { for (const [voice, h] of st.owner) if (h.ti === ti) this._chipPcmWrite(voice, t); };
-    if (target === "VOL" && !own.noVol) return {
-      read: () => this._lv(`strk:${ti}`).vol,
-      write: (v, t) => { this._lvSetVol(`strk:${ti}`, v); moved(t); },
-    };
     // (the track's :pitch, onto the voices it sounds on: _pt)
     if (target === "NOTE_PITCH" && own.pitch) return {
       read: () => this._pt(`strk:${ti}`).offset,
@@ -351,7 +346,7 @@ export const sampleMethods = {
   // pitch; on the RAM it rounds to the 4-byte address unit, 8 frames.
   _dispatchAdpcmEvent(ev, when) {
     const ti = ev._trackIndex;
-    const st = (this._adpcmState ??= new Map()).get(ti) ?? { pan: 0 };
+    const st = (this._adpcmState ??= new Map()).get(ti) ?? {};
     this._adpcmState.set(ti, st);
     const enc = this._target.chipFor("adpcm-b").adpcm;
     const out = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
@@ -377,7 +372,7 @@ export const sampleMethods = {
         this._chipPcmHit("adpcm", ev, when, mode === "shot" || !mode ? when + shotLen : Infinity, { rate: entry.rate, midi }, (t, h) => {
           h.level = adpcmLevel(this._routes.get(h.ti).part.level, this._chipPcmLevelAt(h, t));
           h.deltaN = this._adpcmDeltaN(h, t);
-          for (const [p, a, d] of enc.note({ start, stop }, h.deltaN, h.level, st.pan, mode === "loop")) this._write(p, a, d, t);
+          for (const [p, a, d] of enc.note({ start, stop }, h.deltaN, h.level, this._panOf(`strk:${ti}`), mode === "loop")) this._write(p, a, d, t);
         }, (t, h, how) => {
           // (a voice nothing holds is stopped too)
           if (how.shot) return;
@@ -398,7 +393,6 @@ export const sampleMethods = {
       case "PARAM_SWEEP_STOP":
         this._word(ev, when, this._sampleWord(ev, {
           pitch: true,
-          PAN: { read: () => st.pan, write: (v) => { st.pan = this._snapMacroOutput("PAN", v); } },
           ...rangeWords(st, false),
         }));
         break;
@@ -493,7 +487,7 @@ export const sampleMethods = {
     const ch = ev._chIndex ?? 0;
     const key = `dda-${ch}`;
     const enc = this._ddaEncoder();
-    const st = (this._ddaState ??= new Map()).get(ti) ?? { pan: 0 };
+    const st = (this._ddaState ??= new Map()).get(ti) ?? {};
     this._ddaState.set(ti, st);
     const write = (writes, t) => { for (const [p, a, d] of writes) this._write(p, a, d, t); };
     switch (ev.cmd) {
@@ -534,7 +528,7 @@ export const sampleMethods = {
         const off = when + total / DDA_RATE;
         this._chipPcmHit(key, ev, when, off, { dda: ch, bytes, total, sent: 0 }, (t, h) => {
           h.att = levelSteps(ev._route.part.level, this._ddaLevel(h, t));
-          write([...enc.pan(ch, st.pan), ...enc.level(ch, h.att)], t);
+          write([...enc.pan(ch, this._panOf(`strk:${ti}`)), ...enc.level(ch, h.att)], t);
         }, (t, h, { shot }) => {
           if (!h || h.dumped || shot) return;
           h.end = Math.min(h.end, onFrame(t));
@@ -553,7 +547,6 @@ export const sampleMethods = {
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
         this._word(ev, when, this._sampleWord(ev, {
-          PAN: { read: () => st.pan, write: (v) => { st.pan = Math.max(-1, Math.min(1, Number(v) || 0)); } },
           ...rangeWords(st),
         }));
         break;
@@ -695,7 +688,7 @@ export const sampleMethods = {
   // OPLL a hit's note tunes its channel.
   _dispatchRhythmEvent(ev, when) {
     const ti = ev._trackIndex;
-    const st = (this._rhythmState ??= new Map()).get(ti) ?? { pan: 0 };
+    const st = (this._rhythmState ??= new Map()).get(ti) ?? {};
     this._rhythmState.set(ti, st);
     const enc = this._rhythmEnc;
     const part = ev._route.part;
@@ -705,7 +698,7 @@ export const sampleMethods = {
         if (!sound || !this._isVoiceAudible(sound)) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const sec = part.soundSec?.[sound] ?? ROM_SOUND_SEC[sound];
-        this._chipPcmHit(sound, ev, when, when + sec, { pan: st.pan, midi, tune: !!enc.tune }, (t, h) => {
+        this._chipPcmHit(sound, ev, when, when + sec, { pan: this._panOf(`strk:${ti}`), midi, tune: !!enc.tune }, (t, h) => {
           const lv = this._chipPcmLevelAt(h, t);
           // A hit at :vol 0 is silence: it takes the sound from an earlier one.
           const silent = lv.vol <= 0 || lv.master <= 0;
@@ -714,7 +707,7 @@ export const sampleMethods = {
           h.att = rhythmAtt(part.level, lv);
           h.il = top - Math.min(top, h.att);
           h.tuned = midi + this._hitCents(h, t) / 100;
-          const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, st.pan, t, h.tuned);
+          const writes = silent ? enc.dump(sound, t) : enc.hit(sound, h.il, h.pan, t, h.tuned);
           for (const [p, a, d] of writes) this._write(p, a, d, t);
         }, (t, h, { cut }) => {
           // A gate note's sound dumped at its gate; a rhythm sound has no release.
@@ -734,7 +727,6 @@ export const sampleMethods = {
       case "PARAM_SWEEP_STOP":
         this._word(ev, when, this._sampleWord(ev, {
           pitch: !!enc.tune,
-          PAN: { read: () => st.pan, write: (v) => { st.pan = this._snapMacroOutput("PAN", v); } },
         }));
         break;
       default:

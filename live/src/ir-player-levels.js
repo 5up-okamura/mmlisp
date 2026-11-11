@@ -48,18 +48,74 @@ export const levelMethods = {
     return L.liveVol ?? L.vol;
   },
 
-  // The level written again from what it is (`key`: what moved, where the
-  // voice's model takes the term itself).
-  _lvWrite(site, when, key = null) {
+  // The level written again from what it is, whatever moved it (`why`): a
+  // note's macro step ("liveVel" / "liveVol", the term that stepped), the
+  // score's fader ("fader", _volWord), the panel's hand ("hand"). Only
+  // where it is written differs by kind:
+  //   fm, fm3op  the carriers' / the operator's TL
+  //   psg        the lane's attenuation — a fader or the panel moves a keyed
+  //              lane's only (an idle one's would drone a tone; its next
+  //              note composes from it)
+  //   voice      a chip's sample voice's sounding hit (_chipPcmWrite)
+  //   strk       a sample track's fader: the hits it sounds
+  //   pcm        a Mega Drive PCM voice: its model takes the term itself
+  //   mtrk       a MIDI channel's: the output's plan plays it
+  _lvWrite(site, when, why = "fader") {
     const [kind, at] = site.split(":");
     const n = Number(at);
+    const step = why === "liveVel" || why === "liveVol";
     if (kind === "fm") {
       if (n === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
       else this._writeFmLevel(n, when);
-    } else if (kind === "fm3op") this._writeFm3OpTl(n, when);
-    else if (kind === "psg") this._psgRecompose(n, when);
-    else if (kind === "voice") this._chipPcmWrite(at, when);
-    else if (kind === "pcm" && key) this._pcmLevelStep(n, key === "liveVel" ? "vel" : "vol", this._lv(site)[key], when);
+    } else if (kind === "fm3op") {
+      if (why !== "hand" || this._fm3Ops) this._writeFm3OpTl(n, when);
+    } else if (kind === "psg") {
+      // (the panel's move, while a run plays: a run knows a lane keyed at its
+      // cursor, not at the chip's now — its level moves where the sent writes
+      // end; stopped, the keys' lane is live)
+      if (why === "hand" && this._playing && !this._lv(site).key && !(when != null && when >= this._writeCursor - 1e-9)) return;
+      if (!step && !this._psgKeyed(n, when)) return;
+      this._psgRecompose(n, when);
+    } else if (kind === "voice") this._chipPcmWrite(at, when ?? this._audioContext?.currentTime ?? 0, why === "hand");
+    else if (kind === "strk") {
+      for (const [voice, h] of this._chipPcm?.owner ?? []) if (h.ti === n) this._chipPcmWrite(voice, when);
+    } else if (kind === "pcm") {
+      if (step) this._pcmLevelStep(n, why === "liveVel" ? "vel" : "vol", this._lv(site)[why], when);
+      else this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._lv(site).vol });
+    }
+  },
+
+  // The fader's site an event's track writes (:vol): its voice's level, a
+  // sample track's own (its hits on the chips' voices follow it), a MIDI
+  // channel's; an fm3-N track's is its operator's (driver.md §13.4), the
+  // note-less (fm3 …) track's the group fader over all four.
+  _volSite(ev) {
+    const r = ev._route, ti = ev._trackIndex;
+    if (this._target?.name === "midi" || r?.core === "none") return `mtrk:${ti}`;
+    if (r?.core === "fm") {
+      const op = this._fm3OpOf(ev);
+      return op ? `fm3op:${op}` : `fm:${ev._chIndex ?? 0}`;
+    }
+    if (r?.core === "psg") return `psg:${ev._psgCh ?? 0}`;
+    if (r?.core === "sample") return r.part?.name === "dac" ? `pcm:${ev._chIndex ?? 0}` : `strk:${ti}`;
+    return null;
+  },
+
+  // :vol, on any track: the fader at its site (_volSite) — a value, `+` `*`
+  // `$slot`, a sweep a step a frame (written where it moves) — over a :vol
+  // macro's until its next step, the level written again (_lvWrite). A Mega
+  // Drive PCM voice's fader is its model's integer.
+  _volWord(ev) {
+    const site = this._volSite(ev);
+    if (!site) return null;
+    const L = this._lv(site);
+    const fit = site.startsWith("pcm:") ? (v) => Math.round(Math.max(0, Math.min(31, v))) : (v) => Math.max(0, Math.min(31, v));
+    const read = () => L.vol;
+    const write = (v, t) => {
+      this._lvSetVol(site, fit(v));
+      this._lvWrite(site, t, "fader");
+    };
+    return { read, write, sweep: (e, when) => this._sweepWord(e, when, read(), (v, t) => { if (fit(v) !== L.vol) write(v, t); }) };
   },
 
   // A sample voice's level now — its note's velocity and :vol macro, the

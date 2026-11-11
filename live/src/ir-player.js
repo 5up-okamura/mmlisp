@@ -439,6 +439,7 @@ export class IRPlayer {
     this._handCtl.clear();
     this._levels.clear();
     this._pitches.clear();
+    this._trackPans = null; // a sample track's pan is its run's (_setPan)
     this._masterHand = null;
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
@@ -2178,9 +2179,7 @@ export class IRPlayer {
     const ti = ev._trackIndex;
     if (ti == null) return;
     const site = `mtrk:${ti}`;
-    if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "VOL")
-      this._word(ev, when, { read: () => this._lv(site).vol, write: (v) => this._lvSetVol(site, v) });
-    else if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
+    if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
       // (its note's path every voice's, _playNote: the output's plan plays
       // its :vel, the level here is the panel's reading of its :vol)
       this._playNote(ev, when, { level: site, vel: Number(ev.args?.vel ?? 15), levelArgs: ev.args?.vol ? { vol: ev.args.vol } : {} });
@@ -2225,6 +2224,14 @@ export class IRPlayer {
     // track's kind.
     if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "MASTER") {
       this._masterEvent(ev, when);
+      return;
+    }
+    // :vol is every track's fader, one word whatever the track's kind
+    // (_volWord): its voice's level written again; :pan every track's pan
+    // that has one (_panWord). (A MIDI channel's are its output's.)
+    const word = ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() : null;
+    if (word === "VOL" || (word === "PAN" && this._target?.name !== "midi")) {
+      this._word(ev, when, word === "VOL" ? this._volWord(ev) : this._panWord(ev));
       return;
     }
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -2451,8 +2458,6 @@ export class IRPlayer {
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
     if (fm3Op && t === "NOTE_PITCH") return this._pt(`fm3op:${fm3Op}`).offset;
-    // An fm3 operator's :vol is its own (driver.md §13.4).
-    if (t === "VOL") return this._lv(fm3Op ? `fm3op:${fm3Op}` : `fm:${ch}`).vol;
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
@@ -2463,7 +2468,7 @@ export class IRPlayer {
       case "FM_ALG": return regs.algorithm ?? 0;
       case "FM_AMS": return regs.ams ?? 0;
       case "FM_FMS": return regs.fms ?? 0;
-      case "PAN": return regs.pan ?? 0;
+      case "PAN": return this._panOf(`fm:${ch}`);
       case "SNAP": return regs.snap ?? 0;
       // Inline `:pitch+ N` accumulates onto the running cent offset (else it
       // would read 0 and overwrite rather than add).
@@ -2622,12 +2627,9 @@ export class IRPlayer {
         );
         this._fmWrites(this._fmEnc.pan(ch, regs), when);
         break;
-      case "PAN": {
-        const pan = this._snapMacroOutput("PAN", value);
-        regs.pan = pan;
-        this._fmWrites(this._fmEnc.pan(ch, regs), when);
+      case "PAN": // (a note's pan macro: the one pan, _setPan)
+        this._setPan(`fm:${ch}`, value, when);
         break;
-      }
       // :lfo-sync: the channel's key-ons start the song's LFO over (_fmKey).
       case "LFO_SYNC":
         regs.lfoSync = value >= 0.5;
@@ -2798,18 +2800,6 @@ export class IRPlayer {
         regs.snap = Math.max(0, Math.min(0xfff, Math.round(value)));
         const op = this._fm3OpOf(ev);
         this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, null, when);
-        break;
-      }
-
-      case "VOL": {
-        // The score's fader (a :vol macro is the note's level instead, §6).
-        // FM3 independent-OP: :vol on an fm3-N track is THAT operator's fader;
-        // on the shared (fm3 …) track it is the group fader over all four
-        // (driver.md §13.4).
-        const volOp = this._fm3OpOf(ev);
-        const site = volOp ? `fm3op:${volOp}` : `fm:${ch}`;
-        this._lvSetVol(site, value);
-        this._lvWrite(site, when);
         break;
       }
 
@@ -3232,11 +3222,6 @@ export class IRPlayer {
     this._psgWrites(this._lane(psgCh, (e, ch) => e.duty?.(ch, this._psgDuty[psgCh], when) ?? []), when);
   }
 
-  // A lane's pan, −1..1, on its chip's own resolution (chips/huc6280.js).
-  _psgSetPan(psgCh, v, when) {
-    this._psgPan[psgCh] = Math.max(-1, Math.min(1, Number(v) || 0));
-    this._psgWrites(this._lane(psgCh, (e, ch) => e.pan?.(ch, this._psgPan[psgCh], when) ?? []), when);
-  }
 
   // A wave onto a lane's channel memory, where it is named — under a note
   // too (a chip that loads it with the channel off, the PC Engine's, turns it
@@ -3598,7 +3583,7 @@ export class IRPlayer {
     if (ev.args?.pan) {
       const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
       this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
-        (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step));
+        (v, t) => this._setPan(`psg:${psgCh}`, v, t), this._stepSecs(ev.args.pan.step));
     }
     // A note's (macro :wave …): its def-waves a step at a time.
     if (ev.args?.wave) {

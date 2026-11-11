@@ -230,92 +230,22 @@ Open, in the order worth taking:
    (`_waveExprFrame`). The panel reads a swept slot moving (it read the
    pre-sweep value).
 
-## The note path, one for every voice (in progress, 2026-11)
+## The note path, one for every voice (done, 2026-11)
 
-User's goal (verbatim intent): the same function, the same operation, runs
-the same path whatever the chip or target — no per-chip copies, no ad-hoc
-second implementations. Approved: unify the path first, then let each kind
-of voice answer at fixed points. PSG has no hardware envelope (a soft
-envelope: its level macros), PCM rarely uses gate (its `:mode` does).
-
-Review count before starting: 7 note-on handlers, 3 gate rules, 5 pending
-key-off flags (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, `_fm3Held`,
-`_holdChannels`), 5 :keyon retrigger paths, 3 onset paths, 6 word tables.
-
-Design:
-- One per-track "open note" record and one close path: `_closeNote(ti, t,
-  by)` — by the next note (legato or not), a REST, TRACK_END, a gate's end
-  (a timer), the host's key-off (a hold), a hot-swap, a PCM_NOTE_OFF. It
-  keys off / silences through the voice, then lets its macros go.
-- One gate rule (the driver's, FM's): a gate shorter than the note closes
-  at its end; one that reaches the note's end (none, or into a tie) closes
-  at the track's next event or its gate's end, whichever first; length or
-  gate 0 is a hold. PCM: its note closes at its NOTE_OFF (gate / loop
-  mode), else as the rule says; what closing does is the mode's.
-- A voice is an adapter: key on, close (what the gate's end does: FM key
-  off — before the next note's key-on, none on a slur; FM3 op an edge; CSM
-  a TL 127 after the level tail; PSG its level macros' release, then
-  silence — nothing when a note follows; PCM by mode: shot nothing, gate
-  cut, loop release), retrigger (a :keyon step), level site (_lv), pitch.
-- Stages, each committed with the gates green: (1) close path and the
-  open record; (2) one gate rule; (3) one retrigger path; (4) levels and
-  onset through _lv for every voice; (5) pitch; (6) the note function and
-  the voice adapters; (7) the word tables (VOL / PAN once).
-- Done: (1) — `_open[ti]` (`_openNote` / `_closeNote` in
-  ir-player-levels.js) replaces `_pendingKeyOff`, `_fm3Pending`,
-  `_psgPending`, `_fm3Held`; closes by `{next, legato, keys}`, `{host}`
-  or plain (rest / track end / gate end). A hold now ends at END_OF_TRACK
-  (language.md §17; it was left keyed before); a track end's silence is on
-  its frame, not ε before.
-- Done: (2) — `_noteGate(ev, when)` (ir-player-levels.js) is the one gate
-  rule (hold / open = the driver's pendingOff / timed), decided once per
-  note in `_dispatchEvent` (`_openNote`), read by every voice
-  (`_gateOf(ti)`); a voice only says what closing is (`_noteCloses`), a
-  sample voice through `_sampleCloses` (cut / release / a shot's no-op;
-  chips' `release(t, h, how)` in `_chipPcmHit`). A timed gate closes on a
-  timer at its end ({ gate }: whole frames on a frame-clocked machine); a
-  pcm note's PCM_NOTE_OFF closes it too, in its track's order (pcm-ab).
-  `_holdChannels` is gone (holds are `_open` records with `gate.hold`).
-  PSG now reads an explicit full gate as FM does; FM's short gate with a
-  :keyon keys off at the gate and again after an echo tail (the driver's);
-  MD PCM's retriggers run on `_eachTime`. A one-shot capture ends at the
-  song's end at the earliest (a muted track's writes set it before).
-- Done: (3) — a note's :keyon retriggers are one stream on its record
-  (`_openNote`: `_keyonRetrigs`, ending with `{ end }`), read by its
-  envelopes (`_envRetrigs = _retrigsOf(ti)`) and its voice
-  (`_noteRetriggers(ti, retrigger, keyOff)`: work in the KEYON phase,
-  after the frame's dispatch and sweeps, before its macros, in track
-  order); an echo tail past the close keys off a step after the macro's
-  end (FM and now FM3 alike). `_scheduleKeyonMacro`, `_fm3Retriggers`,
-  `_letGoAt` / `_letGo` are gone; `_eachTime` has one caller.
-- Done: (4) — every voice's level is an `_lv` site and its onset one rule:
-  `_lvNoteOn`, then `_lvMacros(site, args, when, gate, live)` — first steps
-  on the note move the level at once, the key-on composes from them
-  (`live()` false till keyed), a :keyon retrigger starts over from them
-  (`note.first`, `_lvRetrig`). FM / FM3 now so too (its redundant first TL
-  write gone; frame-equal). Chip samples' level is `voice:<voice>`
-  (`_sampleLevel`: over the track's `strk:` fader), DMC's `voice:dpcm`;
-  MD PCM's `pcm:<n>` sends each step to the driver's voice model
-  (`_lvWrite(site, t, key)` → `_pcmLevelStep`, a due retrigger carrying
-  it). `_macroOnset` remains only for pitch (stage 5);
-  `macroLeadsWithHold` is gone.
-- Done: (5) — every pitched voice's pitch is one model, `_pt(site)`
-  (ir-player-levels.js: midi, offset, now, note), the driver's rule: a
-  :pitch step note + v cents, a :semi step note + v semitones, over the
-  offset where additive, the later bind winning (`_ptMacros`); a :pitch /
-  :snap write the plain note + offset (`_ptOffset`); the onset written
-  once (`_ptNoteOn` + first steps, `_ptWrite`). FM's currentMidi /
-  pitchOffset, the PSG's arrays, the fm3 ops' midi / offset, the chips'
-  `cents` map and hit `mac`, `_schedulePitchMacro` / `_scheduleSemiMacro`,
-  `onsetWritten` and `_macroOnset` are gone; a sample track's :pitch is
-  `_pt("strk:N").offset`, copied onto its voices. m3-macro-multi (:pitch
-  with :semi) now matches the driver (A/B 127 clean). `_resetFm3` is the
-  one fm3 reset.
-- Done: (6) — every note takes `_playNote(ev, when, v)` (ir-player-levels.js):
-  gate, retriggers, level (`v.level`) and pitch (`v.pitch`) with their
-  macros held till the key-on; `v.key(n)` is the voice's key-on, returning
-  `{ close, retrigger, tailOff }`. Adapters: `_fmNoteKey` (fm, fm3 op,
-  CSM), `_psgNoteKey` (tone, noise, rate noise), `_chipPcmHit` (ADPCM-B,
-  PCM8, rhythm, DDA), the DMC's, the MD PCM's (`_dispatchPcmNoteOn`), the
-  MIDI channel's level. `_sampleClose(ev, release)` is the samples' close
-  rule; `_psgNoteLevel` is gone. Next: (7) the word tables.
+User's rule: the same function, the same operation, runs the same path
+whatever the chip or target — no per-chip copies; a voice differs only
+where its chip does (PSG's soft envelope, PCM's modes). Do not add a
+voice-specific copy of any of these; extend the adapter instead:
+- `_playNote(ev, when, v)` — every note (ir-player-levels.js); `v.key(n)`
+  is the voice's key-on, returning `{ close, retrigger, tailOff }`
+  (`_fmNoteKey`, `_psgNoteKey`, `_chipPcmHit`, the DMC's, the MD PCM's).
+- `_noteGate` / `_openNote` / `_closeNote` — the driver's gate rule and
+  the one close; `_sampleClose` the samples' close by mode.
+- `_keyonRetrigs` / `_noteRetriggers` — one retrigger stream (KEYON phase).
+- `_lv` + `_lvMacros` + `_lvWrite(site, t, why)` — every level, whatever
+  moved it (a step, the fader, the panel's hand); onset from first steps.
+- `_pt` + `_ptMacros` + `_ptWrite` — every pitch, the driver's rule.
+- `_volWord` / `_panWord` — :vol and :pan on every track, dispatched in
+  `_dispatchEvent` beside MASTER.
+Open after it: the PC Engine's PCM is too quiet (def-mod or the wave's
+vol — the user's to decide).
