@@ -1,0 +1,7 @@
+; The PCM voices are one stream on fm6's DAC, which comes out on fm6's L / R
+; bits: a pcm track's :pan is that one pan — every voice's, and fm6's own
+; where fm6 plays beside the PCM (language.md §16). A value, a sweep, `+`
+; and `*` from where it is, written on either pcm track.
+(def-pcm blip :file "blip.wav")
+(pcm1 blip :tempo 120 :len 4 :pan -1 c :pan (linear :to 1 :len 1/2) c c :pan+ -1 c :pan* 0.5 c)
+(pcm2 blip :len 4 _ c :pan 1 c _ c)

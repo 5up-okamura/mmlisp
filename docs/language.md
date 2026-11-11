@@ -2075,6 +2075,17 @@ the compiler says so once, where they first meet (`W_TARGET`). A score with
 no `fm6` notes keeps the DAC from its first PCM note on, and one with no PCM
 never touches it.
 
+The DAC comes out on fm6's left and right bits, so the PCM has **one pan**:
+`:pan` on any of `pcm1`–`pcm3` is fm6's `:pan`, written as if on fm6 — every
+voice moves with it, an `fm6` note plays at it, and the last write from any of
+the four wins (a value, `+` / `*` from where it is, a sweep, which any of
+their writes ends). A note's `(macro :pan …)` is not a pcm track's
+(`E_PCM_MACRO_TARGET`).
+
+```mmlisp
+(pcm1 kick :len 4 :pan left c c :pan (linear :to 1 :len 2/1) c c c c)
+```
+
 ### Sample def keys
 
 | Key           | Meaning                                                        |
@@ -2606,8 +2617,8 @@ is what the compiler holds a `pc88` score to.
 its chips — 4-op FM, the SN76489's square or noise, the SSG, a wavetable
 channel, the ROM rhythm, a sample voice — and a part brings its own words: the FM operator keys, the
 SN76489 noise's `white0`–`periodic3`, the SSG's `:noise-rate`, a sample
-voice's range points, `:pan` where the chip pans (the OPN's and the OPM's FM, the ADPCM-B, the
-ROM rhythm, the HuC6280, the Game Boy). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
+voice's range points, `:pan` where the chip pans (the OPN's and the OPM's FM, the Mega Drive's
+DAC — fm6's, §16 — the ADPCM-B, the ROM rhythm, the HuC6280, the Game Boy). A part's word on another part's channel — `:tl1` on `sqr1`, `:pan`
 on a PSG track, `:mode white0` on `fm1` — is `E_UNSUPPORTED_TARGET`, inline,
 in a macro and in a `(param-set …)`, on every target; a word only other
 targets' parts have is `E_TARGET` (`:noise-rate` on `md`). The rest of the

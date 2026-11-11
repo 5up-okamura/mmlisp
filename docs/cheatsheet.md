@@ -233,8 +233,9 @@ step 6 dB; voices sum and hard-clip. `:fx` effects, baked in order: `gain`
 - In a PCM score `fm6` plays between the PCM's notes: a PCM note takes the DAC,
   an `fm6` note gives it back to FM (where they meet the later wins, `W_TARGET`).
 - A channel takes its own chip's words: FM operator keys and `:pan` on a
-  `sqr`/`noise`/`pcm` track, or `:mode white0` on an FM track, are
-  `E_UNSUPPORTED_TARGET`.
+  `sqr`/`noise` track, or `:mode white0` on an FM track, are
+  `E_UNSUPPORTED_TARGET`. On `md` a `pcm` track's `:pan` is fm6's: the DAC's
+  one pan, every voice's (§16).
 ## Targets (§19)
 
 - `(def-score :target pc88)` holds a score to the PC-8801's YM2608 (§19):

@@ -1583,6 +1583,22 @@
   "vgm": "ec3b6335a3519436",
   "mid": "67aa619a5a635015"
  },
+ "drv/tests/m4-pcm-pan.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "c55cc8d44c0d27dc",
+  "regs": "c55d6021b001944e",
+  "mmb": "c3cd83237727e0a4",
+  "vgm": "fad7eb0f1f273c82",
+  "mid": "00b10d529bf9c20a"
+ },
+ "drv/tests/m4-pcm-pan.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "6ca55072f8601f25",
+  "regs": "c55d6021b001944e",
+  "mmb": "832e10dde8b3ef5b",
+  "vgm": "7d5b4e0e4df9a576",
+  "mid": "e733ce10fcb56486"
+ },
  "drv/tests/m4-prio-loop.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "818a7c530a1d30ca",

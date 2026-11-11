@@ -272,6 +272,8 @@ export const wordMethods = {
     const r = ev._route;
     if (r?.core === "fm") return `fm:${ev._chIndex ?? 0}`;
     if (r?.core === "psg") return `psg:${ev._psgCh ?? 0}`;
+    // The Mega Drive's PCM is one stream on fm6's DAC: its pan is fm6's.
+    if (r?.core === "sample" && r.part?.name === "dac") return "fm:5";
     if (r?.core === "sample") return `strk:${ev._trackIndex}`;
     return null; // a MIDI channel's: the output's
   },
@@ -442,8 +444,10 @@ export const wordMethods = {
   _slotKey(ev, target) {
     if (isSongWord(target)) return `song:${target}`;
     const r = ev._route;
-    // A chip's sample track keeps its words (_sampleWord), and so its slots.
+    // A chip's sample track keeps its words (_sampleWord), and so its slots;
+    // the Mega Drive's PCM's pan is fm6's (_panSite), in fm6's slot.
     if (r?.core === "sample" && r.part?.name !== "dac") return `strk${ev._trackIndex}:${target}`;
+    if (r?.core === "sample" && target === "PAN") return "fm5:0:PAN";
     return `${r?.core}${r?.lane}:${this._fm3OpOf(ev)}:${target}`;
   },
 

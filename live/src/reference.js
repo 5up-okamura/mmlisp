@@ -385,9 +385,9 @@ export const REFERENCE = [
     example: '(fm1 :len 4 c e :vol (linear 31..8 :len 1) g e c e g e)',
   },
   {
-    name: ':pan', cat: 'track', section: '§5', tracks: FM,
+    name: ':pan', cat: 'track', section: '§5', tracks: [...FM, ...PCM],
     syntax: ':pan left | center | right | −1..1  ·  :pan (curve …)',
-    summary: 'FM stereo: one side, both, or a curve snapping between them. On pce a wave or noise channel takes −1..1 whole, on its own left and right levels.',
+    summary: 'FM stereo: one side, both, or a curve snapping between them. On md a pcm track\'s :pan is fm6\'s, the DAC\'s one pan for every voice. On pce a wave or noise channel takes −1..1 whole, on its own left and right levels.',
     insert: ':pan left',
     example: '(fm1 :len 8 :pan left c e :pan right g e :pan center c)',
   },

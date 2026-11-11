@@ -1638,6 +1638,13 @@ unheard while the DAC is off, and heard again when a PCM note turns it on. A
 score without fm6 notes keeps the DAC from its first PCM note; one without
 PCM never writes it.
 
+**Pan.** The DAC comes out on fm6's L / R bits (`$B6`), so the voices share
+one pan: a pcm channel's `PAN` — its PARAM_SET, relative write, sweep and its
+stop — is fm6's (channel 5), as if written there (`param_set_ex`,
+`read_param`, `start_sweep` / `stop_sweep` route it), so the latest write from
+fm6 or any pcm channel wins and ends a sweep running on it. Gate:
+`m4-pcm-pan`.
+
 **The four points** start as the sample's — the range `:pcm-start` /
 `:pcm-end` / `:pcm-len` (the whole sample when the def sets none) and the loop
 `:loop-start` / `:loop-end` / `:loop-len` (the range when the def sets none) —

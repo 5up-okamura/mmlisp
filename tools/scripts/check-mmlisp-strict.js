@@ -412,9 +412,14 @@ async function main() {
     // a macro and in a param-set; a song-wide word is any track's.
     {
       label: "a channel takes its own part's words",
-      src: '(sqr1 :tl1 30 :pan left :lfo-rate 3 (macro :ar1 [3 1]) (param-set :tl2 3) c)\n(noise :ssg1 8 c)\n(fm1 :pcm-start 4 (macro :mode [white0]) c)\n(def-pcm k :file "/k.wav")\n(pcm1 k :pan left c)',
+      src: '(sqr1 :tl1 30 :pan left :lfo-rate 3 (macro :ar1 [3 1]) (param-set :tl2 3) c)\n(noise :ssg1 8 c)\n(fm1 :pcm-start 4 (macro :mode [white0]) c)\n(def-pcm k :file "/k.wav")\n(pcm1 k :tl1 3 c)',
       expected: ["E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET",
         "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET", "E_UNSUPPORTED_TARGET"],
+    },
+    {
+      label: "md's pcm :pan is fm6's, the DAC's one pan (§16); a note's pan macro is not a pcm track's",
+      src: '(def-pcm k :file "/k.wav")\n(pcm1 k :pan left c :pan (linear :to 1 :len 1) c :pan+ -1 c)\n(pcm2 k :pan right c (macro :pan [-1 1]) c)',
+      expected: ["E_PCM_MACRO_TARGET"],
     },
     {
       label: "the ADPCM-B reads a range point at key-on",

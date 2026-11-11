@@ -2331,8 +2331,15 @@ class Porter {
       return DROP;
     }
     if (w === "SSG_ENV" && ctx.destPart && !ctx.destPart.words(w)) return this.envAsLevel(val, ctx);
-    if (ctx.destPart ? ctx.destPart.words(w) : this.toHas(w)) return KEEP;
+    // The Mega Drive's PCM has one pan, fm6's (language.md §16): a voice's
+    // own pan there would move every voice and fm6, so it is taken out.
+    const sharedPan = w === "PAN" && ctx.destPart?.name === "dac" && this.from.name !== "md";
+    if (!sharedPan && (ctx.destPart ? ctx.destPart.words(w) : this.toHas(w))) return KEEP;
     if (w === "PAN" && (val.value === "center" || val.value === "0")) return DROP; // as a channel with none plays
+    if (sharedPan) {
+      this.say(`${base}${ctx.head ? ` on ${this.nameOf(ctx.head)}` : ""}: the Mega Drive's PCM has one pan, fm6's, for every voice; taken out`);
+      return DROP;
+    }
     const label = ctx.srcPart?.words(w) ? ctx.srcPart.label : owners.find((p) => this.from.parts.includes(p))?.label ?? owners[0].label;
     this.say(`${base} (the ${label}'s)${ctx.head ? ` on ${this.nameOf(ctx.head)}` : ""}: ${where} has none; taken out`);
     return DROP;

@@ -1682,6 +1682,9 @@ export class DrvPlayer {
   }
 
   _paramSet(channelId, target, value, force = false) {
+    // The PCM voices are one stream on fm6's DAC: a pcm track's pan is fm6's
+    // L / R, as if written there.
+    if (target === TARGET_ID.PAN && channelId >= 20 && channelId <= 22) channelId = 5;
     // A word in the panel's hand: the score's write waits while it is held,
     // and takes it back once let go (hold).
     if (this._hands?.size && !this._panelWrite) {
@@ -1974,6 +1977,7 @@ export class DrvPlayer {
   }
 
   _startSweep(ch, target, curveId, loop, from, to, len) {
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5; // the DAC's pan is fm6's
     const g = this._globalSweep(target);
     const bank = g >= 0 ? -1 : this._sweepBank(ch);
     if (g < 0 && bank < 0) return;
@@ -2003,6 +2007,7 @@ export class DrvPlayer {
   }
 
   _stopSweep(ch, target) {
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5; // the DAC's pan is fm6's
     const g = this._globalSweep(target);
     if (g >= 0) {
       this._gsweeps[g] = null;
@@ -3029,7 +3034,8 @@ export class DrvPlayer {
         + VEL_FINE / 2) >> 3;
     if (target === TARGET_ID.GATE)
       return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
-    const fc = ch >= 16 && ch <= 19 ? 2 : ch; // an operator track's patch is CH3's
+    // (a pcm track's pan is fm6's: the DAC's stream comes out on its L / R)
+    const fc = ch >= 16 && ch <= 19 ? 2 : ch >= 20 && ch <= 22 && target === TARGET_ID.PAN ? 5 : ch; // an operator track's patch is CH3's
     if (fc < 6) {
       const regs = this._fm[fc];
       if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;

@@ -893,6 +893,9 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     }
     return;
   }
+  /* The PCM voices are one stream on fm6's DAC: a pcm track's pan is fm6's
+   * L / R, as if written there. */
+  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5;
   /* PCM soft-mix levels: per-voice state, composed into the mixer's shift. */
   if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
@@ -1061,7 +1064,8 @@ static int read_param(const MMLSeq *s, int ch, int target) {
             + VEL_FINE / 2) >> 3;
   if (target == T_GATE)
     return ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
-  int fc = ch >= 16 && ch <= 19 ? 2 : ch; /* an operator track's patch is CH3's */
+  /* an operator track's patch is CH3's; a pcm track's pan is fm6's (the DAC's) */
+  int fc = ch >= 16 && ch <= 19 ? 2 : ch >= CH_PCM1 && ch <= CH_PCM3 && target == T_PAN ? 5 : ch;
   if (fc < 6) {
     const MMLFmCh *c = &s->fm[fc];
     if (target == T_NOTE_PITCH) return c->pitch_cents;
@@ -1166,6 +1170,7 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
                         int from, int to, int len) {
   int g = global_sweep(target);
   MMLSweep *sw;
+  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5; /* the DAC's pan is fm6's */
   if (g >= 0) {
     sw = &s->gsweeps[g];
     s->gsweep_live |= 1u << g;
@@ -1196,6 +1201,7 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
 }
 static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
   int g = global_sweep(target);
+  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5; /* the DAC's pan is fm6's */
   if (g >= 0) {
     s->gsweeps[g].active = 0;
     return;

@@ -8,8 +8,10 @@ export const dacMix = {
   name: "dac",
   label: "Mega Drive DAC",
   kind: "sample",
-  // A soft-mixed voice owns no FM channel, so it has no pan lane.
-  words: words(/^(?:RANGE|LOOP)_/),
+  // The voices are one stream on fm6's DAC, which comes out on fm6's L / R
+  // bits: a pcm track's :pan is that one pan — fm6's own, every voice's
+  // (language.md §16).
+  words: words(/^(?:RANGE|LOOP)_/, "PAN"),
   settings: [":pcm-voices"],
   bank: "mmb",
   // The FM channel its voices sound on (fm6's DAC): busy while one plays.
