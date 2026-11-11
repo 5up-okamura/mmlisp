@@ -163,7 +163,7 @@ Open, in the order worth taking:
    **A macro steps one at a time too**: `_macroSteps` is a generator (the
    one core every target and type shares), `_scheduleMacro` writes a step
    as frame work (MACRO) and pulls the next; a :keyon's retriggers come one
-   at a time (`_keyonRetrigs`, `_eachTime`), the envelopes restarting at
+   at a time (`_keyonRetrigs`, `_noteRetriggers`), the envelopes restarting at
    each. What waited for a macro's end hears it when it comes (`onEnd`:
    the level tail's silence and the CSM mute through `_lvEnded`, a :keyon
    note's last key-off). A held note's chains are endless work. Each step
@@ -192,7 +192,7 @@ Open, in the order worth taking:
    macros' release where the sent steps end (the lookahead late), its
    retriggers stop, a tone lane falls silent after the release. With no
    run (it is over: a song that is only held notes; or stopped) a held
-   note's chains are not stepped at all — `_scheduleMacro` and `_eachTime`
+   note's chains are not stepped at all — `_scheduleMacro` and `_noteRetriggers`
    both check the cursor each pull (the second was missed at first: a
    stack overflow on pce :lfo-sync and the chips' sample hits). **Key edges are the driver's too**: a gate shorter than its note
    keys off at its end; a full gate's key-off waits for the track's next
