@@ -187,6 +187,7 @@ export const sampleMethods = {
       }
     };
     this._playNote(ev, when, {
+      audible: this._isVoiceTrackAudible(ti, voice),
       level: site, vel: Number(ev.args?.vel ?? 15), pitch: site, midi: fields.midi ?? 60,
       pitchGate: fields.tune ? ev.args?.length : undefined,
       key: (n) => {
@@ -342,7 +343,7 @@ export const sampleMethods = {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._adpcmBank?.entries?.[ev.args?.sample];
-        if (!entry || !this._isVoiceTrackAudible(ti, "adpcm")) break;
+        if (!entry) break;
         const ratio = 2 ** ((pitchToMidi(ev.args?.pitch ?? "c4") - 60) / 12);
         const frames = (sec) => sec * entry.rate * ratio;
         const UNIT_FRAMES = 8;
@@ -414,7 +415,7 @@ export const sampleMethods = {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._frameBank?.entries?.[ev.args?.sample];
-        if (!entry || !this._isVoiceTrackAudible(ti, key)) break;
+        if (!entry) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // sample frames a second, as heard
         const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
@@ -478,7 +479,7 @@ export const sampleMethods = {
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
         const entry = this._frameBank?.entries?.[ev.args?.sample];
-        if (!enc || !entry?.data.length || !this._isVoiceTrackAudible(ti, key)) break;
+        if (!enc || !entry?.data.length) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
         const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
@@ -564,7 +565,7 @@ export const sampleMethods = {
       case "PCM_NOTE_ON": {
         const name = ev.args?.sample;
         const entry = this._frameBank?.entries?.[name];
-        if (!entry?.data.length || !this._isVoiceTrackAudible(ti, "dpcm")) break;
+        if (!entry?.data.length) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const perSec = entry.rate * 2 ** ((midi - 60) / 12); // source frames a second, as heard
         const at = (sec) => (sec == null ? null : Math.max(0, Math.round(sec * perSec)));
@@ -576,6 +577,7 @@ export const sampleMethods = {
         // The note's path is every voice's (_playNote); its level is baked
         // into the bytes at its key-on, stopped at its close (a shot plays out).
         this._playNote(ev, when, {
+          audible: this._isVoiceTrackAudible(ti, "dpcm"),
           level: "voice:dpcm", vel: Number(ev.args?.vel ?? 15),
           key: () => {
           // The level at key-on, baked into the bytes: the voice's (_sampleLevel)
@@ -680,7 +682,7 @@ export const sampleMethods = {
     const sound = this._ir?.metadata?.samples?.find((s) => s.name === ev.args?.sample)?.rhythm;
     switch (ev.cmd) {
       case "PCM_NOTE_ON": {
-        if (!sound || !this._isVoiceAudible(sound)) break;
+        if (!sound) break;
         const midi = pitchToMidi(ev.args?.pitch ?? "c4");
         const sec = part.soundSec?.[sound] ?? ROM_SOUND_SEC[sound];
         this._chipPcmHit(sound, ev, when, when + sec, { pan: this._panOf(`strk:${ti}`), midi, tune: !!enc.tune }, (t, h) => {
@@ -738,15 +740,6 @@ export const sampleMethods = {
   },
 
   _dispatchPcmNoteOn(ev, when) {
-    // A muted PCM track must not sound. PCM owns no FM/PSG channel, so there is
-    // no key-off to suppress it after the fact (as _applyAudibility does for
-    // those) — the note has to be dropped here, like FM/PSG NOTE_ON do.
-    // A voice started before a mute or solo landed is released here, where its
-    // next note would have replaced it; a loop would otherwise run on.
-    if (!this._isTrackAudible(ev._trackIndex)) {
-      this._pcmEv(when, { kind: "off", voice: ev._chIndex ?? 0 });
-      return;
-    }
     const sample = String(ev.args?.sample ?? "").trim();
     if (!sample) return;
     const velRaw = Number(ev.args?.vel ?? 15);

@@ -850,61 +850,68 @@ export class IRPlayer {
    * Immediately silence any channel whose track just became inaudible, so a
    * held/sustained note stops at once instead of only gating the next note-on.
    * Audible channels are left alone and resume at their next note. No-op when
-   * not playing (nothing is sounding yet).
+   * not playing (nothing is sounding yet). Each voice as a muted track's
+   * note silences it (_silence).
    */
   _applyAudibility() {
     const ctx = this._audioContext;
     if (!ctx) return;
     const when = ctx.currentTime;
-    // FM: key off an inaudible channel — unless another audible track shares it
+    // FM: an inaudible channel — unless another audible track shares it
     // (FM3 operator mode routes several tracks through channel 3's 0x28).
     const audibleFm = new Set();
-    for (const [ti, ch] of this._lanesOf("fm")) {
-      if (this._isTrackAudible(ti)) audibleFm.add(ch);
-    }
-    for (const [ti, ch] of this._lanesOf("fm")) {
-      if (this._isTrackAudible(ti) || audibleFm.has(ch)) continue;
-      this._fmKey(ch, 0, when);
-    }
-    // An FM3 operator track that went silent while channel 3 still sounds for
-    // another: key off its operator alone, and drop its queued key-ons.
-    let fm3Off = 0;
+    for (const [ti, ch] of this._lanesOf("fm")) if (this._isTrackAudible(ti)) audibleFm.add(ch);
+    for (const [ti, ch] of this._lanesOf("fm")) if (!this._isTrackAudible(ti) && !audibleFm.has(ch)) this._silence(`fm:${ch}`, when);
+    // An FM3 operator track that went silent while channel 3 still sounds
+    // for another: its operator alone.
     this._ir?.tracks?.forEach((t, ti) => {
       const op = /^fm3-([1-4])$/.exec(t.scoreChannel ?? "")?.[1];
-      if (op && !this._isTrackAudible(ti)) fm3Off |= 0x10 << (op - 1);
+      if (op && !this._isTrackAudible(ti)) this._silence(`fm3op:${op}`, when);
     });
-    if (fm3Off && this._reg27 & 0x80) this._fm3CsmRelease(fm3Off, when);
-    else if (fm3Off && this._fm3Mask & fm3Off) this._fm3KeysOff(fm3Off, when);
-    // PSG: force silent attenuation on an inaudible channel.
-    for (const [ti, psgCh] of this._lanesOf("psg")) {
-      if (!this._isTrackAudible(ti)) this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
-    }
-    // The DAC mix has no key: release an inaudible track's voice (its loop ends).
-    for (const [ti, voice] of this._lanesOf("sample", "dac")) {
-      if (!this._isTrackAudible(ti)) this._pcmEv(when, { kind: "off", voice });
-    }
+    for (const [ti, psgCh] of this._lanesOf("psg")) if (!this._isTrackAudible(ti)) this._silence(`psg:${psgCh}`, when);
+    for (const [ti, voice] of this._lanesOf("sample", "dac")) if (!this._isTrackAudible(ti)) this._silence(`pcm:${voice}`, when);
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
     if (this._reg27 & 0x80) this._writeReg27(when);
-    // The chips' own sample voices: dump a rhythm sound, stop the ADPCM-B.
-    const adpcm = this._target?.chipFor?.("adpcm-b")?.adpcm;
-    for (const [voice, h] of this._chipPcm?.owner ?? []) {
-      if (this._isVoiceAudible(voice)) continue;
-      // A PCM8 voice is cut from the mix.
-      if (h?.pcm8 != null) { this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 }); continue; }
-      // A DDA channel stops, and its hit is fed no more frames.
-      if (h?.dda != null) {
+    for (const voice of this._chipPcm?.owner.keys() ?? []) if (!this._isVoiceAudible(voice)) this._silence(`voice:${voice}`, when);
+    for (const [ti] of this._lanesOf("sample", "fc-dpcm")) if (!this._isVoiceTrackAudible(ti, "dpcm")) this._silence("voice:dpcm", when);
+  }
+
+  // A voice silenced now — its track muted or not soloed (_applyAudibility),
+  // or a note of such a track (_playNote) — as each chip silences it:
+  //   fm      its key off (under CSM Timer A keys CH3: none)
+  //   fm3op   its operator's key off, its key-ons waiting dropped; under
+  //           CSM its level (TL 127 until its next note)
+  //   psg     its attenuation off, the lane no longer keyed
+  //   pcm     a Mega Drive PCM voice released (the DAC mix has no key)
+  //   voice   a chip's sample voice: a rhythm sound dumped, the ADPCM-B
+  //           stopped, a PCM8 voice cut from the mix, a DDA channel off and
+  //           fed no more frames, the DMC stopped
+  _silence(site, when) {
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    if (kind === "fm") {
+      if (!this._csmKeysCh3(n)) this._fmKey(n, 0, when);
+    } else if (kind === "fm3op") {
+      const bit = 0x10 << (n - 1);
+      if (this._reg27 & 0x80) this._fm3CsmRelease(bit, when);
+      else if (this._fm3Mask & bit) this._fm3KeysOff(bit, when);
+    } else if (kind === "psg") {
+      this._psgKeyedUntil[n] = Math.min(this._psgKeyedUntil[n], when);
+      this._psgSetAtt(n, this._psgOff(n), when);
+    } else if (kind === "pcm") this._pcmEv(when, { kind: "off", voice: n });
+    else if (kind === "voice") {
+      const write = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
+      if (at === "dpcm") return void write(this._target?.chipFor?.("fc-dpcm")?.dmc?.stop() ?? []);
+      const h = this._chipPcm?.owner.get(at);
+      if (!h) return;
+      if (h.pcm8 != null) return void this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 });
+      if (h.dda != null) {
         h.dumped = true;
-        for (const [p, a, d] of this._ddaEncoder()?.off(h.dda) ?? []) this._write(p, a, d, when);
-        continue;
+        return void write(this._ddaEncoder()?.off(h.dda) ?? []);
       }
-      if (voice !== "adpcm" && !this._rhythmEnc) continue; // a sample voice this player cannot dump
-      const writes = voice === "adpcm" ? adpcm.stop() : this._rhythmEnc.dump(voice, when);
-      for (const [p, a, d] of writes) this._write(p, a, d, when);
+      if (at === "adpcm") write(this._target.chipFor("adpcm-b").adpcm.stop());
+      else if (this._rhythmEnc) write(this._rhythmEnc.dump(at, when)); // (a sample voice this player cannot dump: none)
     }
-    // The 2A03's DMC: its track muted, the sample stops.
-    const dmc = this._target?.chipFor?.("fc-dpcm")?.dmc;
-    if (dmc) for (const [ti] of this._lanesOf("sample", "fc-dpcm"))
-      if (!this._isVoiceTrackAudible(ti, "dpcm")) for (const [p, a, d] of dmc.stop()) this._write(p, a, d, when);
   }
 
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */
@@ -3339,15 +3346,6 @@ export class IRPlayer {
 
     switch (ev.cmd) {
       case "NOTE_ON": {
-        if (!this._isTrackAudible(ev._trackIndex)) {
-          // Silence the channel instead: the previous note's level (its tone
-          // past the gate when it runs into this one, or a release macro's
-          // tail) ends at this note-on, and if it was queued before a mute or
-          // solo landed it would drone on.
-          this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], when);
-          this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
-          break;
-        }
         // The note's path is every voice's (_playNote).
         // The PSG's noise lane is unpitched — but for a noise whose note is
         // its rate (the 2A03's: `rateNote`), pitched as a tone.
@@ -3409,8 +3407,7 @@ export class IRPlayer {
     // An encoder that reads whether a write is inside a note (the OPLL's)
     // hears of the key-on before the note's pitch and voice macros go out,
     // which are sent ahead of it (chips/ym2413.js).
-    if (!isFm3OpNote && !ev.args?.legato && !this._csmKeysCh3(ch)
-      && this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when))
+    if (!isFm3OpNote && !ev.args?.legato && !this._csmKeysCh3(ch) && !this._fmNoteSilent(ch, when))
       this._fmWrites(this._fmEnc.noteOn?.(ch, when) ?? [], when);
 
     // The pitch it sounds from, written once (the driver's onset_pitch).
@@ -3420,11 +3417,10 @@ export class IRPlayer {
     this._scheduleFmOpMacros(ch, ev.args ?? {}, when, gate.macroGate);
     this._envRetrigs = null;
 
-    const keys = this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when);
-    // A note that keys nothing (muted / non-soloed track, or vol 0) keys the
-    // channel off instead: the previous note may have left its key-off to
-    // this one, and if it was queued before a mute or solo landed it would
-    // ring on forever.
+    // A note at vol or master 0 keys nothing: it keys the channel off
+    // instead, the previous note may have left its key-off to this one (a
+    // muted track's note does as much, _playNote's _silence).
+    const keys = !this._fmNoteSilent(ch, when);
     if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch)) this._fmKey(ch, 0, when);
     // What closing the note is on its voice (_closeNote): at its gate's end,
     // a rest, the track's end, the host's key-off — and at the track's next

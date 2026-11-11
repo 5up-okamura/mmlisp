@@ -318,8 +318,15 @@ export const levelMethods = {
   //   v.pitchOn   false where an event before it set its note (an fm3
   //               operator's FM3_OP_PITCH): its macros only
   //   v.pitchGate the span its pitch macros run (the note's macros')
+  //   v.audible   whether its track is heard (its voice's strip, a sample's)
+  // A note of a track not heard (muted, or another soloed: `v.audible`, its
+  // track's when absent) only silences its voice (`v.silence`, its level's
+  // site when absent: _silence) — a previous note left sounding, or one
+  // queued before the mute landed, must not ring on; it keys nothing, and
+  // its record closes as any note's does.
   _playNote(ev, when, v) {
     const ti = ev._trackIndex ?? 0;
+    if (!(v.audible ?? this._isTrackAudible(ti))) return void this._silence(v.silence ?? v.level, when);
     const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
     const retrigs = this._retrigsOf(ti);
     let keyed = false;
