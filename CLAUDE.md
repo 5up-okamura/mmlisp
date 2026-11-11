@@ -137,7 +137,8 @@ writes every word every way (a value, `+` `*` `$slot`, sweeps) on every kind
 of Mega Drive track and holds the preview to MMLispDRV there — a word is one
 rule whatever track writes it; `check:loops` holds it there over several
 passes of a track's loop, which the A/B gate's one pass does not;
-`check:word-rule` holds every machine's melodic channels to the same rule
+`check:word-rule` holds every machine's channels, its sample ones too, to
+the same rule
 (a sweep with no :from starts at the value now, `+` `*` read it, `$slot`
 the slot), where only md has a driver to compare with;
 `check:note-path` holds every channel of every machine (its sample ones on a

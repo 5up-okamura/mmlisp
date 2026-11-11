@@ -83,7 +83,8 @@ where the driver steps frames and puts every word through one `_paramSet`):
 
 The gates for it: `check:words` (every word every way on every kind of Mega
 Drive track against the driver; a new word or way goes into its tables
-first), `check:word-rule` (the same rule on every machine, no driver),
+first), `check:word-rule` (the same rule on every machine's channels, sample ones
+too, no driver),
 `check:loops` (several passes of a track's loop against the driver),
 `check:note-path`, `check:panel`.
 
@@ -96,15 +97,13 @@ Open, in the order worth taking:
    are made at dispatch: the Game Boy's, the 2A03's and the PC Engine's
    encoders order and drop writes by the calls they have seen. Listen to
    those first.
-3. A sample track's `:pan` / `:pitch` are still per dispatcher; probe each
-   against the driver as MASTER and :vol were.
-4. Bounds of the lookahead, left by choice: a held note let go releases
+3. Bounds of the lookahead, left by choice: a held note let go releases
    where the sent writes end (~the lookahead late; undoing sent writes needs
    a per-channel retraction in the worklet for all eight machines); a score
    event's gate is judged at dispatch, so a hand let go less than the
    lookahead before a score write misses it; a hot-swap keeps the outgoing
    score's writes ahead; a seek drops a running sweep's remainder.
-5. The parts are mixins, not components — they call into each other and
+4. The parts are mixins, not components — they call into each other and
    share the core's state freely (samples: 31 calls, 27 fields, measured
    with a script) — to draw when a part next has to change.
 

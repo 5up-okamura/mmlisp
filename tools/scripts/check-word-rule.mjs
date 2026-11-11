@@ -1,6 +1,6 @@
 // A word is one rule on every machine (live/src/ir-player-words.js _word),
-// as check:note-path holds a note's path: on every machine's melodic
-// channels, each word the channel takes is written a value, swept with no
+// as check:note-path holds a note's path: on every machine's channels —
+// its melodic ones, and its sample ones on a sample — each word the channel takes is written a value, swept with no
 // :from, moved by `+` and `*`, and read off a `$slot` — and the writes the
 // preview makes are held to the rule:
 //   a sweep with no :from starts at the word's value now and ends on its :to,
@@ -14,7 +14,10 @@
 //   cd tools && npm run check:word-rule
 //   node scripts/check-word-rule.mjs --only noise-rate   # one word
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { readImportSources } from "../../drv/tools/mmb-build.mjs";
+import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { TARGETS, targetProfile } from "../../live/src/targets.js";
 import { newScoreSource } from "../../live/src/new-score.js";
@@ -42,24 +45,37 @@ const WORDS = {
 const argv = process.argv.slice(2);
 const only = argv.includes("--only") ? argv[argv.indexOf("--only") + 1] : null;
 
+// A sample channel's score sits beside drv/tests' wavs, which its :file reads;
+// a rhythm channel plays its own sound (a kit role by name), any other blip.
+const SAMPLE_SCORE = fileURLToPath(new URL("../../drv/tests/word-rule.mmlisp", import.meta.url));
+const RHYTHM = new Set(["rhythm", "opll-rhythm", "midi-drums"]);
+
 const mul = (v) => Math.floor((Math.round(v) * 128) / 256);
 const near = (a, b) => Math.abs(a - b) < 1e-6;
 
 // The channel `head` of machine `name` writing `kw` every way; its writes of
 // the word in order, each { how, v } — `set` a written value, `sweep` a
-// sweep's step — or null where the channel has no such word.
-function writes(name, head, kw) {
+// sweep's step — or null where the channel has no such word. `voice`: a
+// sample channel's sound (null on a melodic one).
+function writes(name, head, kw, voice = null) {
   const [a, t, d] = WORDS[kw];
   const src = `(def-score :target ${name})
 (def-val m 0 -1000..1000)
 (def-val s ${a} -1000..1000)
-(${head} :tempo 120 :len 4 :${kw} ${a} c :${kw} (linear :to ${t} :len 1/2) c c :${kw}+ ${d} c :${kw}* 0.5 c :${kw} $s c)`;
-  const { ir, diagnostics } = compileMMLisp(src, "word-rule.mmlisp");
+${voice ? '(def-pcm blip :file "blip.wav")\n' : ""}(${head}${voice ? ` ${voice}` : ""} :tempo 120 :len 4 :${kw} ${a} c :${kw} (linear :to ${t} :len 1/2) c c :${kw}+ ${d} c :${kw}* 0.5 c :${kw} $s c)`;
+  const path = voice ? SAMPLE_SCORE : "word-rule.mmlisp";
+  const { ir, diagnostics } = compileMMLisp(src, path, { imports: readImportSources(path, src) });
   if (diagnostics.some((x) => x.severity === "error" || x.code === "W_TARGET")) return null;
   const target = ir.tracks.flatMap((tr) => tr.events ?? []).find((e) => e.cmd === "PARAM_SET" && near(Number(e.args?.value), a))?.args?.target;
   if (!target) return null;
   const p = new IRPlayer(() => {});
   p.loadJSON(ir);
+  if (voice) {
+    // The samples as Live bakes them: the chip's own RAM, or frames.
+    const { adpcm, frames } = bakedChipSamples(ir, targetProfile(name));
+    p.setAdpcmBank(adpcm);
+    p.setFrameBank(frames);
+  }
   const log = [];
   const word = p._word.bind(p);
   p._word = (ev, when, w) => {
@@ -84,14 +100,21 @@ const failures = [];
 for (const name of Object.keys(TARGETS)) {
   if (name === "midi") continue; // its sound is the output's (check:midi-out)
   const channels = targetProfile(name).channels;
-  const heads = [...newScoreSource(name).matchAll(/^\(([a-z0-9-]+)\b/gm)].map((m) => m[1])
-    .filter((h) => ["fm", "psg"].includes(CORE_OF_KIND[channels[h]?.part?.kind]));
+  // Its melodic channels (File > New's score's), and its sample ones (its
+  // channel table's), each with its sound.
+  const sounds = new Map([...newScoreSource(name).matchAll(/^\((rhythm\d) (\S+)$/gm)].map((m) => [m[1], m[2]]));
+  const heads = [
+    ...[...newScoreSource(name).matchAll(/^\(([a-z0-9-]+)\b/gm)].map((m) => m[1])
+      .filter((h) => ["fm", "psg"].includes(CORE_OF_KIND[channels[h]?.part?.kind])).map((h) => [h, null]),
+    ...Object.keys(channels).filter((h) => channels[h].part?.kind === "sample")
+      .map((h) => [h, RHYTHM.has(channels[h].part.name) ? (sounds.get(h) ?? "kick") : "blip"]),
+  ];
   const before = cases;
   for (const kw of Object.keys(WORDS)) {
     if (only && kw !== only) continue;
     const [a, t, d] = WORDS[kw];
-    for (const head of heads) {
-      const log = writes(name, head, kw);
+    for (const [head, voice] of heads) {
+      const log = writes(name, head, kw, voice);
       if (!log) continue;
       cases++;
       const at = `${name} ${head} :${kw}`;
@@ -114,4 +137,4 @@ for (const name of Object.keys(TARGETS)) {
 }
 for (const f of failures) console.error(`  ${f}`);
 assert.equal(failures.length, 0, `check:word-rule: ${failures.length} of ${cases} cases part from the rule`);
-console.log(`check:word-rule ok — ${cases} words on the melodic channels of every machine take a value, a sweep, + * and $slot by one rule`);
+console.log(`check:word-rule ok — ${cases} words on every machine's melodic and sample channels take a value, a sweep, + * and $slot by one rule`);
