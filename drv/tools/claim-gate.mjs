@@ -168,7 +168,8 @@ function checkInvariant(stem) {
 //   p3-se-pcm-pan: the DAC's pan, fm6's L / R ($B6): the song's, the
 //     effect's from its start (centre, then its own :pan right), the song's
 //     again at its end — as the song left it under the effect (centred,
-//     unheard). A case with `want` reads those frames for those values.
+//     unheard) — and the host's SET_PARAM of pcm1's pan after it, the
+//     song's. A case with `want` reads those frames for those values.
 const patchOf = (port, off) => (drv) => {
   const out = [];
   for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[port].get(a + off));
@@ -182,7 +183,7 @@ const STATE_CASES = [
   { score: "p3-se-noise", before: 39, after: 119, read: (d) => `mode ${d._noiseMode}`,
     what: "the effect's end puts the noise mode back" },
   { score: "p3-se-pcm-pan", read: (d) => `b6 ${d._shadow[1].get(0xb6)?.toString(16)}`,
-    want: { 39: "b6 80", 45: "b6 c0", 85: "b6 40", 130: "b6 c0" }, // (frames true on both clocks)
+    want: { 39: "b6 80", 45: "b6 c0", 85: "b6 40", 105: "b6 c0", 130: "b6 40" }, // (frames true on both clocks)
     what: "a PCM effect's pan is the DAC's while it plays, the song's before and after" },
 ];
 

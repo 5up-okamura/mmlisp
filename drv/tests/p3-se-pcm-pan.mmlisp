@@ -3,7 +3,8 @@
 ; start the DAC's pan is the effect's (centre, then what it writes), and at
 ; its end the song's again, as the song left it under the effect (its pcm1
 ; moved to centre there, unheard). Host-driven (p3-se-pcm-pan.cmds.json):
-; the song at frame 0, the effect at 40, which ends a second later.
+; the song at frame 0, the effect at 40, which ends a second later; at 110
+; the host's SET_PARAM pans pcm1 right — the song's pan, fm6's.
 (def-score :pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def-pcm blip :file "blip.wav")

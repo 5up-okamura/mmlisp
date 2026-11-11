@@ -2097,7 +2097,7 @@
  },
  "drv/tests/p3-se-pcm-pan.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
-  "ir": "59f60e786259cba1",
+  "ir": "1dccd3d4d2c9c3c4",
   "regs": "da0f8435218abd9d",
   "mmb": "14be14b39ea5b867",
   "vgm": "7ad56e66b85aff29",
@@ -2105,7 +2105,7 @@
  },
  "drv/tests/p3-se-pcm-pan.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
-  "ir": "545e2d798f6efd3c",
+  "ir": "bf888b99aa33f6ce",
   "regs": "da0f8435218abd9d",
   "mmb": "ab9be91e8aa73b8b",
   "vgm": "6f82ae12132f310f",

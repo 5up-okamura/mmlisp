@@ -2503,7 +2503,7 @@ export class DrvPlayer {
         this._mailboxKeyOff(a0);
         break;
       case 0x04: // SET_PARAM (channel_id, target_id, value i8)
-        this._paramSet(a0, a1, i8(a2));
+        this._hostParam(a0, a1, i8(a2));
         break;
       case 0x05: // FADE_TRACK (track_id, frames)
         this._mailboxFade(a0, a1);
@@ -3552,9 +3552,14 @@ export class DrvPlayer {
       return;
     }
     if (!this._fm) return; // never reset — nothing to write yet
-    // (the host's pan of a pcm channel is the song's: fm6's)
-    if (id === TARGET_ID.PAN && chIndex >= 20 && chIndex <= 22) chIndex = 5;
-    this._paramSet(chIndex, id, value);
+    this._hostParam(chIndex, id, value);
+  }
+
+  // The host's write of a channel's word (SET_PARAM, setParam): its pan of
+  // a pcm channel is the song's, fm6's (mmlispseq.c mml_set_param).
+  _hostParam(ch, target, value) {
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5;
+    this._paramSet(ch, target, value);
   }
 
   /**

@@ -363,7 +363,7 @@ same bounds.
 | 0x3A–0x3D | FM_AMEN1–4 | 1  | 0..1           | YM $60+op bit 7                    |
 | 0x3E | FM_AMS      | 1     | 0..3           | YM $B4 bits 5–4                    |
 | 0x3F | FM_FMS      | 1     | 0..7           | YM $B4 bits 2–0                    |
-| 0x40 | PAN         | 1     | −1..1          | YM $B4 bits 7–6 (−1=L, 0=LR, 1=R); on a pcm channel, fm6's (driver.md §14) |
+| 0x40 | PAN         | 1     | −1..1          | YM $B4 bits 7–6 (−1=L, 0=LR, 1=R); a song's pcm track's is fm6's, a PCM SE's its own (driver.md §14) |
 | 0x41 | LFO_RATE    | 1     | 0..8           | YM $22 (0=off, 1–8=rate index)     |
 | 0x42 | NOISE_MODE  | 1     | 0..7           | PSG $E0 noise control (FB bit + NF bits) |
 | 0x43 | LOOP_START  | 2     | 0..0x7F00      | PCM loop start (`:loop-start`) → a held loop note's WRAP |
