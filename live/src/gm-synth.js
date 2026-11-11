@@ -137,17 +137,28 @@ export class GmSynth {
    * starting at time `now`: what falls in it goes to the synth at its place.
    * `channels`, if given, [[L, R] × 16]: each MIDI channel's dry sound added
    * in too, for the oscilloscope.
+   *
+   * Each message is applied at its own sample, in the order sent: the
+   * quantum is rendered up to it, then it goes to the synth at once (one due
+   * already, a late one, at the quantum's start). Never through the synth's
+   * own timed queue: it holds a message for its next block while one given
+   * for now is applied at once, so a note's off that came late would land
+   * before its on, still held there — and the note would sound on.
    */
   render(L, R, at, count, now, channels = undefined) {
     if (!this.synth) return;
     const end = now + count / this.sampleRate;
-    let n = 0;
-    for (; n < this.queue.length && this.queue[n][1] < end; n++) {
-      const [bytes, when] = this.queue[n];
-      this.synth.processMessage(bytes, 0, { time: this.synth.currentTime + Math.max(0, when - now) });
+    let done = 0;
+    while (this.queue.length && this.queue[0][1] < end) {
+      const [bytes, when] = this.queue.shift();
+      const k = Math.min(count, Math.max(done, Math.round((when - now) * this.sampleRate)));
+      if (k > done) {
+        this.synth.process(L, R, at + done, k - done, channels);
+        done = k;
+      }
+      this.synth.processMessage(bytes, 0); // (no time: at once)
       this.follow(bytes);
     }
-    if (n) this.queue.splice(0, n);
-    this.synth.process(L, R, at, count, channels);
+    if (done < count) this.synth.process(L, R, at + done, count - done, channels);
   }
 }

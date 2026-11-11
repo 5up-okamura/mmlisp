@@ -170,6 +170,25 @@ assert.equal(gm.gm.bank, null, "and holds no bank");
   assert.equal(gm.freqs()[0], 0, "let go, none");
 }
 
+// ── A note's off that comes late is applied after its on ──
+// A key struck partway through a quantum, its off arriving for the next
+// quantum already due there (a stop's or a seek's all-offs, a page running
+// late): the synth applies each message at its own sample in the order
+// sent, so the note is let go — not held by its on landing after its off.
+{
+  const gm = new GmSynth(48000);
+  await gm.load(bankBytes());
+  const Q = 128, q = Q / 48000, L = new Float32Array(Q), R = new Float32Array(Q);
+  const voices = () => gm.synth.voices.filter((v) => v.isActive ?? v.active).length;
+  gm.schedule([[[0xc0, 48], 0], [[0x90, 60, 100], 10 * q + 40 / 48000]]); // strings: they sustain
+  let t = 0;
+  for (let k = 0; k < 11; k++, t += q) gm.render(L, R, 0, Q, t);
+  gm.clear();
+  gm.schedule([[[0x80, 60, 0], t], [[0xb0, 123, 0], t]]); // a stop's offs, due at once
+  for (let k = 0; k < Math.round(3 / q); k++, t += q) gm.render(L, R, 0, Q, t);
+  assert.equal(voices(), 0, "its off, late, lets it go");
+}
+
 // ── A render (export-wav.js → gm-render.js): the WAV export's length ──
 {
   const render = async (src, solo = null) => {
