@@ -17,6 +17,8 @@ import os from "node:os";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { targetProfile } from "../../live/src/targets.js";
 
+const le32 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+const le16 = (n) => [n & 255, (n >> 8) & 255];
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 async function vgmOf(file) {
@@ -210,6 +212,40 @@ const writesOf = (source, addr) => {
   const { source } = imported(parsed, "msx");
   assert.match(source, /\(def-wave wave-01 :wave \[-128 -120 -112 -104 /, "msx: the saw at the SCC's 8 bits");
   imported(parsed, "md");
+}
+
+// The YM2612's DAC as a game's driver plays it — a sample in a data block,
+// each hit a seek and its bytes ($8n) — and its pan, fm6's L / R ($B6, which
+// the DAC comes out on), as pcm1's :pan where the song moves it (language.md
+// §16): left, right, then both.
+{
+  const SAMPLE = Array.from({ length: 400 }, (_, i) => 128 + Math.round(100 * Math.sin(i / 3) * (1 - i / 400)));
+  const cmds = [0x67, 0x66, 0x00, ...le32(SAMPLE.length), ...SAMPLE, 0x52, 0x2b, 0x80];
+  for (const b6 of [0x80, 0x40, 0xc0, 0xc0]) {
+    cmds.push(0x53, 0xb6, b6, 0xe0, ...le32(0));
+    for (let i = 0; i < SAMPLE.length; i++) cmds.push(0x82);
+    cmds.push(0x61, ...le16(11025)); // a quarter second apart
+  }
+  cmds.push(0x66);
+  const head = new Uint8Array(0x100);
+  const dv = new DataView(head.buffer);
+  head.set([0x56, 0x67, 0x6d, 0x20]); // "Vgm "
+  dv.setUint32(0x08, 0x150, true);
+  dv.setUint32(0x0c, 3579545, true); // the SN76489
+  dv.setUint32(0x2c, 7670453, true); // the YM2612
+  dv.setUint32(0x34, 0x100 - 0x34, true);
+  const file = new Uint8Array([...head, ...cmds]);
+  dv.setUint32(0x04, file.length - 4, true);
+  file.set(head.subarray(0, 8));
+  const parsed = await parseVgm(file);
+  assert.equal(parsed.dacHits.length, 4, "md: four hits");
+  assert.deepEqual(parsed.dacPans.map((x) => x.pan), ["left", "right", "center"], "md: fm6's L / R as the song moved them");
+  for (const structure of [true, false]) {
+    const { source } = imported(parsed, "md", structure);
+    const pcm1 = source.slice(source.indexOf("(pcm1"));
+    const pans = [...pcm1.matchAll(/:pan (\w+)/g)].map((m) => m[1]);
+    assert.deepEqual(pans, ["left", "right", "center"], `md: the DAC's pan on pcm1 where it moves, once each (${pans})`);
+  }
 }
 
 // The YM2608's rhythm: on pc88 each ROM sound keyed comes back on its own

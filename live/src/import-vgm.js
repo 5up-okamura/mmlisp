@@ -1484,6 +1484,7 @@ function rhythmChip() {
  * @returns {Promise<{ chips: string[], skipped: Map<string, number>, events: Map<key, ev[]>,
  *   kinds: Map<key, kind>, totalSamples, loopSample, title, author, game, system, dac: boolean,
  *   dacBank: Uint8Array, dacHits: [{t, offset, bytes, rate}], dacOffs: [t] (the DAC turned off),
+ *   dacPans: [{t, pan}] (fm6's L / R as it changed: the DAC's pan),
  *   pcmRoms: Map<blockType, Uint8Array>, pcmHits: [{t, src, ch, rom, start, end, loopStart, rate, db, pan, endT}] }>}
  */
 export async function parseVgm(bytes) {
@@ -1579,6 +1580,10 @@ export async function parseVgm(bytes) {
   // fm6 note after one ends the hit's step there (dacTrack).
   let dacWritten = null;
   const dacOffs = [];
+  // fm6's L / R bits ($B6 on port 1) as they change: the DAC comes out on
+  // them, so they are the PCM's one pan (language.md §16, dacTrack). Both
+  // bits off (silent) is not a place: the pan stays where it was.
+  const dacPans = [];
   const closeHit = () => {
     if (hit && hit.bytes > 1 && hit.last > hit.t)
       hits.push({ t: hit.t, offset: hit.offset, bytes: hit.bytes, rate: (RATE * (hit.bytes - 1)) / (hit.last - hit.t) });
@@ -1639,6 +1644,10 @@ export async function parseVgm(bytes) {
     if (c === 0x62) { t += 735; p++; continue; }
     if (c === 0x63) { t += 882; p++; continue; }
     if ((c & 0xf0) === 0x70) { t += (c & 15) + 1; p++; continue; }
+    if (c === 0x53 && u8[p + 1] === 0xb6 && u8[p + 2] >> 6) {
+      const pan = PAN_OF_BITS[u8[p + 2] >> 6];
+      if (pan !== (dacPans.at(-1)?.pan ?? "center")) dacPans.push({ t, pan });
+    }
     if (c === 0x52 && u8[p + 1] === 0x2b) {
       const on = !!(u8[p + 2] & 0x80);
       if (!on && dacWritten) dacOffs.push(t);
@@ -1902,7 +1911,7 @@ export async function parseVgm(bytes) {
   if (hits.length && dacWritten == null) events.delete("YM2612 FM6");
   for (const [src, n] of pcm.lost) skipped.set(`${src} (the file carries no sample data for it)`, n);
   return { chips, skipped, clockNotes, events, kinds, totalSamples: end, loopSample, title, author, game, system, dac,
-    dacBank: bank, dacHits: hits, dacOffs, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits, opllRhythmHits };
+    dacBank: bank, dacHits: hits, dacOffs, dacPans, pcmRoms: roms, pcmHits, rhythmHits: rhythm.hits, opllRhythmHits };
 }
 
 // ── Notes ─────────────────────────────────────────────────────────────────
@@ -3084,6 +3093,8 @@ function rhythmPre(tr) {
 
 const DAC_KEY = "YM2612 DAC";
 const DAC_SAME = 64; // bytes: seeks this close start one sample (8 ms at 8 kHz)
+// An OPN channel's L / R bits ($B4 bits 7-6) as the language's pan.
+const PAN_OF_BITS = [null, "right", "left", "center"];
 
 /**
  * The DAC's hits → a PCM track. The data bank (8-bit unsigned) becomes one
@@ -3125,6 +3136,13 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
     const name = `dac-${String(i + 1).padStart(2, "0")}`;
     samples.set(offset, { name, offset, frames, rate });
   });
+  // The DAC's pan at a time: fm6's L / R as the song last wrote them.
+  const pans = parsed.dacPans ?? [];
+  let pi = 0;
+  const panAt = (t) => {
+    while (pi < pans.length && pans[pi].t <= t) pi++;
+    return pi ? pans[pi - 1].pan : "center";
+  };
   const notes = [];
   for (const h of hits) {
     const sm = samples.get(h.offset);
@@ -3132,7 +3150,7 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
     if (tick >= endTick) break;
     const end = Math.min(endTick, tickOf(h.t + (Math.min(h.bytes, sm.frames) / h.rate) * RATE));
     const semis = Math.round(12 * Math.log2(h.rate / sm.rate));
-    const note = { tick, len: Math.max(1, end - tick), midi: 60 + semis, vel: 15, state: [sm.name] };
+    const note = { tick, len: Math.max(1, end - tick), midi: 60 + semis, vel: 15, state: [sm.name], pan: panAt(h.t) };
     // One DAC: a hit cuts the one before; two on one tick, the later wins.
     const prev = notes[notes.length - 1];
     if (prev && prev.tick >= tick) notes.pop();
@@ -3157,8 +3175,15 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
     if (off != null) n.len = Math.max(1, off - n.tick);
     else if (next < Infinity) n.len = next - n.tick;
   });
+  // Its sample and, once the song has panned the DAC at all, the DAC's pan:
+  // written where either changes.
+  if (notes.some((n) => n.pan !== "center")) for (const n of notes) n.state = [...n.state, `:pan ${n.pan}`];
   let cur = null;
-  for (const n of notes) { if (n.state[0] !== cur) n.pre = [n.state[0]]; cur = n.state[0]; }
+  for (const n of notes) {
+    const st = n.state.join(" ");
+    if (st !== cur) n.pre = n.state;
+    cur = st;
+  }
   const head = notes[0]?.pre ?? [];
   if (notes[0]) notes[0] = { ...notes[0], pre: undefined };
   const mono = Float32Array.from(bank, (v) => (v - 128) / 128);

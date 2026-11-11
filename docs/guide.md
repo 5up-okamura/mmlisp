@@ -2330,7 +2330,9 @@ them: a key-on starts a note, a key-off ends it.
   Shinobi's). A seek a few bytes into a sample (a driver a byte late) is
   that sample's. A DAC written byte by byte, without a data bank, does
   not read — nor can a driver's own mix of several samples be split again.
-  FM6 is the DAC then, so its track is dropped.
+  FM6 is the DAC then, so its track is dropped. The DAC comes out on FM6's
+  left and right bits, so where the song moves them its hits take that pan
+  as `pcm1`'s `:pan` (language.md §16).
 - An arcade, X68000 or PC-8801 chip's PCM comes in too: **SegaPCM** (System
   16, X, OutRun), the **YM2610's ADPCM-A and ADPCM-B** (Neo Geo, Taito), the
   **OKIM6295** (CPS1 and many others, whose four voices fit PCM8 beside a
