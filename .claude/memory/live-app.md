@@ -260,5 +260,63 @@ voice-specific copy of any of these; extend the adapter instead:
   kind there, not a branch in a dispatcher.
 - `tools npm run check:note-path` holds all of it on every channel of every
   machine, sample ones included (closes, retriggers, mutes): 107 channels.
-Open after it: the PC Engine's PCM is too quiet (def-mod or the wave's
-vol — the user's to decide).
+
+## Next — from the last review (2026-11-11), in this order
+
+The user approved 1–4; 5 waits for their decision. Commit titles follow the
+repo's style (`refactor(player): …`, `fix(live): …`); author and committer
+hiroshi okamura <hiroshi_okamura@me.com>, no Claude attribution; work on
+`main` and push (it deploys mmlisp.com). Run every gate before each push
+(drv `verify:all`, `node tools/ab-gate.mjs`, `npm run pcm-ab`; tools
+`check:snapshot`, `check:note-path`, `check:words`, `check:loops`,
+`check:panel`, `check:stems`, `check:gm-output`, `check:midi-out` …).
+
+1. **:noise-rate / :env-rate sweeps break the one word rule** (measured on
+   pc88): `_dispatchGlobalEvent` (ir-player.js, the `PARAM_*` case) starts
+   a :noise-rate sweep without `:from` at 9, not the value now
+   (`_sweepUnits(ev, when, 9, write)`), and its steps never set
+   `_noiseRateBase`, so `:noise-rate 20` then a sweep starts from 9, and a
+   sweep to 5 then `:noise-rate+ 2` gives 22, not 7. :env-rate's sweep
+   starts at 0 the same way (read in code, not measured). Cause: the
+   song-wide words are handled in three places (MASTER in `_masterEvent`,
+   the LFO words in `_dispatchEvent`'s `waveLfo` / `_applyParam`, NOISE_RATE
+   / ENV_RATE in `_dispatchGlobalEvent`). Fix both, and fold the song words
+   into one word table as `_volWord` & co. are (read = the value now, the
+   sweep from it, its steps writing the value).
+2. **A word-rule check for every machine** (as check:note-path is for
+   notes): check:words holds only md's tracks to the driver. For each
+   machine's words: a sweep without :from starts at the value now, `+` /
+   `*` read the value now (after a sweep too), a `$slot` reads the slot.
+3. **External MIDI port: a stop can leave a key with no off.**
+   `MidiOutRun` (midi-output.js) drops a key from `st.active` when its off
+   is *sent* ahead; a stop then `clear()`s that waiting off, and `letGo`
+   no longer knows the key — only CC 123 is sent (measured: the port gets
+   the on and CC 123, no off). The GM output stops on CC 123 (checked), but
+   a module or DAW that ignores it rings on. Fix: drop a key from `active`
+   when its off is *due* (its time passed), not when sent; add the case to
+   check:midi-out.
+4. **Stale names**: comments naming removed functions — `_scheduleFm3OpKey`
+   (ir-player.js ~204, ir-player-work.js ~73), `_resolveOff`
+   (ir-player-macros.js ~105), `_chipPcmFrame` (ir-player-samples.js ~160,
+   ir-player-shared.js ~56), `_scheduleFmLevelMacros` (ir-player-shared.js
+   ~109); in this file, the older sections' `_macroOnset`, `_resolveOff`,
+   `_letGoNote`, `_pendingKeyOff` / `_fm3Pending` / `_psgPending` (they
+   describe history: rewrite them as the code is now, or cut them).
+5. **Waiting on the user** (ask, do not decide):
+   - Tempo look-ahead: `_timeAfterTicks` reads tempo changes not yet
+     dispatched (`_tempoChangesAhead`) for a gate's end and a tick-clocked
+     macro's steps; `_nextNote` looks ahead for the sample editor. Against
+     "state is now only" — the alternative is counting ticks (a big change).
+   - Live's keys: an FM key writes through preview writes, a PSG key
+     through the player's own state (`keyTone` → `_psgSetPitch`) — so the
+     song and the key can overwrite each other on a lane the song plays.
+     The fix is in index.html (no tests): only playback verifies it.
+   - The PC Engine's PCM sounds quieter than its waves: measured, the DDA
+     and a wave channel peak alike (−18.1 dBFS); a sample carries ~13 dB
+     less energy than a full-scale saw. It is a mix default, not a bug;
+     the score can lower its waves now (`(def-mod :ch [...] :vel* 0.7)`
+     or `(def-wave … (saw -64..63))`). A different default is a design
+     change.
+   - Not yet heard on a device (the user checks on their phone):
+     :target midi playback, mute / solo switching, the DMC's :keyon, the
+     GM note-off fix (cce183d).
