@@ -34,6 +34,6 @@ Rules:
 - [pcm.md](pcm.md) — PCM rulings and what is open. Read before touching PCM.
 - [language-open.md](language-open.md) — the language's rulings not to
   re-propose.
-- [live-app.md](live-app.md) — the live app: decided against, and lessons; the note path's design, and **Next** (the open list to continue from).
+- [live-app.md](live-app.md) — the live app: decided against, and lessons; how the players are built and what is open; the note path's design; and what waits on the user's decision.
 - [targets.md](targets.md) — machines beyond the Mega Drive, `:target midi`
   and the machine conversion: rulings, traps, what is open.

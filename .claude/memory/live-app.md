@@ -38,197 +38,75 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
 
 ## The panel and the players — how it is built, and what is open
 
-**Where the restructuring stopped (2026-11):** the five rules hold (frame
-order, state now, one rule a word, slots, the public API — the page and the
-exports read the player only through it: `playedIr()`, `loadedIr()`,
-`machine()`). Left by choice: (1) a held note let go releases where the
-sent writes end, ~the lookahead late — undoing writes already sent needs
-a per-channel retraction in the worklet for all eight machines; (2) the
-parts are mixins, not components — they call into each other and share
-the core's state freely (samples: 31 calls, 27 fields; measured with a
-script) — to draw when a part next has to change.
-
 `ir-player.js` is split into parts (`ir-player-work / -words / -macros /
 -levels / -samples / -panel / -keys / -shared .js`), each a set of methods
-mixed into IRPlayer: the function names below are where they were, in
-the part their topic names.
+mixed into IRPlayer. The page and the exports read the player only through
+its public API (`playedIr()`, `loadedIr()`, `machine()`).
 
-Investigated 2026-11-10 (the user: fixing the knobs one by one kept
-surfacing new faults; structure over behaviour, regressions accepted).
+How it stands (the 2026-11 restructuring: the user wanted structure over
+behaviour — fixing knobs one by one kept surfacing faults, because the IR
+player wrote everything an event set going at dispatch, a lookahead early,
+where the driver steps frames and puts every word through one `_paramSet`):
 
-**The root was in the IR player, not the panel.** It has no frame step: an
-event is dispatched its lookahead ahead and everything it sets going was
-written out at once, so nothing could reach a sweep's or a macro's frames
-afterwards. The driver (and `drv-player.js`) steps frames and puts every
-word through one `_paramSet`; there a hand is one gate. The IR player
-emulates the frame machine by looking ahead, and each feature carries its
-own compensation for it.
+- **Frame work.** Work waits keyed by its frame and phase (`_at`, `_step`,
+  `_putWork`: KEYED, SWEEP, MACRO, SONG, AFTER, FM3_KEYS, FM3_TL, VOICES,
+  KEYON) and runs once the frame's events are dispatched. The player's state
+  is the song at its cursor; the chip is behind it by the lookahead
+  (`_write`, `_sendAhead`: a write composed from state reads it at its time).
+- **A sweep and a macro step one at a time** (`_runSweep`, `_sweepWord`,
+  `_sweepUnits`; `_macroSteps`, a generator every target shares, pulled by
+  `_scheduleMacro`): nothing of either is forecast. A loop curve and a held
+  note's chains are endless work (`_workFinite`). Each macro step asks
+  whether the track's note is still its own (`_noteOf`, `_noteScope`).
+- **Slots** (`_slots`, `_slotKey`, `SLOT_FREEING`): a sweep holds its
+  word's slot as the driver's does; a value, a sweep or a stop frees it, a
+  `+` / `*` / `$slot` does not.
+- **One word, one rule** (`_word(ev, when, w)`): a track gives only the
+  word `{ read, write, sweep? }` — `_volWord`, `_panWord`, `_pitchWord`,
+  `_snapWord` on every track; `_songWord` for the song-wide ones (MASTER,
+  VALn, NOISE_RATE, ENV_RATE, a wave chip's LFO words); `_fmWord`,
+  `_psgWord`, `_pcmWord`, `_sampleWord`. The FM's LFO words read the rate as
+  last written (`_readParam`; drv-player.js and the C's read_param too).
+- **Levels are live values** (`_lv(site)` + `_lvWrite`, the note path
+  below): a macro's step, the fader and the panel's hand all write the level
+  again; `:target midi`'s are `mtrk:<track>`'s record for the panel.
+- **The panel's contract**: a control (`{ id, kind: word | vol | reg | val }`)
+  and `hold` / `release` / `read` on both players; the page keeps one
+  registry (`panelControl`, `panelHold`, `panelRelease`,
+  `syncPanelControls`). A level's hand (a strip's :vol, MASTER) is laid over
+  the score's where a level is composed (`read().score` is the score's); a
+  word, a register, a slot are gated (`_scoreWrites`).
+- **Pause → play with nothing done in between goes on as it was**, the
+  panel's values too (`seek(…, { hands: player.hands() })`, index.html's
+  `_pausedAsLeft`). Anything else — a seek, an edit, stop → play — reads the
+  score's. User's rule (2026-11): only that one case.
 
-What stands now:
-
-- **One contract**: a control (`{ id, kind: word | vol | reg | val }`) and
-  `hold` / `release` / `read` on both players; the page keeps one registry
-  (`panelControl`, `panelHold`, `panelRelease`, `syncPanelControls`).
-- **The writes ahead** (`IRPlayer._write`, `_at`, `_sendAhead`): a write
-  whose time the run has not reached waits in the player and goes out as
-  the run reaches it; what composes a write from state (an FM level, an fm3
-  operator's, a register word, the SN76489's level) waits too and reads the
-  state at its time. The player's state is the song at its cursor; the chip
-  is behind it by the lookahead.
-- **Two kinds of hand**: a level (a strip's :vol, MASTER) is laid over the
-  score's where a level is composed; a word, a register, a slot are gated.
-  `read().score` is the score's value under a level's hand.
-
-- **Slots** (`_slots`, `_slotKey`, `SLOT_FREEING`): every sweep that writes
-  through `_applyParam`, MASTER's and an FM / fm3 operator's :vol hold a
-  slot keyed as the driver's; a value, a sweep or a stop of the word frees
-  it, a `+` / `*` / `$slot` does not; frames write only while their sweep
-  holds it.
-- **One word, one handler**: MASTER from any track (`_masterEvent`); every
-  relative write through `_writeValue`. The keys play through the player's
-  API (`keyTone`, `keyPatchWrites` …), at the level the panel shows.
+The gates for it: `check:words` (every word every way on every kind of Mega
+Drive track against the driver; a new word or way goes into its tables
+first), `check:word-rule` (the same rule on every machine, no driver),
+`check:loops` (several passes of a track's loop against the driver),
+`check:note-path`, `check:panel`.
 
 Open, in the order worth taking:
 
-1. **The frame's order is in (branch `dev`).** Work ahead waits keyed by
-   its frame and phase (`_at`, `_step`: KEYED, SWEEP, MACRO, SONG, AFTER)
-   and runs once the frame's events are dispatched; every macro step is such
-   work (`_scheduleMacro`; `_macroDry` for a caller only reading values).
-   MASTER, an FM / fm3 fader and a tone lane's level are live state
-   (`_masterVol`, `regs.vol`, `_psgLive` + `_psgRecompose`): the forecasts
-   (`_masterAt*`, `_fmVolAt*`, `_psgVolAt*`, `_volSetsAhead`,
-   `_psgLevelAhead`, `_syncMasterSweep`) are gone. Mega Drive A/B: no score
-   worse, 118 of 134 clean (was 113). **Not listened to; the other seven
-   machines' register logs moved (48 scores) with no oracle.**
-   Every sweep steps in its frames too (pitch and glides, register words,
-   the song's words, a PCM voice's :vol and points), and an FM note's
-   :vel / :vol macros are live values (`liveVel`, `liveVol`,
-   `_fmNoteLevel`) as a tone lane's are. `_levelMacroLines` / `_lineAt`
-   stay only for the chips' sample voices and `:target midi`, which keep
-   lines of their own.
-2. **The queues of their own are folded**: FM3's key edges and CSM levels
-   are frame work (FM3_KEYS, FM3_TL); the tone encoders, the chips' sample
-   frames and wave expressions write up to one point (`_settled`). Left:
-   `_tempoChangesAhead`, a forecast the tick → second mapping needs (a
-   gate's end in seconds) — inherent to scheduling by time, not a
-   compensation.
-3. **Tone encoders now get a lane's level at its own time on every
-   machine** (the `attAnytime` exception is gone), but a lane's other calls
-   ahead (pitch sweeps, the encoders' own queues) are still made at
-   dispatch: the Game Boy's, the 2A03's and the PC Engine's encoders order
-   and drop writes by the calls they have seen. Listen to those first.
-4. **One level model for FM channels, fm3 operators and tone lanes**
-   (`_lv(site)`: vel, vol, liveVel / liveVol, note, key, hand; `_lvWrite`
-   is the only part that differs by kind). A Mega Drive PCM voice's
-   fader and :vel are its record's too (`pcm:n`; the worklet's model
-   composes them). The chips' own sample voices
-   are live too: a sample track's fader is `strk:<track>`'s record, its
-   :pitch `_chipPcm.cents`, a hit's macros live values on the hit (`mac`,
-   its key composing from their first samples, `_macroOnset`), each voice's
-   sounding hit its `owner`; any of them moving writes that hit's level,
-   pitch and tune then (`_chipPcmWrite`), as FM and tone lanes do. Only the
-   DDA's sample stream is per-frame work (VOICES). `:target midi`'s levels
-   are `mtrk:<track>`'s record (`_midiLevel` through `_word`, a note's :vol
-   macro by `_lvMacros`), its :master every machine's. The timelines
-   (`_chipPcmParam`, `_levelMacroLines`, `_lineAt`, `insertLine`) are gone.
-   Moved (tools/tests/*/sample-levels etc., no oracle): `+` / `*` under a
-   running sweep keep it running (the driver's rule); on pc88 / x68k a
-   move lands at its own time, not the next frame's start; a frame with a
-   :vel and a :vol step writes once a step. A DDA frame's samples past a
-   pass's horizon used to be lost when the next frame was a new hit's. The other
-   words a sample track writes (`:pan`, `:pitch`) are still per dispatcher;
-   probe each against the driver as MASTER and :vol were.
-5a. **Pause → play with nothing done in between goes on as it was**, the
-   panel's values too (`seek(…, { hands: player.hands() })`, the page's
-   `_pausedAsLeft`). Anything else — a seek (paused or not), an edit, stop →
-   play — reads the score's. User's rule (2026-11): only that one case,
-   kept simple; the rest may change as long as the reason is clear.
-5. Bounds of the lookahead, as they are: a hand has the chip within it
-   (0.2 s visible) while a sweep or macro runs; a score event's gate is
-   judged when it is dispatched, so a hand let go less than the lookahead
-   before a score write misses it. A hot-swap keeps the outgoing score's
-   writes ahead; a seek drops a running sweep's remainder (both as before).
-6. `check:words` (tools/scripts/probe-words.mjs) is the probe: every word
-   every way on every kind of Mega Drive track against the driver. 0 cases
-   part. A new word or way of writing goes into its tables first.
-7. **A sweep is one step of frame work at a time** (`_runSweep`,
-   `_sweepWord`): each step reads its slot, writes, and queues the next, so
-   it has no length to forecast — the next write of its word, the loop's
-   span, a glide's cut (`_resolveSweepBudgetFrames`, `_nextTargetWriteTick`,
-   `_loopCurveSpanTicks`, `_glideCut`, … are gone). A loop curve is endless
-   work (`_workFinite`: it does not keep a run alive). This also fixed what
-   no gate saw: a sweep across its track's loop (one in the loop starts over
-   each pass, one from before it runs on) — `check:loops` plays several
-   passes against the driver, which the A/B gate's one pass does not.
-   **A macro steps one at a time too**: `_macroSteps` is a generator (the
-   one core every target and type shares), `_scheduleMacro` writes a step
-   as frame work (MACRO) and pulls the next; a :keyon's retriggers come one
-   at a time (`_keyonRetrigs`; the voice's taps a :keyon macro `_scheduleMacro` steps in KEYON, `_noteRetriggers`), the envelopes restarting at
-   each. What waited for a macro's end hears it when it comes (`onEnd`:
-   the level tail's silence and the CSM mute through `_lvEnded`, a :keyon
-   note's last key-off). A held note's chains are endless work. Each step
-   asks whether the track's note is still its own (`_noteOf`,
-   `_noteScope`): the next note takes the lane over on its frame. The
-   scale slot is read at the step (`_macroValue`). The panel's marks and
-   a step vector's outline are laid out for the eye only (`_macroShown`, a
-   held note's first minute). `_macroDry` and the eager layout are gone;
-   a held note with a sustain loop, a looping :keyon or a curve no longer
-   runs the player out of memory (check:loops holds three to the driver).
-   **No tie look-ahead**: a note's length is its own (a TIE is the
-   track's to play, as the driver's extends its wait). A note whose gate
-   reaches its end (no gate, or one past its own length into a tie) is
-   held until it closes — the track's next event (`_resolveOff`: key-off
-   first, then `_letGoNote`), or its gate's end inside a tie — its macros
-   run as a held note's (`macroGate` / `psgMacroGate` 0). A macro reads
-   its gate as it steps (`_macroSteps`' `G` holder: offT / offFrame /
-   activeFrames are functions; `{ wait }` at a release until it closes);
-   let go, the gate is set and the steps go on — a pending step no longer
-   the note's (its own `valid()`) dropped (`next(false)`: not where a
-   release-from-now starts). No replay: replaying a tick-clocked macro
-   from its note after a tempo change counted it at the new tempo. On the
-   frame-clocked machines a macro now runs to the next event's frame (one
-   more frame than the old note-length estimate at a song's end).
-
-   macros' release where the sent steps end (the lookahead late), its
-   retriggers stop, a tone lane falls silent after the release. With no
-   run (it is over: a song that is only held notes; or stopped) a held
-   note's chains are not stepped at all — `_scheduleMacro` (the one loop; the retriggers' too)
-   both check the cursor each pull (the second was missed at first: a
-   stack overflow on pce :lfo-sync and the chips' sample hits). **Key edges are the driver's too**: a gate shorter than its note
-   keys off at its end; a full gate's key-off waits for the track's next
-   event (`_pendingKeyOff`, `_fm3Pending`, `_psgPending`, each with its
-   gate's end `at`): a note keys off before its key-on (a slur cancels
-   it), a REST or the track's end (`TRACK_END`, added by `_flattenTracks`
-   with a REST in every gap, as export-mmb.js syncClock fills them) keys
-   off / silences there (`_resolveOff`). Work that belongs to a note
-   (a :keyon tail's key-off, a level tail's silence, a CSM mute, a DMC
-   stop, an MD PCM retrigger) runs `_whileNote`: just after any event at
-   its own time, and only while the note is still the track's. A hot-swap
-   settles the outgoing pendings at their gate's end (`_settlePending`).
-   No macro takes a limit any more. On the frame-clocked machines this
-   removed a silence / key-off a frame early between abutting notes (the
-   gate's end rounded to the frame before the next note's). `_nextNote` is
-   left only for the sample editor's playhead (`_reportSample`'s `cut`), a
-   UI hint. (The tie look-ahead `_resolveTiedLength` is gone too.)
-8. **A word's event is one rule** (`_word(ev, when, w)`): a value, a
-   `$slot`, `+`, `*`, a sweep, a stop — the same for every word on every
-   track; the track gives only the word, `{ read, write, sweep? }`
-   (`_fmWord` over `_readParam` / `_applyParam`, `_psgWord`, `_pcmWord`,
-   MASTER, the song's NOISE_RATE / ENV_RATE, a wave chip's LFO words).
-   `_applyParamSweep`, `_writeSongRate`'s value half and the per-kind
-   `PARAM_*` cases are gone, so a tone lane's every word takes `+` `*` and
-   a sweep (only :vol and :pitch did), and a PCM voice's :vol sweep runs
-   on through a `+` as the driver's does (it stopped; `check:loops` holds
-   the voice's fader to the driver now — the A/B gate does not see it).
-   The chips' sample tracks and `:target midi` are on it too
-   (`_sampleWord`, `_midiLevel`; a sample track's slots are its own,
-   `strk<track>`). Value slots too: `_writeVal` is a word (`_word`), the
-   slot (`_vals`) its value now, a sweep in a song-wide slot (`song:VALn`,
-   `isSongWord`, stepped in SONG as the driver's global sweeps), so an
-   event reads what the frame before left; `_resolveSrc` reads the value.
-   A wave expression's frames are KEYED work at each frame's head
-   (`_waveExprFrame`). The panel reads a swept slot moving (it read the
-   pre-sweep value).
+1. **Not yet listened to**: the frame-order change moved the other seven
+   machines' register logs (48 scores) with no oracle; Mega Drive A/B was
+   no worse (118 of 134 clean then).
+2. **Tone encoders' other calls** (pitch sweeps, the encoders' own queues)
+   are made at dispatch: the Game Boy's, the 2A03's and the PC Engine's
+   encoders order and drop writes by the calls they have seen. Listen to
+   those first.
+3. A sample track's `:pan` / `:pitch` are still per dispatcher; probe each
+   against the driver as MASTER and :vol were.
+4. Bounds of the lookahead, left by choice: a held note let go releases
+   where the sent writes end (~the lookahead late; undoing sent writes needs
+   a per-channel retraction in the worklet for all eight machines); a score
+   event's gate is judged at dispatch, so a hand let go less than the
+   lookahead before a score write misses it; a hot-swap keeps the outgoing
+   score's writes ahead; a seek drops a running sweep's remainder.
+5. The parts are mixins, not components — they call into each other and
+   share the core's state freely (samples: 31 calls, 27 fields, measured
+   with a script) — to draw when a part next has to change.
 
 ## The note path, one for every voice (done, 2026-11)
 
@@ -261,62 +139,34 @@ voice-specific copy of any of these; extend the adapter instead:
 - `tools npm run check:note-path` holds all of it on every channel of every
   machine, sample ones included (closes, retriggers, mutes): 107 channels.
 
-## Next — from the last review (2026-11-11), in this order
+## Waiting on the user (ask, do not decide)
 
-The user approved 1–4; 5 waits for their decision. Commit titles follow the
-repo's style (`refactor(player): …`, `fix(live): …`); author and committer
-hiroshi okamura <hiroshi_okamura@me.com>, no Claude attribution; work on
-`main` and push (it deploys mmlisp.com). Run every gate before each push
-(drv `verify:all`, `node tools/ab-gate.mjs`, `npm run pcm-ab`; tools
-`check:snapshot`, `check:note-path`, `check:words`, `check:loops`,
-`check:panel`, `check:stems`, `check:gm-output`, `check:midi-out` …).
+From the 2026-11-11 review (its items 1–4 are done: the song words' table,
+check:word-rule, the MIDI port's offs on a stop, stale names). Commits
+follow the repo's style (`refactor(player): …`, `fix(live): …`); author
+and committer hiroshi okamura <hiroshi_okamura@me.com>, no Claude
+attribution; work on `main` and push (it deploys mmlisp.com). Run every
+gate before each push (drv `verify:all`, `node tools/ab-gate.mjs`,
+`npm run pcm-ab`; tools `check:snapshot`, `check:note-path`,
+`check:word-rule`, `check:words`, `check:loops`, `check:panel`,
+`check:stems`, `check:gm-output`, `check:midi-out` …).
 
-1. **:noise-rate / :env-rate sweeps break the one word rule** (measured on
-   pc88): `_dispatchGlobalEvent` (ir-player.js, the `PARAM_*` case) starts
-   a :noise-rate sweep without `:from` at 9, not the value now
-   (`_sweepUnits(ev, when, 9, write)`), and its steps never set
-   `_noiseRateBase`, so `:noise-rate 20` then a sweep starts from 9, and a
-   sweep to 5 then `:noise-rate+ 2` gives 22, not 7. :env-rate's sweep
-   starts at 0 the same way (read in code, not measured). Cause: the
-   song-wide words are handled in three places (MASTER in `_masterEvent`,
-   the LFO words in `_dispatchEvent`'s `waveLfo` / `_applyParam`, NOISE_RATE
-   / ENV_RATE in `_dispatchGlobalEvent`). Fix both, and fold the song words
-   into one word table as `_volWord` & co. are (read = the value now, the
-   sweep from it, its steps writing the value).
-2. **A word-rule check for every machine** (as check:note-path is for
-   notes): check:words holds only md's tracks to the driver. For each
-   machine's words: a sweep without :from starts at the value now, `+` /
-   `*` read the value now (after a sweep too), a `$slot` reads the slot.
-3. **External MIDI port: a stop can leave a key with no off.**
-   `MidiOutRun` (midi-output.js) drops a key from `st.active` when its off
-   is *sent* ahead; a stop then `clear()`s that waiting off, and `letGo`
-   no longer knows the key — only CC 123 is sent (measured: the port gets
-   the on and CC 123, no off). The GM output stops on CC 123 (checked), but
-   a module or DAW that ignores it rings on. Fix: drop a key from `active`
-   when its off is *due* (its time passed), not when sent; add the case to
-   check:midi-out.
-4. **Stale names**: comments naming removed functions — `_scheduleFm3OpKey`
-   (ir-player.js ~204, ir-player-work.js ~73), `_resolveOff`
-   (ir-player-macros.js ~105), `_chipPcmFrame` (ir-player-samples.js ~160,
-   ir-player-shared.js ~56), `_scheduleFmLevelMacros` (ir-player-shared.js
-   ~109); in this file, the older sections' `_macroOnset`, `_resolveOff`,
-   `_letGoNote`, `_pendingKeyOff` / `_fm3Pending` / `_psgPending` (they
-   describe history: rewrite them as the code is now, or cut them).
-5. **Waiting on the user** (ask, do not decide):
-   - Tempo look-ahead: `_timeAfterTicks` reads tempo changes not yet
-     dispatched (`_tempoChangesAhead`) for a gate's end and a tick-clocked
-     macro's steps; `_nextNote` looks ahead for the sample editor. Against
-     "state is now only" — the alternative is counting ticks (a big change).
-   - Live's keys: an FM key writes through preview writes, a PSG key
-     through the player's own state (`keyTone` → `_psgSetPitch`) — so the
-     song and the key can overwrite each other on a lane the song plays.
-     The fix is in index.html (no tests): only playback verifies it.
-   - The PC Engine's PCM sounds quieter than its waves: measured, the DDA
-     and a wave channel peak alike (−18.1 dBFS); a sample carries ~13 dB
-     less energy than a full-scale saw. It is a mix default, not a bug;
-     the score can lower its waves now (`(def-mod :ch [...] :vel* 0.7)`
-     or `(def-wave … (saw -64..63))`). A different default is a design
-     change.
-   - Not yet heard on a device (the user checks on their phone):
-     :target midi playback, mute / solo switching, the DMC's :keyon, the
-     GM note-off fix (cce183d).
+- Tempo look-ahead: `_timeAfterTicks` reads tempo changes not yet
+  dispatched (`_tempoChangesAhead`) for a gate's end and a tick-clocked
+  macro's steps; `_nextNote` looks ahead for the sample editor. Against
+  "state is now only" — the alternative is counting ticks (a big change).
+- Live's keys: an FM key writes through preview writes, a PSG key
+  through the player's own state (`keyTone` → `_psgSetPitch`) — so the
+  song and the key can overwrite each other on a lane the song plays.
+  The fix is in index.html (no tests): only playback verifies it.
+- The PC Engine's PCM sounds quieter than its waves: measured, the DDA
+  and a wave channel peak alike (−18.1 dBFS); a sample carries ~13 dB
+  less energy than a full-scale saw. It is a mix default, not a bug;
+  the score can lower its waves now (`(def-mod :ch [...] :vel* 0.7)`
+  or `(def-wave … (saw -64..63))`). A different default is a design
+  change.
+- Not yet heard on a device (the user checks on their phone):
+  :target midi playback, mute / solo switching, the DMC's :keyon, the
+  GM note-off fix (cce183d); a stop on an external MIDI port (each key
+  gets its own off now); a :noise-rate / :env-rate / :lfo-rate sweep with
+  no :from, and their `+` (from the value now).
