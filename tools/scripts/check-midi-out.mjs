@@ -178,20 +178,23 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
 }
 { // A stop with keys sent ahead: each off after its own on, by timestamp —
   // the output plays what it was sent in time order, so a key must not end
-  // up held; with clear(), what was ahead is dropped and all goes now.
-  for (const withClear of [false, true]) {
+  // up held; with clear(), what was ahead is dropped and all goes now —
+  // a key's off too, sent ahead of a stop that came before it (at 0.4, c's
+  // off at 0.5 had gone out): the key is let go with an off of its own, not
+  // only All Notes Off, which a module may ignore.
+  for (const [withClear, stopAt] of [[false, 0.26], [true, 0.26], [true, 0.4]]) {
     const { ir, plan } = both(SONG);
     const p = standIn(ir);
     const sent = [];
-    const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }), clear: withClear ? () => sent.splice(0, sent.length, ...sent.filter((m) => m.t <= 0.26)) : null });
+    const run = new MidiOutRun({ send: (b, ms) => sent.push({ b, t: ms / 1000 }), clear: withClear ? () => sent.splice(0, sent.length, ...sent.filter((m) => m.t <= stopAt)) : null });
     run.setPlan(plan, ir);
-    drive(run, p, 0, 0.26); // d (0.5) sent ahead by now
+    drive(run, p, 0, stopAt); // d (0.5) sent ahead by now
     p.playing = false;
-    run.pass(p, 0.26);
+    run.pass(p, stopAt);
     const byTime = [...sent].sort((x, y) => x.t - y.t);
     const held = new Set();
     for (const m of byTime) { const k = `${m.b[0] & 15}:${m.b[1]}`; if (isOn(m.b)) held.add(k); else if (isOff(m.b)) held.delete(k); }
-    assert.equal(held.size, 0, `no key held, in time order${withClear ? " (cleared)" : ""}`);
+    assert.equal(held.size, 0, `no key held, in time order${withClear ? ` (cleared at ${stopAt})` : ""}: ${[...held]}`);
     if (withClear) assert.ok(!sent.some((m) => isOn(m.b) && m.t > 0.26), "cleared: nothing ahead sounds");
   }
 }

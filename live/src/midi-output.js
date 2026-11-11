@@ -149,7 +149,7 @@ export class MidiOutRun {
     this.running = false;
     this.run = 0; // the player's runNumber this run began at
     this.skipSaid = "";
-    this.tracks = null; // per plan track: { sent, active: Map key → bytes, audible }
+    this.tracks = null; // per plan track: { sent, active: Map key → { bytes, at, off }, audible }
     this.runStart = null; // audio time the run began
     this.swapAt = null; // the pending hot-swap's time, as last seen
     this.chase = true; // the next plan starts from a point (not a swap)
@@ -247,6 +247,9 @@ export class MidiOutRun {
       const audible = player.isTrackAudible(t.trackIndex) && db > -Infinity;
       if (st.audible && !audible) this.letGo(st, now); // muted mid-note
       st.audible = audible;
+      // A key is held until its off is due, not only sent: a stop may drop
+      // an off sent ahead (clear), and the key needs one of its own then.
+      for (const [k, a] of st.active) if (a.off <= now) st.active.delete(k);
       const c0 = player.trackTickAt(t.trackIndex, now), c1 = player.trackTickAt(t.trackIndex, horizon);
       if (!c0 || !c1 || !(c1.raw > c0.raw)) continue; // held, or no time ahead
       const spt = (horizon - now) / (c1.raw - c0.raw);
@@ -258,8 +261,11 @@ export class MidiOutRun {
         if (isOn(bytes)) {
           if (!audible) return;
           if (delta) bytes = [bytes[0], bytes[1], Math.max(1, Math.min(127, Math.round(bytes[2] * 10 ** (delta / 40))))];
-          st.active.set(keyOf(bytes), { bytes, at });
-        } else if (isOff(e.bytes)) st.active.delete(keyOf(e.bytes));
+          st.active.set(keyOf(bytes), { bytes, at, off: Infinity });
+        } else if (isOff(e.bytes)) {
+          const a = st.active.get(keyOf(e.bytes));
+          if (a) a.off = at;
+        }
         // The plan's CC7 under the panel's level is the panel's.
         else if ((bytes[0] & 0xf0) === 0xb0 && bytes[1] === 7) {
           st.planCc7 = bytes[2];
@@ -352,7 +358,8 @@ export class MidiOutRun {
 
   // A track's keys let go at `when` — a key sent ahead, after its own on:
   // what was sent ahead plays by its timestamp, so an off before it would
-  // leave the key held.
+  // leave the key held. A key whose off was sent ahead too is let go again
+  // (a second off is nothing): that off may have been dropped (clear).
   letGo(st, when) {
     for (const { bytes: b, at } of st.active.values())
       this.send([0x80 | (b[0] & 0x0f), b[1], 0], this.perfAt(Math.max(when, at + 0.001)));
