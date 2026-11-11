@@ -983,8 +983,18 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
     }
     return dpcm.defs.get(key);
   };
+  // An FM pan effect's side: 08xy (x left, y right) and Furnace's 80xx
+  // (linear, a side off only at its end), as the YM2612 keys them.
+  const fmPanOf = (code, val) => (code === 0x80 ? (val === 0 ? "left" : val === 0xff ? "right" : "center")
+    : (val >> 4) && (val & 15) ? "center" : val >> 4 ? "left" : val & 15 ? "right" : "center");
   const dpcmTrack = (ch, chn) => {
     const notes = [];
+    // FM6's pan is the DAC's (language.md §16): its 08xx / 80xx, sticky as
+    // the FM pass keeps them, on every sample note once the channel pans.
+    const panFx = !onFc && !!ch.samples;
+    const panned = panFx && a.seq.some(({ order, rows }) =>
+      (chn.patterns.get(t.orders[order][ch.index]) ?? []).slice(0, rows).some((r) => r?.fx.some(([c, v]) => (c === 0x08 || c === 0x80) && v >= 0)));
+    let pan = "center";
     // The DMC mode: the song's, set by an NES instrument's note (Furnace
     // switches to it there) and by 18xx.
     let ins = -1, sounding = null, lastRate = 0, prev = null, dmcMode = onFc && t.dpcmMode;
@@ -1017,6 +1027,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           if (code === 0xed && val > 0) delay = val;
           else if (code === 0xec && val >= 0) cut = val;
           else if (code === 0x18 && val >= 0 && onFc) dmcMode = val > 0;
+          else if ((code === 0x08 || code === 0x80) && val >= 0 && panFx) pan = fmPanOf(code, val);
           else if (code === 0x09 || code === 0x0f || code === 0x0b || code === 0x0d) { /* the song's speed, the order walk */ }
           else if (code >= 0 && !ch.samples) { // (FM6's: the FM pass counts them)
             const k = FC_FX[code] ?? FX_NAMES[code] ?? `${code.toString(16).toUpperCase().padStart(2, "0")}xx`;
@@ -1041,7 +1052,7 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           const hit = hitOf(t.instruments[row.legacy ?? ins], row.note);
           if (!hit) { dpcm.missing++; continue; }
           // Played until the next note or an off: a loop to there, else cut there.
-          const state = [hit.name, hit.loop ? ":mode loop" : ":mode gate"];
+          const state = [hit.name, hit.loop ? ":mode loop" : ":mode gate", ...(panned ? [`:pan ${pan}`] : [])];
           sounding = { tick: start, end: cut != null ? start + Math.max(1, cut) : null, midi: 60, vel: 15,
             pre: state.filter((x, k) => prev?.[k] !== x), state };
           prev = state;
@@ -1396,10 +1407,8 @@ export function trackerToMmlisp(t, options, a = analyzeTracker(t)) {
           else if (code === 0xe5 && val >= 0) detune = tuneCents + (v < 0 ? 0 : Math.round((val - 0x80) * 100 / 128 / 10) * 10 || 0);
           // 80xx: Furnace's linear pan, a side off only at its end (00 left,
           // FF right), as its FM channels key their sides.
-          else if (code === 0x80 && fmPan && val >= 0) pan = val === 0 ? "left" : val === 0xff ? "right" : "center";
-          else if (code === 0x08 && fmPan && val >= 0) {
-            pan = (val >> 4) && (val & 15) ? "center" : val >> 4 ? "left" : val & 15 ? "right" : "center";
-          } else if (code === 0x08 && pceVol && val >= 0) {
+          else if ((code === 0x80 || code === 0x08) && fmPan && val >= 0) pan = fmPanOf(code, val);
+          else if (code === 0x08 && pceVol && val >= 0) {
             // The channel's left and right levels: the louder side full, the
             // other as far down as their difference (chips/huc6280.js panLevels).
             const p = ((val & 15) - (val >> 4)) / 15;

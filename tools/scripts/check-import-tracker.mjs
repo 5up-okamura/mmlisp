@@ -400,6 +400,20 @@ function dacDmf() {
   assert.deepEqual(bad(source), [], "the DAC score compiles clean");
 }
 
+// FM6's pan is the DAC's (language.md §16): an 08xx on its sample note's
+// row — here 08F0, the left side alone — is pcm1's :pan from that note on.
+{
+  const t = await parseDmf(dacDmf());
+  t.channels[5].patterns.get(0)[1].fx = [[0x08, 0xf0]];
+  const a = analyzeTracker(t);
+  const opt = defaultTrackerOptions(a, "md");
+  for (const structure of [true, false]) {
+    const { source } = trackerToMmlisp(t, { ...opt, structure, fileName: "t.dmf" }, a);
+    assert.match(source, /dac-kick :mode gate :pan center[^\n]*\n?\s*c dac-snare :pan left c/, `FM6's 08F0: the snare's :pan left, the kick's centre (${structure ? "folded" : "flat"})`);
+    assert.deepEqual(bad(source), [], "the panned DAC score compiles clean");
+  }
+}
+
 // fm1-fm5 all asked for: FM6's FM notes stay on fm6, taking it in turn with
 // the DAC's (language.md §16) — its sample and FM notes end each other, so
 // they never meet.

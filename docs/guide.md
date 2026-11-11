@@ -2132,6 +2132,8 @@ phrase with `~`. Untick **One def per pattern** for one long body instead.
   (`EBxx` the bank) at the sample's rate, as an NES module's DPCM channel
   always does. Each sample is a `def-pcm` in one wav, `<song>-dac.wav`
   (`-dpcm` on `fc`), read as Furnace reads it, its amp and pitch applied.
+  FM6's pan (`08xx`, Furnace's `80xx`) is the DAC's too: once the channel
+  pans, each sample note carries the side in force as `pcm1`'s `:pan`.
 
 **VGM.** A VGM is a log of register writes, so its notes are rebuilt from
 them: a key-on starts a note, a key-off ends it.
