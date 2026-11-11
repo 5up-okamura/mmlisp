@@ -585,34 +585,42 @@ export const sampleMethods = {
           audible: this._isVoiceTrackAudible(ti, "dpcm"),
           level: "voice:dpcm", vel: Number(ev.args?.vel ?? 15),
           key: () => {
-          // The level at key-on, baked into the bytes: the voice's (_sampleLevel)
-          // — its note's vel and :vol macro's first steps, the strip, the
-          // track's :vol, the master.
-          const lv = this._sampleLevel("voice:dpcm", ti);
-          const gain = levelGain({ vel: lv.vel, faders: [lv.vol, lv.master] });
-          const rate = this._dmcRateOf(name);
-          const levels = dmcLevels(entry, perSec, rate, gain, start, end);
-          const bytes = dmcEncode(levels, mode === "loop");
-          const loadAt = (this._target.frameClock ? this._frameStart(when) : when) - DMC_LOAD_LEAD_SECS;
-          // Live's worklet takes the load as one stream tick (thousands of
-          // messages would stall the page); a capture, a write at a time.
-          const load = dmc.load(bytes), timed = this._writeTimer;
-          if (timed.stream) {
-            const flat = new Uint8Array(2 * load.length);
-            load.forEach(([, a, d], k) => { flat[2 * k] = a; flat[2 * k + 1] = d; });
-            timed.stream({ when: loadAt, rate: 1, port: load[0][0], perTick: load.length, bytes: flat });
-          } else for (const [p, a, d] of load) timed(p, a, d, loadAt);
-          // The worklet writes timed writes at its block's start but a stream
-          // at its sample: the start goes as a stream too, so it follows the
-          // load it plays (a capture keeps the order by time).
-          const go = dmc.start(bytes, rate, mode === "loop");
-          if (timed.stream) {
-            const flat = new Uint8Array(2 * go.length);
-            go.forEach(([, a, d], k) => { flat[2 * k] = a; flat[2 * k + 1] = d; });
-            const t = this._target.frameClock ? this._frameTime(when) : when;
-            timed.stream({ when: t, rate: 1, port: go[0][0], perTick: go.length, bytes: flat });
-          } else write(go, when);
-            return { close: this._sampleClose(ev, (t, { shot }) => { if (!shot) write(dmc.stop(), t); }) };
+            // The level at key-on, baked into the bytes: the voice's
+            // (_sampleLevel) — its note's vel and :vol macro's first steps,
+            // the strip, the track's :vol, the master.
+            const lv = this._sampleLevel("voice:dpcm", ti);
+            const gain = levelGain({ vel: lv.vel, faders: [lv.vol, lv.master] });
+            const rate = this._dmcRateOf(name);
+            const levels = dmcLevels(entry, perSec, rate, gain, start, end);
+            const bytes = dmcEncode(levels, mode === "loop");
+            const loadAt = (this._target.frameClock ? this._frameStart(when) : when) - DMC_LOAD_LEAD_SECS;
+            // Live's worklet takes the load as one stream tick (thousands of
+            // messages would stall the page); a capture, a write at a time.
+            const load = dmc.load(bytes), timed = this._writeTimer;
+            const stream = (writes, t) => {
+              const flat = new Uint8Array(2 * writes.length);
+              writes.forEach(([, a, d], k) => { flat[2 * k] = a; flat[2 * k + 1] = d; });
+              timed.stream({ when: t, rate: 1, port: writes[0][0], perTick: writes.length, bytes: flat });
+            };
+            if (timed.stream) stream(load, loadAt);
+            else for (const [p, a, d] of load) timed(p, a, d, loadAt);
+            // The DMC started on the bytes loaded: at the key-on and each
+            // :keyon retrigger (its envelopes start over from their first
+            // steps, the level its bytes were baked at). The worklet writes
+            // timed writes at its block's start but a stream at its sample:
+            // the start goes as a stream too, so it follows the load it
+            // plays (a capture keeps the order by time).
+            const go = dmc.start(bytes, rate, mode === "loop");
+            const startAt = (t) => {
+              if (timed.stream) stream(go, this._target.frameClock ? this._frameTime(t) : t);
+              else write(go, t);
+            };
+            startAt(when);
+            return {
+              close: this._sampleClose(ev, (t, { shot }) => { if (!shot) write(dmc.stop(), t); }),
+              // (a gate or loop note's only before its close, as a chip's hit's)
+              retrigger: (t, closed) => { if (mode === "shot" || !closed) startAt(t); },
+            };
           },
         });
         break;
