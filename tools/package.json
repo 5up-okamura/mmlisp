@@ -44,6 +44,7 @@
     "check:panel": "node scripts/check-panel.mjs",
     "check:words": "node scripts/probe-words.mjs",
     "check:loops": "node scripts/check-loops.mjs",
+    "check:note-path": "node scripts/check-note-path.mjs",
     "check:gm-output": "node scripts/check-gm-output.mjs",
     "check:import-tracker": "node scripts/check-import-tracker.mjs",
     "snapshot:imports": "node scripts/import-snapshot.mjs",
