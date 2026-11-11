@@ -195,7 +195,7 @@ const SONG = `(fm1 :tempo 120 :len 4 c d e f)\n(fm2 :len 2 g a)`;
     const held = new Set();
     for (const m of byTime) { const k = `${m.b[0] & 15}:${m.b[1]}`; if (isOn(m.b)) held.add(k); else if (isOff(m.b)) held.delete(k); }
     assert.equal(held.size, 0, `no key held, in time order${withClear ? ` (cleared at ${stopAt})` : ""}: ${[...held]}`);
-    if (withClear) assert.ok(!sent.some((m) => isOn(m.b) && m.t > 0.26), "cleared: nothing ahead sounds");
+    if (withClear) assert.ok(!sent.some((m) => isOn(m.b) && m.t > stopAt), "cleared: nothing ahead sounds");
   }
 }
 { // A hot-swap: nothing past the bar from the outgoing plan; the incoming

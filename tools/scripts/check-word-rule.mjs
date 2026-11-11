@@ -86,6 +86,7 @@ for (const name of Object.keys(TARGETS)) {
   const channels = targetProfile(name).channels;
   const heads = [...newScoreSource(name).matchAll(/^\(([a-z0-9-]+)\b/gm)].map((m) => m[1])
     .filter((h) => ["fm", "psg"].includes(CORE_OF_KIND[channels[h]?.part?.kind]));
+  const before = cases;
   for (const kw of Object.keys(WORDS)) {
     if (only && kw !== only) continue;
     const [a, t, d] = WORDS[kw];
@@ -108,6 +109,8 @@ for (const name of Object.keys(TARGETS)) {
       }
     }
   }
+  // (a machine whose every case the compiler refused would pass unseen)
+  if (!only) assert.ok(cases > before, `${name}: no word was checked`);
 }
 for (const f of failures) console.error(`  ${f}`);
 assert.equal(failures.length, 0, `check:word-rule: ${failures.length} of ${cases} cases part from the rule`);

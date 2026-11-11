@@ -358,11 +358,12 @@ export class MidiOutRun {
 
   // A track's keys let go at `when` — a key sent ahead, after its own on:
   // what was sent ahead plays by its timestamp, so an off before it would
-  // leave the key held. A key whose off was sent ahead too is let go again
-  // (a second off is nothing): that off may have been dropped (clear).
-  letGo(st, when) {
-    for (const { bytes: b, at } of st.active.values())
-      this.send([0x80 | (b[0] & 0x0f), b[1], 0], this.perfAt(Math.max(when, at + 0.001)));
+  // leave the key held. A key whose off was sent ahead for `when` or before
+  // has it (no second off, which would fall on a key the next plan keys at a
+  // swap's bar) — unless what was ahead was dropped (`cleared`).
+  letGo(st, when, cleared = false) {
+    for (const { bytes: b, at, off } of st.active.values())
+      if (cleared || off > when) this.send([0x80 | (b[0] & 0x0f), b[1], 0], this.perfAt(Math.max(when, at + 0.001)));
     st.active.clear();
   }
 
@@ -370,7 +371,7 @@ export class MidiOutRun {
   // uses, after anything sent ahead (unless that was cleared).
   allOff(when, cleared = false) {
     if (!this.plan || !this.tracks) return;
-    for (const st of this.tracks) this.letGo(st, when);
+    for (const st of this.tracks) this.letGo(st, when, cleared);
     const at = this.perfAt(cleared ? when : Math.max(when, this.lastAt + 0.001));
     for (const ch of new Set(this.plan.tracks.filter((t) => t.port === 0).map((t) => t.channel))) this.send([0xb0 | ch, 123, 0], at);
   }
