@@ -2702,8 +2702,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
           note.waveMac = waveMacName(note.waveSteps);
         }
       }
-      // (the Mega Drive's DAC has one pan for every voice, fm6's: not a note's)
-      note.pan = target.partOf(d)?.words?.("PAN") && target.partOf(d).name !== "dac" && n.pan ? n.pan : null;
+      note.pan = target.partOf(d)?.words?.("PAN") && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       // The FDS's modulation, where the channel has its table (fc's wave1),
       // and the PC Engine's LFO, where the channel is the one it sways
@@ -2833,7 +2832,7 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
   // The DAC, to a PCM track: the data bank one wav, each sample a def that
   // slices it — so with DAC on, FM6 is not there to play.
   const dacDest = dest[DAC_KEY] ?? "drop";
-  const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName) : null;
+  const dacOut = dests.pcm.length > 0 && dacDest !== "drop" && parsed.dacHits?.length ? dacTrack(parsed, dacDest, tickOf, endTick, options.fileName, !!target.partOf(dacDest)?.words?.("PAN")) : null;
   // The rhythm asked onto the kit: a voice more for the engine.
   const kitAsked = !!dests.kit && a.channels.some((c) => c.kind === "rhythm" && dest[c.key] === dests.kit);
   // SegaPCM / ADPCM: the channels kept, on as many voices as asked.
@@ -3104,7 +3103,7 @@ const PAN_OF_BITS = [null, "right", "left", "center"];
  * `:rate`, the C4 the notes play from. A hit at another rate is that many
  * semitones off it (under half of one is none).
  */
-function dacTrack(parsed, channel, tickOf, endTick, fileName) {
+function dacTrack(parsed, channel, tickOf, endTick, fileName, pan = false) {
   const { dacBank: bank, dacHits: hitsIn } = parsed;
   // A hit seeking a few bytes into a sample (a driver a byte late, Aa
   // Harimanada's) is that sample's, not a sample of its own — which would
@@ -3136,8 +3135,10 @@ function dacTrack(parsed, channel, tickOf, endTick, fileName) {
     const name = `dac-${String(i + 1).padStart(2, "0")}`;
     samples.set(offset, { name, offset, frames, rate });
   });
-  // The DAC's pan at a time: fm6's L / R as the song last wrote them.
-  const pans = parsed.dacPans ?? [];
+  // The DAC's pan at a time: fm6's L / R as the song last wrote them — where
+  // the channel it comes in on has a pan (`pan`: md's and pc88's pcm1, pce's;
+  // not PCM8's or the DMC's).
+  const pans = pan ? parsed.dacPans ?? [] : [];
   let pi = 0;
   const panAt = (t) => {
     while (pi < pans.length && pans[pi].t <= t) pi++;

@@ -679,7 +679,7 @@ write.
 | `FM_FMS`          | 0–7            | B4 bits 2–0. `pce`: `wave1`'s LFO control, 0 off, 1–3 ($09). |
 | `FM_SUS`          | 0–1            | The OPLL's (`msx`'s FM-PAC, `fc`'s VRC7): the channel's sustain, $20+ch bit 5. A track's word, no def-fm key. |
 | `FM_WS1`–`FM_WS2`, `FM_EG1`–`FM_EG2`, `FM_KSL1`–`FM_KSL2`, `FM_VIB1`–`FM_VIB2` | 0–1, 0–1, 0–3, 0–1 | The OPLL's operator bits: waveform ($03 bit 3 / 4), envelope type ($00/$01 bit 5), level key scale ($02/$03 bits 7–6), vibrato ($00/$01 bit 6). |
-| `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. `pce`: taken whole, on the channel's left / right levels; `gb`: NR51's sides. |
+| `PAN`             | −1–1           | B4 bits 7–6 (−1 = L `10`, 0 = LR `11`, +1 = R `01`); snapped to the tri-state lane. On an `md` pcm track it is fm6's, the DAC's one pan. `pce`: taken whole, on the channel's left / right levels; `gb`: NR51's sides. |
 | `DUTY`            | 0–16           | `fc`'s and `gb`'s pulses, the VRC6's and the MMC5's: the duty in sixteenths, the nearest the chip has. |
 | `NOISE_RATE`      | 1–31           | `pc88`, `msx`, `fc`'s 5B: the SSG's noise period (reg 0x06); `x68k`: NFRQ = 32 − n (reg 0x0F). Song-wide as `LFO_RATE`; inline or a sweep. |
 | `SSG_MIX`         | 0–3            | `pc88`, `msx`, `fc`'s 5B: an SSG channel's mixer (reg 0x07), 0 tone, 1 noise, 2 both, 3 neither (the envelope alone) — sqr1–sqr3's `:mode`. |

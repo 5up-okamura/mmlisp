@@ -246,6 +246,11 @@ const writesOf = (source, addr) => {
     const pans = [...pcm1.matchAll(/:pan (\w+)/g)].map((m) => m[1]);
     assert.deepEqual(pans, ["left", "right", "center"], `md: the DAC's pan on pcm1 where it moves, once each (${pans})`);
   }
+  // Onto a machine whose sample part has a pan it comes too (pc88's
+  // ADPCM-B); onto one without (the X68000's PCM8, the Famicom's DMC) it is
+  // left out, and the score compiles.
+  assert.match(imported(parsed, "pc88").source, /:pan left/, "pc88: the DAC's pan on the ADPCM-B");
+  for (const tg of ["x68k", "fc"]) assert.doesNotMatch(imported(parsed, tg).source, /:pan/, `${tg}: no pan on a part without one`);
 }
 
 // The YM2608's rhythm: on pc88 each ROM sound keyed comes back on its own
