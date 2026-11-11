@@ -351,9 +351,21 @@ static void pcm_compose_master(MMLSeq *s) {
 MML_HOT uint8_t enc_b0(const MMLFmCh *c) {
   return (uint8_t)(((c->feedback & 7) << 3) | (c->algorithm & 7));
 }
-MML_HOT uint8_t enc_b4(const MMLFmCh *c) {
-  uint8_t pan = c->pan < 0 ? 2 : c->pan > 0 ? 1 : 3;
+MML_HOT uint8_t enc_b4_pan(const MMLFmCh *c, int8_t p) {
+  uint8_t pan = p < 0 ? 2 : p > 0 ? 1 : 3;
   return (uint8_t)((pan << 6) | ((c->ams & 3) << 4) | (c->fms & 7));
+}
+MML_HOT uint8_t enc_b4(const MMLFmCh *c) { return enc_b4_pan(c, c->pan); }
+/* The DAC comes out on fm6's L / R: while a PCM SE plays they are the
+ * effect's pan, the song's again at its end (driver.md §14). */
+static int se_pan_live(const MMLSeq *s) {
+  for (uint8_t i = 0; i < s->track_count; i++)
+    if (s->trk[i].pcm_se) return 1;
+  return 0;
+}
+static uint8_t b4_of(const MMLSeq *s, int ch) {
+  const MMLFmCh *c = &s->fm[ch];
+  return enc_b4_pan(c, ch == 5 && se_pan_live(s) ? s->se_pan : c->pan);
 }
 /* DT is signed (-3..+3) everywhere above the register; the chip field is
  * sign-magnitude (0-3 = 0,+1,+2,+3 / 4-7 = -0,-1,-2,-3). */
@@ -893,9 +905,13 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     }
     return;
   }
-  /* The PCM voices are one stream on fm6's DAC: a pcm track's pan is fm6's
-   * L / R, as if written there. */
-  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5;
+  /* A pcm channel's PAN here is an effect's (param_ch: the song's is fm6's):
+   * the DAC's while the effect plays. */
+  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) {
+    s->se_pan = (int8_t)clampi(value, -1, 1);
+    if (se_pan_live(s)) ym(s, 1, 0xb6, b4_of(s, 5));
+    return;
+  }
   /* PCM soft-mix levels: per-voice state, composed into the mixer's shift. */
   if (ch >= CH_PCM1 && ch <= CH_PCM3) {
     MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
@@ -974,7 +990,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
     if (target == T_FM_AMS) c->ams = (uint8_t)clampi(value, 0, 3);
     else if (target == T_FM_FMS) c->fms = (uint8_t)clampi(value, 0, 7);
     else c->pan = (int8_t)clampi(value, -1, 1);
-    ym(s, port, (uint8_t)(0xb4 + off), enc_b4(c));
+    ym(s, port, (uint8_t)(0xb4 + off), b4_of(s, ch));
     return;
   }
 
@@ -1064,8 +1080,8 @@ static int read_param(const MMLSeq *s, int ch, int target) {
             + VEL_FINE / 2) >> 3;
   if (target == T_GATE)
     return ch < 6 ? s->fm[ch].gate : ch < 10 ? s->psg[ch - 6].gate : 8;
-  /* an operator track's patch is CH3's; a pcm track's pan is fm6's (the DAC's) */
-  int fc = ch >= 16 && ch <= 19 ? 2 : ch >= CH_PCM1 && ch <= CH_PCM3 && target == T_PAN ? 5 : ch;
+  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) return s->se_pan; /* an effect's (param_ch) */
+  int fc = ch >= 16 && ch <= 19 ? 2 : ch; /* an operator track's patch is CH3's */
   if (fc < 6) {
     const MMLFmCh *c = &s->fm[fc];
     if (target == T_NOTE_PITCH) return c->pitch_cents;
@@ -1170,7 +1186,6 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
                         int from, int to, int len) {
   int g = global_sweep(target);
   MMLSweep *sw;
-  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5; /* the DAC's pan is fm6's */
   if (g >= 0) {
     sw = &s->gsweeps[g];
     s->gsweep_live |= 1u << g;
@@ -1201,7 +1216,6 @@ static void start_sweep(MMLSeq *s, int ch, uint8_t target, uint8_t curve, int lo
 }
 static void stop_sweep(MMLSeq *s, int ch, uint8_t target) {
   int g = global_sweep(target);
-  if (target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3) ch = 5; /* the DAC's pan is fm6's */
   if (g >= 0) {
     s->gsweeps[g].active = 0;
     return;
@@ -2092,6 +2106,13 @@ static void ghost_swap(MMLSeq *s, int ch);
 static int ghost_in(MMLSeq *s, const MMLTrack *t);
 static void ghost_out(MMLSeq *s, int ch);
 
+/* The channel a track's word writes: its own, but a pcm track's PAN — the
+ * song's is fm6's (the DAC comes out on its L / R, driver.md §14); an
+ * effect's is its own, the DAC's while it plays (se_pan). */
+static int param_ch(const MMLTrack *t, int target) {
+  int ch = t->channel_id;
+  return target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3 && !t->pcm_se ? 5 : ch;
+}
 static void dispatch(MMLSeq *s, MMLTrack *t) {
   const uint8_t *st = s->stream;
   int guard = 0;
@@ -2240,12 +2261,12 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
           store_vel(s, t->channel_id, (int8_t)st[t->pc + 2]);
           t->pc += 3;
         } else if (target_wide(target)) {
-          stop_sweep(s, t->channel_id, target); /* a write ends the target's sweep */
-          param_set(s, t->channel_id, target, (int16_t)rd16(st, t->pc + 2));
+          stop_sweep(s, param_ch(t, target), target); /* a write ends the target's sweep */
+          param_set(s, param_ch(t, target), target, (int16_t)rd16(st, t->pc + 2));
           t->pc += 4;
         } else {
-          stop_sweep(s, t->channel_id, target);
-          param_set(s, t->channel_id, target, (int8_t)st[t->pc + 2]);
+          stop_sweep(s, param_ch(t, target), target);
+          param_set(s, param_ch(t, target), target, (int8_t)st[t->pc + 2]);
           t->pc += 3;
         }
         break;
@@ -2260,18 +2281,18 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         /* Dynamic endpoints: flags bit1/bit2 mark from/to as slot ids in the
          * field's low byte, read live at dispatch (the note-on tier). */
         /* bit3: no :from — start where the parameter is now. */
-        int from = (flags & 8) ? read_param(s, t->channel_id, target)
+        int from = (flags & 8) ? read_param(s, param_ch(t, target), target)
                  : (flags & 2) ? read_slot(s, st[t->pc + 4])
                                : (int16_t)rd16(st, t->pc + 4);
         int to = (flags & 4) ? read_slot(s, st[t->pc + 6])
                              : (int16_t)rd16(st, t->pc + 6);
         int len = rd16(st, t->pc + 8);
         t->pc += 10;
-        start_sweep(s, t->channel_id, target, curve, flags & 1, from, to, len);
+        start_sweep(s, param_ch(t, target), target, curve, flags & 1, from, to, len);
         break;
       }
       case OP_PARAM_SWEEP_STOP:
-        stop_sweep(s, t->channel_id, st[t->pc + 1]);
+        stop_sweep(s, param_ch(t, st[t->pc + 1]), st[t->pc + 1]);
         t->pc += 2;
         break;
       case OP_PARAM_ADD: {
@@ -2279,8 +2300,8 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         int wide = target_wide(target);
         int delta = wide ? (int16_t)rd16(st, t->pc + 2) : (int8_t)st[t->pc + 2];
         t->pc += (uint16_t)(2 + (wide ? 2 : 1));
-        param_set(s, t->channel_id, target,
-                  read_param(s, t->channel_id, target) + delta);
+        param_set(s, param_ch(t, target), target,
+                  read_param(s, param_ch(t, target), target) + delta);
         break;
       }
       /* ── Value machine: the stream ops (driver.md §6.4, opcodes.md §6) ──
@@ -2290,31 +2311,31 @@ static void dispatch(MMLSeq *s, MMLTrack *t) {
         uint8_t target = st[t->pc + 1];
         int factor = rd16(st, t->pc + 2); /* unsigned 8.8 */
         t->pc += 4;
-        param_set(s, t->channel_id, target,
-                  (read_param(s, t->channel_id, target) * factor) >> 8);
+        param_set(s, param_ch(t, target), target,
+                  (read_param(s, param_ch(t, target), target) * factor) >> 8);
         break;
       }
       case OP_PARAM_FROM_VAL: {
         uint8_t target = st[t->pc + 1];
         int v = read_slot(s, st[t->pc + 2]);
         t->pc += 3;
-        param_set(s, t->channel_id, target, v);
+        param_set(s, param_ch(t, target), target, v);
         break;
       }
       case OP_PARAM_ADD_VAL: {
         uint8_t target = st[t->pc + 1];
         int v = read_slot(s, st[t->pc + 2]);
         t->pc += 3;
-        param_set(s, t->channel_id, target,
-                  read_param(s, t->channel_id, target) + v);
+        param_set(s, param_ch(t, target), target,
+                  read_param(s, param_ch(t, target), target) + v);
         break;
       }
       case OP_PARAM_MUL_VAL: {
         uint8_t target = st[t->pc + 1];
         int factor = read_slot(s, st[t->pc + 2]); /* 8.8 */
         t->pc += 3;
-        param_set(s, t->channel_id, target,
-                  (read_param(s, t->channel_id, target) * factor) >> 8);
+        param_set(s, param_ch(t, target), target,
+                  (read_param(s, param_ch(t, target), target) * factor) >> 8);
         break;
       }
       case OP_TEMPO_SWEEP: {
@@ -3067,6 +3088,8 @@ void mml_key_off(MMLSeq *s, uint8_t channel_id) {
     if (s->trk[i].channel_id == channel_id && s->trk[i].held) s->trk[i].held = 0;
 }
 void mml_set_param(MMLSeq *s, uint8_t channel_id, uint8_t target, int value) {
+  /* (the host's pan of a pcm channel is the song's: fm6's) */
+  if (target == T_PAN && channel_id >= CH_PCM1 && channel_id <= CH_PCM3) channel_id = 5;
   param_set(s, channel_id, target, value);
 }
 void mml_fade_track(MMLSeq *s, uint8_t track_id, uint16_t frames) {
@@ -3148,11 +3171,11 @@ static void restore_patch(MMLSeq *s, int ch, const MMLFmCh *gc) {
   uint8_t patch[29];
   encode_patch(gc, patch);
   apply_patch(s, ch, patch);
-  uint8_t old = enc_b4(c);
+  uint8_t old = b4_of(s, ch);
   c->ams = gc->ams;
   c->fms = gc->fms;
   c->pan = gc->pan;
-  if (enc_b4(c) != old) ym(s, ch >= 3 ? 1 : 0, (uint8_t)(0xb4 + mod3(ch)), enc_b4(c));
+  if (b4_of(s, ch) != old) ym(s, ch >= 3 ? 1 : 0, (uint8_t)(0xb4 + mod3(ch)), b4_of(s, ch));
 }
 
 /* ── The displaced part plays on, unheard ──────────────────────────────────
@@ -3335,6 +3358,8 @@ static void reclaim_se(MMLSeq *s, MMLTrack *se) {
     int ch = CH_PCM1 + se->pcm_vi, mc = macro_ch(ch);
     se->pcm_se = 0;
     se->is_se = 0;
+    /* The DAC's pan the song's again (another effect's while one plays). */
+    ym(s, 1, 0xb6, b4_of(s, 5));
     for (int i = 0; i < se->pcm_bind_count; i++) s->binds[mc][i] = se->pcm_binds[i];
     s->bind_count[mc] = se->pcm_bind_count;
     s->macro_slot_count[mc] = 0; /* the effect's own envelopes end with it */
@@ -3460,6 +3485,9 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
      * it — and keeps the BGM's binds to hand back at its end. */
     t->pcm_se = 1;
     t->pcm_vi = (uint8_t)vi;
+    /* The DAC's pan is the effect's from here, as it starts (centre). */
+    s->se_pan = 0;
+    ym(s, 1, 0xb6, b4_of(s, 5));
     t->pcm_bind_count = s->bind_count[mc];
     for (int i = 0; i < s->bind_count[mc]; i++) t->pcm_binds[i] = s->binds[mc][i];
     clear_channel_modulators(s, ch);

@@ -2095,6 +2095,22 @@
   "vgm": "8bb3c1b3abe3c32d",
   "mid": "56db5b89f49b4dd8"
  },
+ "drv/tests/p3-se-pcm-pan.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "59f60e786259cba1",
+  "regs": "da0f8435218abd9d",
+  "mmb": "14be14b39ea5b867",
+  "vgm": "7ad56e66b85aff29",
+  "mid": "7cc91ecb84b4afb2"
+ },
+ "drv/tests/p3-se-pcm-pan.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "545e2d798f6efd3c",
+  "regs": "da0f8435218abd9d",
+  "mmb": "ab9be91e8aa73b8b",
+  "vgm": "6f82ae12132f310f",
+  "mid": "7cc91ecb84b4afb2"
+ },
  "drv/tests/p3-se-stopped-twin.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "f7ce42044a89242e",

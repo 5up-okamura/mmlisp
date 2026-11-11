@@ -367,6 +367,9 @@ typedef struct {
    * pcm_compose_master. */
   uint8_t pcm_master_shift;
   uint8_t pcm_sent_master;
+  /* An effect's pan on the DAC, -1..1 (driver.md §14): fm6's L / R while a
+   * PCM SE plays (se_pan_live), the song's (fm[5].pan) otherwise. */
+  int8_t se_pan;
   uint8_t noise_mode;
   uint8_t lfo_rate;
   uint8_t reg27;       /* CH3/CSM mode register (bit7 CSM, bit6 special) */

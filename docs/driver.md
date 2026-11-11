@@ -207,7 +207,8 @@ of a multi-channel effect is arbitrated on its own channel.
 voice. It takes the voice's macro binds as any claim does and keeps them on
 the SE track; SE-end puts them back, and if a looping BGM note was live there,
 starts it again from the sample's head — deliberately not time-synced — with
-them re-instantiated, as a note-on. Gate: `p3-se-pcm-macro`.
+them re-instantiated, as a note-on. Gate: `p3-se-pcm-macro`. The DAC's
+pan is the effect's while it plays and the song's at its end (§14).
 
 **Modulators change hands with the channel.** The SE's claim wipes the
 channel's macro binds and sweeps like any claim (§2.2), so the displaced part's
@@ -1639,11 +1640,18 @@ score without fm6 notes keeps the DAC from its first PCM note; one without
 PCM never writes it.
 
 **Pan.** The DAC comes out on fm6's L / R bits (`$B6`), so the voices share
-one pan: a pcm channel's `PAN` — its PARAM_SET, relative write, sweep and its
-stop — is fm6's (channel 5), as if written there (`param_set_ex`,
-`read_param`, `start_sweep` / `stop_sweep` route it), so the latest write from
-fm6 or any pcm channel wins and ends a sweep running on it. Gate:
-`m4-pcm-pan`.
+one pan. A song's pcm track's `PAN` — its PARAM_SET, relative write, sweep and
+its stop — is fm6's (channel 5), as if written there (`param_ch` routes it
+at the opcode), so the latest write from fm6 or any of the song's pcm tracks
+wins and ends a sweep running on it. A PCM SE's `PAN` is its own (`se_pan`,
+its sweep in its voice's bank): from the effect's start — which writes `$B6`
+at centre — to its end the DAC's L / R are the effect's (`b4_of` composes
+`$B6` from `se_pan` while any PCM SE plays), and the song's writes move
+fm6's state unheard; the effect's end writes `$B6` from the song's state
+again. That costs a write at the effect's start and end, and a scan of the
+tracks on a `$B6` write — nothing a frame. The host's `SET_PARAM` of a pcm
+channel's PAN is the song's. Gates: `m4-pcm-pan`, `p3-se-pcm-pan`
+(claim-gate).
 
 **The four points** start as the sample's — the range `:pcm-start` /
 `:pcm-end` / `:pcm-len` (the whole sample when the def sets none) and the loop

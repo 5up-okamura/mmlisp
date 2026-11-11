@@ -2080,7 +2080,10 @@ The DAC comes out on fm6's left and right bits, so the PCM has **one pan**:
 voice moves with it, an `fm6` note plays at it, and the last write from any of
 the four wins (a value, `+` / `*` from where it is, a sweep, which any of
 their writes ends). A note's `(macro :pan …)` is not a pcm track's
-(`E_PCM_MACRO_TARGET`).
+(`E_PCM_MACRO_TARGET`). A `def-se`'s pcm part has a pan of its own: while it
+plays the DAC is at the effect's pan (centre from its start, then what it
+writes), and at its end at the song's again — where the song's `:pan` writes
+under the effect left it.
 
 ```mmlisp
 (pcm1 kick :len 4 :pan left c c :pan (linear :to 1 :len 2/1) c c c c)

@@ -165,6 +165,10 @@ function checkInvariant(stem) {
 //     composed), $B0/$B4 — which no voice number could rebuild: a partial
 //     def-fm, then a mid-song :tl1 and :pan.
 //   p3-se-noise: the noise mode, one register the effect sets its own.
+//   p3-se-pcm-pan: the DAC's pan, fm6's L / R ($B6): the song's, the
+//     effect's from its start (centre, then its own :pan right), the song's
+//     again at its end — as the song left it under the effect (centred,
+//     unheard). A case with `want` reads those frames for those values.
 const patchOf = (port, off) => (drv) => {
   const out = [];
   for (let a = 0x30; a < 0xa0; a += 4) out.push(drv._shadow[port].get(a + off));
@@ -177,6 +181,9 @@ const STATE_CASES = [
     what: "the effect's end puts the channel's patch back" },
   { score: "p3-se-noise", before: 39, after: 119, read: (d) => `mode ${d._noiseMode}`,
     what: "the effect's end puts the noise mode back" },
+  { score: "p3-se-pcm-pan", read: (d) => `b6 ${d._shadow[1].get(0xb6)?.toString(16)}`,
+    want: { 39: "b6 80", 45: "b6 c0", 85: "b6 40", 130: "b6 c0" }, // (frames true on both clocks)
+    what: "a PCM effect's pan is the DAC's while it plays, the song's before and after" },
 ];
 
 function stateAt(c) {
@@ -188,12 +195,13 @@ function stateAt(c) {
   drv._writeCb = () => {};
   drv._reset(sidecar.autoStart !== false);
   const snaps = {};
-  for (let f = 0; f <= c.after; f++) {
+  const frames = c.want ? Object.keys(c.want).map(Number) : [c.before, c.after];
+  for (let f = 0; f <= Math.max(...frames); f++) {
     for (const cmd of sidecar.commands ?? []) {
       if (cmd.frame === f) drv._applyMailbox(cmd.cmd, cmd.a0 ?? 0, cmd.a1 ?? 0, cmd.a2 ?? 0);
     }
     drv.stepFrame();
-    if (f === c.before || f === c.after) snaps[f] = c.read(drv);
+    if (frames.includes(f)) snaps[f] = c.read(drv);
   }
   return snaps;
 }
@@ -232,7 +240,15 @@ for (const stem of INVARIANT_SCORES) {
 
 for (const c of STATE_CASES) {
   const s = stateAt(c);
-  if (s[c.before] === s[c.after]) {
+  if (c.want) {
+    const off = Object.entries(c.want).filter(([f, v]) => s[f] !== v);
+    if (!off.length) console.log(`ok    ${c.score} — ${c.what}`);
+    else {
+      failures++;
+      console.log(`FAIL  ${c.score} — ${c.what}`);
+      for (const [f, v] of off) console.log(`        f${f}: ${s[f]}, not ${v}`);
+    }
+  } else if (s[c.before] === s[c.after]) {
     console.log(`ok    ${c.score} — ${c.what}`);
   } else {
     failures++;

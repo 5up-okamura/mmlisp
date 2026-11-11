@@ -785,6 +785,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-pcm-pan.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-se-stopped-twin.mmlisp": {
     "ok": true,
     "mismatches": 0,

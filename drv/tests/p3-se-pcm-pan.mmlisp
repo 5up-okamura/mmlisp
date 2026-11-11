@@ -1,0 +1,15 @@
+; P3 gate: a PCM SE's pan. The DAC comes out on fm6's L / R, so its pan is
+; the song's (a pcm track's :pan is fm6's) — until a PCM SE plays: from its
+; start the DAC's pan is the effect's (centre, then what it writes), and at
+; its end the song's again, as the song left it under the effect (its pcm1
+; moved to centre there, unheard). Host-driven (p3-se-pcm-pan.cmds.json):
+; the song at frame 0, the effect at 40, which ends a second later.
+(def-score :pcm-voices 2)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm blip :file "blip.wav")
+
+; track 0: a looping pad on the left, centred at 1 s (under the effect).
+(pcm1 pad :tempo 120 :mode loop :oct 4 :pan left :len 2 c :pan center c c c)
+
+; the effect: two blips on pcm2, the second on the right.
+(def-se hit (pcm2 blip :tempo 120 :oct 5 :len 4 c :pan right c))

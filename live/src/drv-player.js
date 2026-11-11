@@ -463,6 +463,7 @@ export class DrvPlayer {
     this._diagnostics = [];
     this._master = VOL_UNITY;
     this._lfoRate = null;
+    this._sePan = 0; // an effect's pan on the DAC (_b4Of)
     this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
     this._fm = Array.from({ length: 6 }, freshFmChannel);
     this._psg = Array.from({ length: 4 }, () => ({
@@ -1293,8 +1294,8 @@ export class DrvPlayer {
           // is already sounding. The host's own writes stay immediate.
           if (target === TARGET_ID.VEL) this._storeVel(trk.channelId, raw);
           else {
-            this._stopSweep(trk.channelId, target); // a write ends the target's sweep
-            this._paramSet(trk.channelId, target, raw);
+            this._stopSweep(this._paramCh(trk, target), target); // a write ends the target's sweep
+            this._paramSet(this._paramCh(trk, target), target, raw);
           }
           break;
         }
@@ -1322,18 +1323,18 @@ export class DrvPlayer {
           // Dynamic endpoints (opcodes.md §6, note-on tier): flags bit1/bit2 mark from/to
           // as slot ids (in the field's low byte), read live at dispatch.
           // bit3: no :from — start where the parameter is now.
-          const from = flags & 8 ? this._readParam(trk.channelId, target)
+          const from = flags & 8 ? this._readParam(this._paramCh(trk, target), target)
             : flags & 2 ? this._readSlot(s[trk.pc + 4]) : i16(u16(s, trk.pc + 4));
           const to = flags & 4 ? this._readSlot(s[trk.pc + 6]) : i16(u16(s, trk.pc + 6));
           const len = u16(s, trk.pc + 8);
           trk.pc += 10;
-          this._startSweep(trk.channelId, target, curve, flags & 1, from, to, len);
+          this._startSweep(this._paramCh(trk, target), target, curve, flags & 1, from, to, len);
           break;
         }
         case OPCODE.PARAM_SWEEP_STOP: {
           const target = s[trk.pc + 1];
           trk.pc += 2;
-          this._stopSweep(trk.channelId, target);
+          this._stopSweep(this._paramCh(trk, target), target);
           break;
         }
         case OPCODE.PARAM_ADD: {
@@ -1341,7 +1342,7 @@ export class DrvPlayer {
           const w = targetWidth(target);
           const delta = w === 2 ? i16(u16(s, trk.pc + 2)) : i8(s[trk.pc + 2]);
           trk.pc += 2 + w;
-          this._paramSet(trk.channelId, target, this._readParam(trk.channelId, target) + delta);
+          this._paramSet(this._paramCh(trk, target), target, this._readParam(this._paramCh(trk, target), target) + delta);
           break;
         }
         case OPCODE.TEMPO_SWEEP: {
@@ -1367,30 +1368,30 @@ export class DrvPlayer {
           const target = s[trk.pc + 1];
           const factor = s[trk.pc + 2] | (s[trk.pc + 3] << 8); // unsigned 8.8
           trk.pc += 4;
-          const cur = this._readParam(trk.channelId, target);
-          this._paramSet(trk.channelId, target, (cur * factor) >> 8);
+          const cur = this._readParam(this._paramCh(trk, target), target);
+          this._paramSet(this._paramCh(trk, target), target, (cur * factor) >> 8);
           break;
         }
         case OPCODE.PARAM_FROM_VAL: {
           const target = s[trk.pc + 1];
           const v = this._readSlot(s[trk.pc + 2]);
           trk.pc += 3;
-          this._paramSet(trk.channelId, target, v);
+          this._paramSet(this._paramCh(trk, target), target, v);
           break;
         }
         case OPCODE.PARAM_ADD_VAL: {
           const target = s[trk.pc + 1];
           const v = this._readSlot(s[trk.pc + 2]);
           trk.pc += 3;
-          this._paramSet(trk.channelId, target, this._readParam(trk.channelId, target) + v);
+          this._paramSet(this._paramCh(trk, target), target, this._readParam(this._paramCh(trk, target), target) + v);
           break;
         }
         case OPCODE.PARAM_MUL_VAL: {
           const target = s[trk.pc + 1];
           const factor = this._readSlot(s[trk.pc + 2]); // 8.8 factor
           trk.pc += 3;
-          const cur = this._readParam(trk.channelId, target);
-          this._paramSet(trk.channelId, target, (cur * factor) >> 8);
+          const cur = this._readParam(this._paramCh(trk, target), target);
+          this._paramSet(this._paramCh(trk, target), target, (cur * factor) >> 8);
           break;
         }
         case OPCODE.CSM_ON:
@@ -1681,10 +1682,26 @@ export class DrvPlayer {
     }
   }
 
+  // The channel a track's word writes: its own, but a pcm track's PAN — the
+  // song's is fm6's (the DAC comes out on its L / R, driver.md §14); an
+  // effect's is its own, the DAC's while it plays (_sePan). mmlispseq.c
+  // param_ch.
+  _paramCh(trk, target) {
+    const ch = trk.channelId;
+    return target === TARGET_ID.PAN && ch >= 20 && ch <= 22 && !trk.pcmSe ? 5 : ch;
+  }
+
+  // The DAC comes out on fm6's L / R: while a PCM SE plays they are the
+  // effect's pan, the song's again at its end (driver.md §14). b4_of.
+  _sePanLive() {
+    return this._trk.some((t) => t.pcmSe);
+  }
+  _b4Of(ch) {
+    const r = this._fm[ch];
+    return ch === 5 && this._sePanLive() ? encodeB4({ ...r, pan: this._sePan }) : encodeB4(r);
+  }
+
   _paramSet(channelId, target, value, force = false) {
-    // The PCM voices are one stream on fm6's DAC: a pcm track's pan is fm6's
-    // L / R, as if written there.
-    if (target === TARGET_ID.PAN && channelId >= 20 && channelId <= 22) channelId = 5;
     // A word in the panel's hand: the score's write waits while it is held,
     // and takes it back once let go (hold).
     if (this._hands?.size && !this._panelWrite) {
@@ -1793,6 +1810,13 @@ export class DrvPlayer {
     // VEL and VOL are per-voice state; MASTER is global (handled above, which
     // recomposes every voice). Composition + mute are recomputed here, off the
     // mix hot path. See pcm-voices.js composeShift.
+    // A pcm channel's PAN here is an effect's (_paramCh: the song's is
+    // fm6's): the DAC's while the effect plays.
+    if (target === TARGET_ID.PAN && channelId >= 20 && channelId <= 22) {
+      this._sePan = value < -1 ? -1 : value > 1 ? 1 : value;
+      if (this._sePanLive()) this._ym(1, 0xb6, this._b4Of(5));
+      return;
+    }
     if (channelId >= 20 && channelId <= 22) {
       const v = this._pcmVoices[channelId - 20];
       if (!v) return;   // ditto
@@ -1859,15 +1883,15 @@ export class DrvPlayer {
         return;
       case target === TARGET_ID.FM_AMS:
         regs.ams = clampReg(value, 0x03);
-        this._ym(port, 0xb4 + off, encodeB4(regs));
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
         return;
       case target === TARGET_ID.FM_FMS:
         regs.fms = clampReg(value, 0x07);
-        this._ym(port, 0xb4 + off, encodeB4(regs));
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
         return;
       case target === TARGET_ID.PAN:
         regs.pan = value < -1 ? -1 : value > 1 ? 1 : value;
-        this._ym(port, 0xb4 + off, encodeB4(regs));
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
         return;
       case target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4: {
         const { idx, op } = opFor(TARGET_ID.FM_TL1);
@@ -1977,7 +2001,6 @@ export class DrvPlayer {
   }
 
   _startSweep(ch, target, curveId, loop, from, to, len) {
-    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5; // the DAC's pan is fm6's
     const g = this._globalSweep(target);
     const bank = g >= 0 ? -1 : this._sweepBank(ch);
     if (g < 0 && bank < 0) return;
@@ -2007,7 +2030,6 @@ export class DrvPlayer {
   }
 
   _stopSweep(ch, target) {
-    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5; // the DAC's pan is fm6's
     const g = this._globalSweep(target);
     if (g >= 0) {
       this._gsweeps[g] = null;
@@ -2715,6 +2737,9 @@ export class DrvPlayer {
       // would go on retargeting the effect's sample, its :keyon on re-starting
       // it — and keeps the BGM's binds to hand back at its end.
       trk.pcmSe = { vi, binds: new Map(this._macroActive[this._macroCh(ch)]) };
+      // The DAC's pan is the effect's from here, as it starts (centre).
+      this._sePan = 0;
+      this._ym(1, 0xb6, this._b4Of(5));
       this._clearChannelModulators(ch);
       if (v.started && v.looping) {
         // The note, not the voice: the sample id and that it loops are all the
@@ -2762,11 +2787,11 @@ export class DrvPlayer {
   _restorePatch(ch, gr) {
     const r = this._fm[ch];
     this._applyPatch(ch, fmPatchOf(gr));
-    const old = encodeB4(r);
+    const old = this._b4Of(ch);
     r.ams = gr.ams;
     r.fms = gr.fms;
     r.pan = gr.pan;
-    if (encodeB4(r) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), encodeB4(r));
+    if (this._b4Of(ch) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), this._b4Of(ch));
   }
 
   // ── SE: the displaced part plays on, unheard (driver.md §2.5) ────────────
@@ -2918,6 +2943,8 @@ export class DrvPlayer {
       seTrk.pcmSe = null;
       seTrk.pcmSnap = null;
       seTrk.isSe = false;
+      // The DAC's pan the song's again (another effect's while one plays).
+      this._ym(1, 0xb6, this._b4Of(5));
       this._macroActive[mc] = new Map(binds);
       this._macroSlots[mc] = []; // the effect's own envelopes end with it
       if (snap != null && snap.sampleId != null) {
@@ -3034,8 +3061,8 @@ export class DrvPlayer {
         + VEL_FINE / 2) >> 3;
     if (target === TARGET_ID.GATE)
       return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
-    // (a pcm track's pan is fm6's: the DAC's stream comes out on its L / R)
-    const fc = ch >= 16 && ch <= 19 ? 2 : ch >= 20 && ch <= 22 && target === TARGET_ID.PAN ? 5 : ch; // an operator track's patch is CH3's
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) return this._sePan; // an effect's (_paramCh)
+    const fc = ch >= 16 && ch <= 19 ? 2 : ch; // an operator track's patch is CH3's
     if (fc < 6) {
       const regs = this._fm[fc];
       if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;
@@ -3525,6 +3552,8 @@ export class DrvPlayer {
       return;
     }
     if (!this._fm) return; // never reset — nothing to write yet
+    // (the host's pan of a pcm channel is the song's: fm6's)
+    if (id === TARGET_ID.PAN && chIndex >= 20 && chIndex <= 22) chIndex = 5;
     this._paramSet(chIndex, id, value);
   }
 
