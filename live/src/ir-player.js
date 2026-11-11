@@ -2229,9 +2229,15 @@ export class IRPlayer {
     // :vol is every track's fader, one word whatever the track's kind
     // (_volWord): its voice's level written again; :pan every track's pan
     // that has one (_panWord). (A MIDI channel's are its output's.)
+    // :pitch and :snap every pitched track's (_pitchWord, _snapWord).
     const word = ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() : null;
-    if (word === "VOL" || (word === "PAN" && this._target?.name !== "midi")) {
-      this._word(ev, when, word === "VOL" ? this._volWord(ev) : this._panWord(ev));
+    const shared = word === "VOL" ? this._volWord(ev)
+      : this._target?.name === "midi" ? null
+      : word === "PAN" ? this._panWord(ev)
+      : word === "NOTE_PITCH" ? this._pitchWord(ev)
+      : word === "SNAP" ? this._snapWord(ev) : undefined;
+    if (shared !== undefined) {
+      this._word(ev, when, shared);
       return;
     }
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -2453,11 +2459,10 @@ export class IRPlayer {
   // Read a target's current stored value from chRegs (the shadow register file)
   // for read-modify-write PARAM_ADD / PARAM_MUL. FM_TL reads the voiced (timbre)
   // base so a relative TL op composes with vel/vol attenuation.
-  _readParam(ch, target, fm3Op = 0) {
+  _readParam(ch, target) {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
-    if (fm3Op && t === "NOTE_PITCH") return this._pt(`fm3op:${fm3Op}`).offset;
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
     if (m) {
       const f = OP_REG_FIELD[m[1]];
@@ -2468,12 +2473,6 @@ export class IRPlayer {
       case "FM_ALG": return regs.algorithm ?? 0;
       case "FM_AMS": return regs.ams ?? 0;
       case "FM_FMS": return regs.fms ?? 0;
-      case "PAN": return this._panOf(`fm:${ch}`);
-      case "SNAP": return regs.snap ?? 0;
-      // Inline `:pitch+ N` accumulates onto the running cent offset (else it
-      // would read 0 and overwrite rather than add).
-      case "NOTE_PITCH":
-      case "NOTE_SEMI": return this._pt(`fm:${ch}`).offset;
       default: return 0;
     }
   }
@@ -2783,23 +2782,6 @@ export class IRPlayer {
           15,
         );
         this._fmOp(ch, opIdx, "ssg-eg", when);
-        break;
-      }
-      case "NOTE_PITCH": {
-        // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
-        // F-number alone (driver.md §13.4).
-        // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
-        const op = this._fm3OpOf(ev);
-        this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, Math.round(value), when);
-        break;
-      }
-      case "SNAP": {
-        // The mask is sticky channel state (language.md §5.3); the sounding
-        // note moves onto it at once, as a NOTE_PITCH write would move it. On
-        // an fm3-N track it is CH3's mask, and that operator's note moves.
-        regs.snap = Math.max(0, Math.min(0xfff, Math.round(value)));
-        const op = this._fm3OpOf(ev);
-        this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, null, when);
         break;
       }
 

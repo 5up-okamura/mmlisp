@@ -257,12 +257,62 @@ export const wordMethods = {
       : { read, write };
   },
 
+  // ---- a voice's :pitch and :snap ----
+  // :pitch, on any pitched track: the voice's sticky offset in cents (_pt),
+  // the plain note + offset sounding at once (_ptOffset) — an FM channel's,
+  // an fm3 operator's own (driver.md §13.4), a lane's, a sample track's
+  // onto the hits it sounds (a part that pitches its voice, chips/parts.js
+  // `pitch`); a value, `+` `*` `$slot`, a sweep. null on a track without.
+  _pitchWord(ev) {
+    const r = ev._route;
+    const fm = r?.core === "fm", op = fm ? this._fm3OpOf(ev) : 0;
+    const site = fm ? (op ? `fm3op:${op}` : `fm:${ev._chIndex ?? 0}`)
+      : r?.core === "psg" ? `psg:${ev._psgCh ?? 0}`
+      : r?.core === "sample" && r.part?.pitch ? `strk:${ev._trackIndex}` : null;
+    if (!site) return null;
+    const P = this._pt(site);
+    return {
+      read: () => P.offset,
+      write: (v, t) => {
+        const cents = Math.round(v);
+        if (!site.startsWith("strk:")) return void this._ptOffset(site, cents, t);
+        P.offset = cents;
+        for (const [voice, h] of this._chipPcm?.owner ?? []) if (h.ti === ev._trackIndex) this._ptOffset(`voice:${voice}`, cents, t);
+      },
+    };
+  },
+  // :snap, a channel's sticky mask (language.md §5.3): the sounding note
+  // moves onto it at once — an FM channel's, CH3's on an fm3-N track (that
+  // operator's note moves), a tone lane's. null on a track without.
+  _snapWord(ev) {
+    const r = ev._route;
+    const fit = (v) => Math.max(0, Math.min(0xfff, Math.round(Number(v) || 0)));
+    if (r?.core === "fm") {
+      const ch = ev._chIndex ?? 0, op = this._fm3OpOf(ev), regs = this._chRegs[ch];
+      return {
+        read: () => regs.snap ?? 0,
+        write: (v, t) => { regs.snap = fit(v); this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, null, t); },
+      };
+    }
+    if (r?.core === "psg") {
+      const lane = ev._psgCh ?? 0;
+      return {
+        read: () => this._psgSnap[lane] ?? 0,
+        write: (v, t) => {
+          this._psgSnap[lane] = fit(v);
+          if (!this._isNoiseLane(lane)) this._ptOffset(`psg:${lane}`, null, t);
+        },
+      };
+    }
+    return null;
+  },
+
   // An FM channel's word (an fm3-N track's: that operator's where it has
   // its own, driver.md §13.4): _readParam and _applyParam.
   _fmWord(ch, ev) {
     const target = String(ev.args?.target ?? "").toUpperCase();
     return {
-      read: () => this._readParam(ch, target, this._fm3OpOf(ev)),
+      read: () => this._readParam(ch, target),
       write: (value, t) => this._applyParam(ch, { ...ev, cmd: "PARAM_SET", args: { target, value } }, t),
     };
   },
@@ -272,14 +322,6 @@ export const wordMethods = {
   _psgWord(psgCh, target) {
     const int = (v) => Math.round(Number(v) || 0);
     switch (target) {
-      // Sticky mask (language.md §5.3); the sounding note moves onto it.
-      case "SNAP": return {
-        read: () => this._psgSnap[psgCh] ?? 0,
-        write: (v, t) => {
-          this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, int(v)));
-          if (!this._isNoiseLane(psgCh)) this._ptOffset(`psg:${psgCh}`, null, t);
-        },
-      };
       // The lane's level on the envelope (a shape), or its own (-1): a
       // sounding note changes over now; the shape starts at its key-on.
       case "SSG_ENV": return {
@@ -350,11 +392,6 @@ export const wordMethods = {
           this._psgNoiseMode = this._snapMacroOutput("NOISE_MODE", v);
           if (this._psgSounding[psgCh]) this._psgSetNoiseCfg(this._psgNoiseMode, t, psgCh);
         },
-      };
-      // The lane's offset, on the note sounding then.
-      case "NOTE_PITCH": return {
-        read: () => this._pt(`psg:${psgCh}`).offset,
-        write: (v, t) => this._ptOffset(`psg:${psgCh}`, Math.round(v), t),
       };
       default: return null;
     }

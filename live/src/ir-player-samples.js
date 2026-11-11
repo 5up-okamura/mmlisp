@@ -143,22 +143,10 @@ export const sampleMethods = {
     });
   },
 
-  // A sample track's word: its pitch, which its sounding hits follow, and
-  // the words of its part (`own`: { WORD: { read, write } }; its fader is
-  // every track's, _volWord).
+  // A sample track's word: those of its part (`own`: { WORD: { read, write } };
+  // its fader, pan and pitch are every track's, _volWord _panWord _pitchWord).
   _sampleWord(ev, own = {}) {
-    const ti = ev._trackIndex;
-    const target = String(ev.args?.target ?? "").toUpperCase();
-    const st = this._chipPcmState();
-    // (the track's :pitch, onto the voices it sounds on: _pt)
-    if (target === "NOTE_PITCH" && own.pitch) return {
-      read: () => this._pt(`strk:${ti}`).offset,
-      write: (v, t) => {
-        this._pt(`strk:${ti}`).offset = v;
-        for (const [voice, h] of st.owner) if (h.ti === ti) this._ptOffset(`voice:${voice}`, v, t);
-      },
-    };
-    return own[target] ?? null;
+    return own[String(ev.args?.target ?? "").toUpperCase()] ?? null;
   },
 
   // A hit (or an ADPCM-B note) keyed on `voice`: its own :vel / :vol /
@@ -391,10 +379,7 @@ export const sampleMethods = {
       case "PARAM_MUL":
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
-        this._word(ev, when, this._sampleWord(ev, {
-          pitch: true,
-          ...rangeWords(st, false),
-        }));
+        this._word(ev, when, this._sampleWord(ev, rangeWords(st, false)));
         break;
       default:
         break;
@@ -461,7 +446,7 @@ export const sampleMethods = {
       case "PARAM_MUL":
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
-        this._word(ev, when, this._sampleWord(ev, { pitch: true, ...rangeWords(st) }));
+        this._word(ev, when, this._sampleWord(ev, rangeWords(st)));
         break;
       default:
         break;
@@ -725,9 +710,7 @@ export const sampleMethods = {
       case "PARAM_MUL":
       case "PARAM_SWEEP":
       case "PARAM_SWEEP_STOP":
-        this._word(ev, when, this._sampleWord(ev, {
-          pitch: !!enc.tune,
-        }));
+        this._word(ev, when, this._sampleWord(ev));
         break;
       default:
         break;
