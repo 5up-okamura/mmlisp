@@ -280,3 +280,11 @@ Design:
   :keyon keys off at the gate and again after an echo tail (the driver's);
   MD PCM's retriggers run on `_eachTime`. A one-shot capture ends at the
   song's end at the earliest (a muted track's writes set it before).
+- Done: (3) — a note's :keyon retriggers are one stream on its record
+  (`_openNote`: `_keyonRetrigs`, ending with `{ end }`), read by its
+  envelopes (`_envRetrigs = _retrigsOf(ti)`) and its voice
+  (`_noteRetriggers(ti, retrigger, keyOff)`: work in the KEYON phase,
+  after the frame's dispatch and sweeps, before its macros, in track
+  order); an echo tail past the close keys off a step after the macro's
+  end (FM and now FM3 alike). `_scheduleKeyonMacro`, `_fm3Retriggers`,
+  `_letGoAt` / `_letGo` are gone; `_eachTime` has one caller.

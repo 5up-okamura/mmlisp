@@ -46,8 +46,11 @@ export const SAMPLE_HANDLERS = {
 // The events that take time on their track: a note, a rest, a tie.
 export const TIMED_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON", "REST", "TIE"]);
 export const KEYED = 0, SWEEP = 1, MACRO = 2, SONG = 3, AFTER = 4; // (AFTER: what follows a frame's steps — a PCM retrigger)
+// A :keyon retrigger: after the frame's dispatch (a gate's close) and before
+// its other macros' steps, as the driver steps its KEYON slots first.
+export const KEYON = 1.5;
 // Channel 3's shared $28 in FM3 mode, then its CSM operators' levels: the
-// frame's edges once every write to them is known (_scheduleFm3OpKey), each
+// frame's edges once every write to them is known (_fm3Edge), each
 // at its own time.
 export const FM3_KEYS = 5, FM3_TL = 6;
 // The chips' own sample voices (_chipPcmFrame): each frame's level, pitch

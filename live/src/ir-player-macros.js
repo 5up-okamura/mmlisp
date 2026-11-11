@@ -47,7 +47,7 @@ export const macroMethods = {
         const r = restarts?.next();
         if (!r || r.done) return Infinity;
         if (r.value === null) { restartWait = true; return Infinity; } // its gate first
-        if (r.value.t >= G.secs) return Infinity;
+        if ("end" in r.value || r.value.t >= G.secs) return Infinity;
         if (r.value.t > when + 1e-6) return r.value.t;
       }
     };
@@ -134,7 +134,7 @@ export const macroMethods = {
     const restarts = this._envRetrigs?.({ secs: gateSecs, frames: noteFrames }) ?? null;
     const starts = [when];
     for (const r of restarts ?? []) {
-      if (r === null || r.t >= gateSecs || r.t > when + 60) break;
+      if (r === null || "end" in r || r.t >= gateSecs || r.t > when + 60) break;
       if (r.t > when + 1e-6) starts.push(r.t);
     }
     let end = null;
@@ -546,60 +546,39 @@ export const macroMethods = {
     );
   },
 
-  // Schedule a :keyon retrigger gate. Sampled per :step; a value >= 0.5 fires a
-  // key-off→key-on (restarting the envelope). The t=0 sample coincides with the
-  // note's own NOTE_ON and is a no-op. keyMask is the operators keyed.
-  // `onEnd(t)`: the time after its last step (where the final key-off goes).
-  _scheduleKeyonMacro(keyonSpec, keyMask, ch, when, gateTicks, onEnd) {
-    if (!keyonSpec) return;
-
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      when,
-      gateTicks,
-    );
-    const stepSecs = this._stepSecs(keyonSpec.step);
-    // Gap to register the key-off before re-keying; kept short so on-beat
-    // timing stays accurate, capped below KEY_OFF_LEAD_SECS.
-    const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
-    this._scheduleMacro(
-      keyonSpec,
-      noteFrames,
-      gateSecs,
-      when,
-      (v, t) => {
-        if (v < 0.5) return; // gate closed this step
-        if (t <= when + 1e-6) return; // first sample = note's own key-on
-        if (this._csmKeysCh3(ch)) return; // Timer A retriggers CH3 in CSM
-        this._fmKey(ch, 0, Math.max(when, t - gap)); // key off
-        this._fmKey(ch, keyMask, t); // key on
-      },
-      stepSecs,
-      onEnd,
-    );
+  // The gap a :keyon retrigger keys off before it keys on again, so the
+  // chip sees the transition: short, to keep the beat, under the key-off
+  // lead (a step's 0.4 at most).
+  _retrigGap(retrigs) {
+    return Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, (retrigs?.step ?? 1 / 60) * 0.4));
   },
 
   // The times a note's `:keyon` macro re-attacks it (every sample ≥ 0.5 but
-  // the first, which is the note's own attack).
-  // A held note's (`off`: where it was let go, _heldNote) are taken again
-  // with its gate closed there.
-  _keyonRetrigs(keyonSpec, when, gateTicks, until = Infinity) {
+  // the first, which is the note's own attack), as one stream the note's
+  // voice and its envelopes read alike (_noteRetriggers, _envRetrigs).
+  // `G`: the gate as the steps read it ({ secs, frames }, _macroSteps) — a
+  // held note's, closed when it is let go; a null is the steps waiting for
+  // that. Each time comes as { t, valid } (_macroSteps' validity); the last
+  // as { end }: a step after the macro's last, where an echo tail past the
+  // note's close keys it off (_noteRetriggers).
+  _keyonRetrigs(keyonSpec, when, gateTicks) {
     if (!keyonSpec) return null;
     const own = this._resolveNoteFramesAndGate(when, gateTicks);
     const stepSecs = this._stepSecs(keyonSpec.step);
     const self = this;
-    // `G`: the gate as the steps read it ({ secs, frames }, _macroSteps) —
-    // a held note's, closed when it is let go; a null is the steps waiting
-    // for that. Each time comes as { t, valid } (_macroSteps' validity).
     const times = function* (G = { secs: own.gateSecs, frames: own.noteFrames }) {
-      for (const x of self._macroSteps(keyonSpec, null, G, when, stepSecs)) {
+      const it = self._macroSteps(keyonSpec, null, G, when, stepSecs);
+      for (let r = it.next(); ; r = it.next()) {
+        if (r.done) { yield { end: r.value ?? null }; return; }
+        const x = r.value;
         if (x.wait) { yield null; continue; }
         if ("k" in x) continue;
-        if (x.t >= until) return;
         if (self._macroValue(keyonSpec, x.v, x.t) >= 0.5 && x.t > when + 1e-6) yield { t: x.t, valid: x.valid };
       }
     };
-    times.endless = own.gateSecs > when + 1e8 && until === Infinity; // a held note's: until it is let go
+    times.endless = own.gateSecs > when + 1e8; // a held note's: until it is let go
     times.when = when;
+    times.step = stepSecs;
     return times;
   },
 
@@ -616,7 +595,6 @@ export const macroMethods = {
   // Returns that time (null: the track holds no note with macros).
   _letGoNote(ti, when) {
     const off = Math.max(when, this._sentUntil() ?? when);
-    this._letGo[ti] = { note: this._noteOf[ti], at: off };
     const h = this._heldNotes.get(ti);
     this._heldNotes.delete(ti);
     if (!h || h.note !== this._noteOf[ti] || !h.release.length) return null;
@@ -624,15 +602,9 @@ export const macroMethods = {
     return off;
   },
 
-  // Where track `ti`'s note `note` was let go (_letGoNote), or Infinity.
-  _letGoAt(ti, note) {
-    const g = this._letGo[ti];
-    return g && g.note === note ? g.at : Infinity;
-  },
-
   // `run(t)` at each of `retrigs`' times, one after the other, as work at
   // its time while the track's note is still the one dispatching now.
-  _eachTime(retrigs, run, phase = KEYED) {
+  _eachTime(retrigs, run, phase = KEYED, onEnd = null, ord = null) {
     if (!retrigs) return;
     // The note's gate (a held note's open until it is let go, below).
     const G = { secs: Infinity, frames: Infinity };
@@ -646,6 +618,7 @@ export const macroMethods = {
         const r = times.next();
         if (r.done) return;
         if (r.value === null) { parked = true; return; } // the gate, when the note is let go
+        if ("end" in r.value) return void onEnd?.(r.value.end);
         const { t, valid } = r.value;
         if (t <= this._writeCursor) {
           // Behind the run: at once. With no run (it is over, or stopped) a
@@ -662,7 +635,7 @@ export const macroMethods = {
           pending = null;
           run(t);
           next();
-        }, null, endless);
+        }, ord, endless);
         return;
       }
     };
@@ -685,28 +658,6 @@ export const macroMethods = {
     next();
   },
 
-
-  // An FM3 operator's `:keyon` retriggers, a step at a time: each a key-off
-  // and a key-on of this operator alone, merged with the other operators'
-  // in its frame's $28 edges (_fm3Edge), before the note's key-off `until`.
-  // Sampled as _scheduleKeyonMacro samples a channel's: the same :step
-  // clock, the same gap.
-  // (`until` null: a full gate's, closed where the note is let go.)
-  _fm3Retriggers(opBit, keyonSpec, when, gateTicks, until) {
-    if (!keyonSpec) return;
-    const op = Math.log2(opBit) - 4, gen = this._fm3KeyGen[op];
-    const scope = this._noteScope;
-    const bound = () => until ?? (scope ? this._letGoAt(scope.ti, scope.note) : Infinity);
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    const stepSecs = this._stepSecs(keyonSpec.step);
-    const gap = Math.min(KEY_OFF_LEAD_SECS, Math.max(0.001, stepSecs * 0.4));
-    this._scheduleMacro(keyonSpec, noteFrames, gateSecs, when, (v, t) => {
-      if (v < 0.5 || t <= when + 1e-6 || t >= bound() - 1e-9) return;
-      const F = this._eventFrame(t);
-      this._fm3Edge(opBit, Math.max(when, t - gap), F, 1, op, false, gen);
-      this._fm3Edge(opBit, t, F, 1, op, true, gen);
-    }, stepSecs);
-  },
 
   // A PSG note's macro on a register word (the SSG's mixer, its noise
   // period): each step written as it comes, where it moved.

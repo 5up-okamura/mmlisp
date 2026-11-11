@@ -5,7 +5,7 @@
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
 import { clampForTarget, VOL_UNITY } from "./ir-utils.js";
-import { MACRO } from "./ir-player-shared.js";
+import { KEYON, MACRO } from "./ir-player-shared.js";
 
 export const levelMethods = {
   // ---- a voice's level ----
@@ -177,13 +177,41 @@ export const levelMethods = {
   // does on its voice is the voice's (_noteCloses).
   _openNote(ti, ev, when) {
     const gate = this._noteGate(ev, when);
-    const o = (this._open[ti] = { note: this._noteOf[ti], gate, at: gate.end, close: null, key: this._holdKey(ev) });
+    const o = (this._open[ti] = {
+      note: this._noteOf[ti], gate, at: gate.end, close: null, key: this._holdKey(ev),
+      // its :keyon retriggers, one stream (_noteRetriggers); where it closed,
+      // and what waits for that
+      retrigs: this._keyonRetrigs(ev.args?.keyon, when, gate.macroGate), closedAt: null, closed: [],
+    });
     if (gate.timed) this._whileNote(ti, gate.end, () => { if (this._open[ti] === o) this._closeNote(ti, gate.end, { gate: true }); });
     return gate;
   },
   // The gate of track `ti`'s note dispatching now.
   _gateOf(ti) {
     return this._open[ti]?.gate;
+  },
+  // Its :keyon retriggers (_keyonRetrigs): what its envelopes start over at
+  // (_envRetrigs) and its voice re-attacks at (_noteRetriggers).
+  _retrigsOf(ti) {
+    return this._open[ti]?.retrigs ?? null;
+  },
+  // Track `ti`'s note's :keyon retriggers on its voice: `retrigger(t,
+  // closed)` re-attacks it at each (`closed`: past the note's close — an
+  // echo tail, which the release region steps); and where the stream ends
+  // past the close, `keyOff(t)` keys the tail off a step after the macro's
+  // last, as the driver's KEYON slot does at its release's end — while the
+  // note is the track's.
+  _noteRetriggers(ti, retrigger, keyOff = null) {
+    const o = this._open[ti];
+    if (!o?.retrigs || o.note !== this._noteOf[ti]) return;
+    const tail = (end) => {
+      if (keyOff && end != null && end > o.closedAt + 1e-9) this._whileNote(ti, end, () => keyOff(end));
+    };
+    // (a frame's retriggers in track order, as the driver steps its channels')
+    this._eachTime(o.retrigs, (t) => retrigger(t, o.closedAt != null && t >= o.closedAt - 1e-9), KEYON, (end) => {
+      if (o.closedAt != null) tail(end);
+      else o.closed.push(() => tail(end));
+    }, [ti]);
   },
   // What closing track `ti`'s note does on its voice: `close(t, how)`, how
   // { next, legato, keys } at the track's next note, { host } at the host's
@@ -200,8 +228,10 @@ export const levelMethods = {
     const o = this._open[ti];
     if (!o) return;
     this._open[ti] = null;
+    o.closedAt = t;
     o.close?.(t, how);
     if (!how.next) this._letGoNote(ti, t);
+    for (const f of o.closed) f();
   },
 
 

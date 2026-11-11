@@ -386,17 +386,17 @@
  "drv/tests/m3-macro-keyon.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b9d997b8f6e3346c",
-  "regs": "21d0b559f33b5606",
+  "regs": "589f2c9437e8551e",
   "mmb": "c17abb448fcc8350",
-  "vgm": "3c31602745d54c1e",
+  "vgm": "fa2bda3efbfc2650",
   "mid": "256b6b0623b3a0a6"
  },
  "drv/tests/m3-macro-keyon.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "a3d38c20b4f4444b",
-  "regs": "21d0b559f33b5606",
+  "regs": "589f2c9437e8551e",
   "mmb": "d3805710f87ce297",
-  "vgm": "3c31602745d54c1e",
+  "vgm": "fa2bda3efbfc2650",
   "mid": "b4f9d0587cf51a75"
  },
  "drv/tests/m3-macro-multi.mmlisp": {
@@ -1234,33 +1234,33 @@
  "drv/tests/m4-keyon-echo.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "23d05dd13e4f3213",
-  "regs": "32d81046f0cc69c9",
+  "regs": "1656c29dae36cc95",
   "mmb": "597e74bdacd85c1b",
-  "vgm": "026e5119f99e82f6",
+  "vgm": "1edd69e146730143",
   "mid": "144f78481fa21104"
  },
  "drv/tests/m4-keyon-echo.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "7d3b1d7e75aa1528",
-  "regs": "32d81046f0cc69c9",
+  "regs": "1656c29dae36cc95",
   "mmb": "a66bcbaa4dc749e8",
-  "vgm": "026e5119f99e82f6",
+  "vgm": "1edd69e146730143",
   "mid": "144f78481fa21104"
  },
  "drv/tests/m4-keyon-pan.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "e347d5bf0bf7fc70",
-  "regs": "8de994b1cf38d023",
+  "regs": "26ff9efc1b4cdc14",
   "mmb": "f2d0a0b5e99a2729",
-  "vgm": "9605befc697d34f1",
+  "vgm": "3ec39dbd79d8be02",
   "mid": "0ed02bd0aa836ef1"
  },
  "drv/tests/m4-keyon-pan.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5dfaaabf6ddec51a",
-  "regs": "8de994b1cf38d023",
+  "regs": "26ff9efc1b4cdc14",
   "mmb": "1ea964f73451361f",
-  "vgm": "9605befc697d34f1",
+  "vgm": "3ec39dbd79d8be02",
   "mid": "0ed02bd0aa836ef1"
  },
  "drv/tests/m4-level-macros.mmlisp": {
@@ -1378,17 +1378,17 @@
  "drv/tests/m4-macro-tick.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ffaa4c6442aa3703",
-  "regs": "da063ce3c9702986",
+  "regs": "3fb0a7dd0d924a8c",
   "mmb": "480f7a5557293160",
-  "vgm": "44449f26d0141571",
+  "vgm": "ee3f0bc8a6280819",
   "mid": "196335c041e5bf6c"
  },
  "drv/tests/m4-macro-tick.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "df6a7428897ef4fe",
-  "regs": "da063ce3c9702986",
+  "regs": "3fb0a7dd0d924a8c",
   "mmb": "b1d4decdccaa728a",
-  "vgm": "44449f26d0141571",
+  "vgm": "ee3f0bc8a6280819",
   "mid": "196335c041e5bf6c"
  },
  "drv/tests/m4-mul-slot.mmlisp": {
@@ -2386,8 +2386,8 @@
  "tools/tests/pc88/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b12072693edf8dcb",
-  "regs": "cec2950663a16d3c",
-  "vgm": "2d520b3d4d59b379",
+  "regs": "f459cc390dd8b094",
+  "vgm": "dda9b17b33d16861",
   "mid": "0ef759049f2b0f69"
  },
  "tools/tests/pc88/ssg-macro.mmlisp": {
@@ -2495,8 +2495,8 @@
  "tools/tests/x68k/sample-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "5f3d9cff4ba81e27",
-  "regs": "3ab428be310bf2dd",
-  "vgm": "67752774ca1d866f",
+  "regs": "fa77979d55f0f25f",
+  "vgm": "3849895922b924e0",
   "mid": "9f27e8fd18e5cdc4"
  }
 }

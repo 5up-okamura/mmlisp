@@ -165,12 +165,13 @@ export const sampleMethods = {
   // another track's holds it).
   _chipPcmHit(voice, ev, when, end, fields, key, release = null) {
     const st = this._chipPcmState();
-    const { keyon, velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
+    const { velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
     const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const mode = ev.args?.mode ?? "shot", held = mode === "gate" || mode === "loop";
+    const ti = ev._trackIndex;
     if (release) this._sampleCloses(ev, (t, how) => release(t, this._chipPcmOwnHit(voice, ev._trackIndex), how));
-    const retrigs = this._keyonRetrigs(keyon, when, gateTicks, held ? gateSecs : Infinity);
+    const retrigs = this._retrigsOf(ti);
     // The note's macros as they are now, shared by its retriggers' hits.
     const macros = [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"], [pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
     const onset = {};
@@ -215,7 +216,10 @@ export const sampleMethods = {
     keyHit(hit);
     // A retrigger keys at its time, before its frame's steps: its level
     // envelopes start over there, from their first samples.
-    this._eachTime(retrigs, (t) => {
+    // (a gate or loop note's only before its close: its sound is cut or
+    // released there)
+    this._noteRetriggers(ti, (t, closed) => {
+      if (held && closed) return;
       for (const k of ["vel", "vol"]) if (onset[k] != null) mac[k] = onset[k];
       keyHit({ ...fresh, t, end: end + (t - when) });
     });
@@ -781,7 +785,7 @@ export const sampleMethods = {
     // a :keyon step plays the blob again from its start. Each runs to the
     // next note on the track, which re-instantiates them; a :keyon retrigger
     // restarts the level envelopes, as it does on FM and PSG.
-    const { keyon, velMacro, vol: volMacro } = ev.args ?? {};
+    const { velMacro, vol: volMacro } = ev.args ?? {};
     const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     // Its close: the driver's key-off — a loop's release, its tail played
@@ -792,7 +796,7 @@ export const sampleMethods = {
     // own. Each retrigger is its frame's work at its time (_eachTime, before
     // the frame's steps, MACRO), and STARTs after them (AFTER) — the last
     // of its frame, which that frame's level steps ride (`due`).
-    const retrigs = this._keyonRetrigs(keyon, when, gateTicks);
+    const retrigs = this._retrigsOf(ev._trackIndex);
     const due = new Map();
     const first = []; // the samples on the note itself: its key-on composes from them
     let on = false;
@@ -843,7 +847,7 @@ export const sampleMethods = {
     on = true;
     for (const x of first) level(x.kind, x.value, x.t);
     // Each retrigger while the note is the track's: its next note takes over.
-    this._eachTime(retrigs, (t) => {
+    this._noteRetriggers(ev._trackIndex, (t) => {
       const F = this._eventFrame(t), r = { carried: {} };
       due.set(F, r);
       this._step(F, AFTER, t + PCM_SWEEP_AFTER, () => {

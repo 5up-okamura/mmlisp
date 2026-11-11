@@ -108,7 +108,6 @@ export class IRPlayer {
     this._onPosition = null; // (record) => void — where a note's macro or sample will be (setOnPosition)
     this._noteOf = []; // per track: its note now (a macro's steps are that note's)
     this._heldNotes = new Map(); // track → { note, release: [fn] }: a held note's macros (_heldNote)
-    this._letGo = []; // per track: the held note the host let go (_letGoNote)
     this._noteScope = null;
     this._onRunStart = null; // () => void — after play()'s reset, before scheduling
     this._pendingUiTimers = new Set(); // timeout ids for delayed UI callbacks
@@ -449,7 +448,6 @@ export class IRPlayer {
     this._dropAhead();
     this._writeCursor = -Infinity; // a run: its writes wait for their time (_write)
     this._heldNotes.clear();
-    this._letGo = [];
     this._hands.clear(); // a run starts with the score's own values
     this._handCtl.clear();
     this._levels.clear();
@@ -2396,7 +2394,7 @@ export class IRPlayer {
         // A :keyon retrigger restarts the note's envelopes — level and timbre
         // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
         // :pan run on.
-        this._envRetrigs = this._keyonRetrigs(ev.args?.keyon, when, macroGate);
+        this._envRetrigs = this._retrigsOf(ti);
         this._lvMacros(isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`, ev.args ?? {}, when, macroGate);
         this._scheduleFmOpMacros(ch, ev.args ?? {}, when, macroGate);
         this._envRetrigs = null;
@@ -2406,10 +2404,6 @@ export class IRPlayer {
         // silence. vol and master are "volume": 0 mutes. (vel never mutes — it
         // floors at its lowest ladder step.)
         const isFmSilent = this._fmNoteSilent(ch, when);
-        // A :keyon macro's end, once it has stepped its last (undefined till
-        // then, null when it writes nothing): an echo tail past the note's
-        // close keys off a step after its last tap, as the driver's does.
-        let keyonEnd = null, keyonDone = null;
         const keys = this._isTrackAudible(ev._trackIndex) && !isFmSilent;
         // A note that keys nothing (muted / non-soloed track, or vol 0) keys
         // the channel off instead: the previous note may have left its key-off
@@ -2427,14 +2421,7 @@ export class IRPlayer {
           // The next note's key-off goes an ordering margin ahead of its
           // key-on, so the envelope sees the transition it attacks from.
           if (how.next) return void this._fmKey(ch, 0, t - KEY_ORDER_EPS_SECS);
-          const off = Math.max(t, when + 0.001); // never before its key-on
-          this._fmKey(ch, 0, off);
-          const tail = (end) => {
-            if (end != null && end > off + 1e-9)
-              this._whileNote(ti, end, () => { if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, end); });
-          };
-          if (keyonEnd === undefined) keyonDone = tail;
-          else tail(keyonEnd);
+          this._fmKey(ch, 0, Math.max(t, when + 0.001)); // never before its key-on
         } : (t, how) => {
           if (!keys || carries(how)) return;
           if (this._reg27 & 0x80) {
@@ -2474,23 +2461,30 @@ export class IRPlayer {
             // Merge this operator's key with the other FM3 operators sharing
             // channel 3's 0x28 register instead of overwriting them. A :keyon
             // retrigger re-attacks THIS operator only (driver.md §13.4).
-            this._fm3Edge(keyMask & 0xf0, when, this._eventFrame(when), 0, ti, true, this._fm3KeyGen[Math.log2(keyMask & 0xf0) - 4]);
-            this._fm3Retriggers(keyMask & 0xf0, ev.args?.keyon, when, macroGate, gate.hold ? Infinity : gate.open ? null : gate.end);
+            const bit = keyMask & 0xf0, gen = this._fm3KeyGen[Math.log2(bit) - 4];
+            this._fm3Edge(bit, when, this._eventFrame(when), 0, ti, true, gen);
+            // A :keyon retrigger re-attacks THIS operator alone, merged with
+            // the others' in its frame's $28 edges (_fm3Edge).
+            const gap = this._retrigGap(this._retrigsOf(ti));
+            this._noteRetriggers(ti, (t) => {
+              const F = this._eventFrame(t);
+              this._fm3Edge(bit, Math.max(when, t - gap), F, 1, Math.log2(bit) - 4, false, gen);
+              this._fm3Edge(bit, t, F, 1, Math.log2(bit) - 4, true, gen);
+            }, (t) => this._fm3Edge(bit, t, this._eventFrame(t), 0, ti, false, null));
           } else {
             // The previous note's key-off came first (_closeNote, at this
             // note's dispatch); a slur cancelled it, so the envelope carries
             // over: it keys nothing.
             const csmKeys = this._csmKeysCh3(ch);
             if (!ev.args?.legato && !csmKeys) this._fmKey(ch, keyMask, when);
-            // :keyon retrigger gate (drum roll / echo tail): its taps re-key
-            // the channel; one past the note's close keys off after it (above).
-            if (ev.args?.keyon) {
-              keyonEnd = undefined; // known when the macro has stepped its last
-              this._scheduleKeyonMacro(ev.args.keyon, keyMask, ch, when, macroGate, (end) => {
-                keyonEnd = end;
-                keyonDone?.(end);
-              });
-            }
+            // :keyon retriggers (a drum roll, an echo tail): each keys the
+            // channel off and on again (Timer A's under CSM).
+            const gap = this._retrigGap(this._retrigsOf(ti));
+            if (!csmKeys) this._noteRetriggers(ti, (t) => {
+              if (this._csmKeysCh3(ch)) return;
+              this._fmKey(ch, 0, Math.max(when, t - gap));
+              this._fmKey(ch, keyMask, t);
+            }, (t) => { if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, t); });
           }
         }
         break;
@@ -3626,13 +3620,13 @@ export class IRPlayer {
         if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
           const reset = (t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
           reset(when);
-          this._eachTime(this._keyonRetrigs(ev.args?.keyon, when, psgMacroGate), reset);
+          this._noteRetriggers(ti, reset);
         }
         if (rateNote) {
           // Its mode re-asserted, and the note's :mode macro, as the PSG's
           // noise has them; its rate is the pitch below.
           this._psgTriggerNoise(when, psgCh);
-          this._envRetrigs = this._keyonRetrigs(ev.args?.keyon, when, psgMacroGate);
+          this._envRetrigs = this._retrigsOf(ti);
           this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgMacroGate);
           this._envRetrigs = null;
         }
@@ -3665,7 +3659,7 @@ export class IRPlayer {
           if (!onsetWritten) this._psgSetPitch(psgCh, midi, psgCentOffset, when);
         } else {
           this._psgTriggerNoise(when, psgCh);
-          this._envRetrigs = this._keyonRetrigs(ev.args?.keyon, when, psgMacroGate);
+          this._envRetrigs = this._retrigsOf(ti);
           this._schedulePsgModeMacro(
             psgCh,
             ev.args?.noise_mode,
@@ -3729,7 +3723,7 @@ export class IRPlayer {
         const volMacro = ev.args?.vol ?? null;
         // A :keyon retrigger restarts the level envelopes (PSG has no
         // hardware one: this is the whole of the retrigger).
-        this._envRetrigs = velMacro || volMacro ? this._keyonRetrigs(ev.args?.keyon, when, psgMacroGate) : null;
+        this._envRetrigs = velMacro || volMacro ? this._retrigsOf(ti) : null;
         this._psgNoteLevel(psgCh, ev, when, psgMacroGate, baseVel);
         this._envRetrigs = null;
         break;
