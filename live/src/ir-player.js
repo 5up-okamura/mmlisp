@@ -2315,21 +2315,27 @@ export class IRPlayer {
         // static :vel works and a previously attenuated note is reset; vel 15
         // / vol 31 / master 31 restores the voiced level.
         // The previous note's level macros are done: this note starts from
-        // its own velocity and the fader (its macros are sampled below).
+        // its own velocity and the fader, and its :vel / :vol macros' first
+        // samples on it (_lvMacros), as every voice's key-on composes.
+        // FM3 independent-OP: the note's velocity is THIS operator's, and it
+        // composes into that operator's own TL — not the channel's carriers,
+        // which belong to the other operators too (driver.md §13.4).
+        // A :keyon retrigger restarts the note's envelopes — level and timbre
+        // (driver.md §13.2) — while its :pitch / :semi and :pan run on.
+        const site = isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`;
+        this._lvNoteOn(site, ev.args?.vel ?? 15);
+        let leveled = false;
+        this._envRetrigs = this._retrigsOf(ti);
+        this._lvMacros(site, ev.args ?? {}, when, macroGate, () => leveled);
+        this._envRetrigs = null;
         if (isFm3OpNote) {
-          // FM3 independent-OP: the note's velocity is THIS operator's, and it
-          // composes into that operator's own TL — not the channel's carriers,
-          // which belong to the other operators too (driver.md §13.4).
-          this._lvNoteOn(`fm3op:${fm3Op}`, ev.args?.vel ?? 15);
           // The note's span, CSM's level key (_fm3OpTl); its end is set once
           // the gate is resolved below.
           this._fm3Op[fm3Op - 1].csmOn = when;
           this._fm3Op[fm3Op - 1].csmOff = Infinity;
           this._writeFm3OpTl(fm3Op, when);
-        } else {
-          this._lvNoteOn(`fm:${ch}`, ev.args?.vel ?? 15);
-          this._writeFmLevel(ch, when);
-        }
+        } else this._writeFmLevel(ch, when);
+        leveled = true;
 
         // An encoder that reads whether a write is inside a note (the
         // OPLL's) hears of the key-on before the note's pitch and voice
@@ -2391,11 +2397,8 @@ export class IRPlayer {
             fm3Offset,
           );
         }
-        // A :keyon retrigger restarts the note's envelopes — level and timbre
-        // (driver.md §13.2) — while its :pitch / :semi (scheduled above) and
-        // :pan run on.
+        // (its timbre's envelopes, restarted by a :keyon retrigger as its level's are)
         this._envRetrigs = this._retrigsOf(ti);
-        this._lvMacros(isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`, ev.args ?? {}, when, macroGate);
         this._scheduleFmOpMacros(ch, ev.args ?? {}, when, macroGate);
         this._envRetrigs = null;
         // Key on: all 4 operators (unless muted or vol=0).

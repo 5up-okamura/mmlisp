@@ -12,7 +12,7 @@ import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
 import { PCM8_RATE } from "./chips/msm6258.js";
 import { DDA_RATE, ddaStep } from "./chips/huc6280.js";
 import { dmcRate, dmcRates, dmcLevels, dmcEncode } from "./chips/rp2a03.js";
-import { DDA_HOLD_SEC, DMC_LOAD_LEAD_SECS, PCM_LOOP_MAX, VOICES, PCM_SWEEP_AFTER, PCM_POINT_TARGETS, macroLeadsWithHold, SWEEP, MACRO, AFTER } from "./ir-player-shared.js";
+import { DDA_HOLD_SEC, DMC_LOAD_LEAD_SECS, PCM_LOOP_MAX, VOICES, PCM_SWEEP_AFTER, PCM_POINT_TARGETS, SWEEP, MACRO, AFTER } from "./ir-player-shared.js";
 
 // A part's words that set where its next notes play: their range and
 // loop (seconds as heard), each a value of the track's state `st`.
@@ -81,6 +81,14 @@ export const sampleMethods = {
     }
     if (fields.kind === "master" && this._masterHand) fields = { ...fields, value: this._masterHand.v };
     this._write({ type: "pcm-ev", when, ...fields });
+  },
+
+  // A step of a Mega Drive PCM note's :vel / :vol macro, to the voice model
+  // — or, in a frame a :keyon retrigger is due in, carried by it.
+  _pcmLevelStep(voice, kind, value, t) {
+    const r = this._lv(`pcm:${voice}`).note?.due?.get(this._eventFrame(t));
+    if (r) r.carried[kind] = value;
+    else this._pcmEv(t, { kind, voice, value, macro: true });
   },
 
   // A point, from the IR's seconds to the engine's byte offset — the
@@ -165,15 +173,18 @@ export const sampleMethods = {
   // another track's holds it).
   _chipPcmHit(voice, ev, when, end, fields, key, release = null) {
     const st = this._chipPcmState();
-    const { velMacro, vol: volMacro, pitchMacro, note_semi: semiMacro } = ev.args ?? {};
+    const { pitchMacro, note_semi: semiMacro } = ev.args ?? {};
     const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
     const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const mode = ev.args?.mode ?? "shot", held = mode === "gate" || mode === "loop";
     const ti = ev._trackIndex;
     if (release) this._sampleCloses(ev, (t, how) => release(t, this._chipPcmOwnHit(voice, ev._trackIndex), how));
     const retrigs = this._retrigsOf(ti);
-    // The note's macros as they are now, shared by its retriggers' hits.
-    const macros = [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"], [pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
+    // The note's level is its voice's (_lv at `voice:…`, _sampleLevel); its
+    // pitch macros as they are now, shared by its retriggers' hits.
+    const site = `voice:${voice}`;
+    const L = this._lvNoteOn(site, Number(ev.args?.vel ?? 15)), note = L.note;
+    const macros = [[pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
     const onset = {};
     for (const [spec, k, target] of macros) onset[k] = this._macroOnset(spec, when, gateTicks, target);
     const mac = { ...onset };
@@ -181,14 +192,16 @@ export const sampleMethods = {
     // its frame, as an FM or tone note does (_onsetPitchOffset).
     const sw = this._slots.get(this._slotKey(ev, "NOTE_PITCH"));
     if (sw) st.cents.set(ev._trackIndex, this._sweepAt(sw, sw.next));
-    const hit = { t: when, end, voice, ti: ev._trackIndex, vel: Number(ev.args?.vel ?? 15), mac, ...fields };
+    const hit = { t: when, end, voice, ti: ev._trackIndex, mac, ...fields };
     // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
     // the channel keeps moving through the sound's release.
     const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
     this._envRetrigs = retrigs;
+    let keyed = false; // (its first steps are what its key composes from)
+    this._lvMacros(site, ev.args ?? {}, when, gateTicks, () => keyed);
     for (const [spec, k, target] of macros) {
       if (!spec) continue;
-      const span = slot && (k === "cents" || k === "semi") ? slot : { noteFrames, gateSecs };
+      const span = slot ?? { noteFrames, gateSecs };
       this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when, (v, t) => {
         mac[k] = clampForTarget(target, v);
         if (st.owner.get(voice)?.mac === mac) this._chipPcmWrite(voice, t);
@@ -214,13 +227,14 @@ export const sampleMethods = {
     };
     const fresh = { ...hit }; // a retrigger's hit starts as the note's did
     keyHit(hit);
+    keyed = true;
     // A retrigger keys at its time, before its frame's steps: its level
     // envelopes start over there, from their first samples.
     // (a gate or loop note's only before its close: its sound is cut or
     // released there)
     this._noteRetriggers(ti, (t, closed) => {
       if (held && closed) return;
-      for (const k of ["vel", "vol"]) if (onset[k] != null) mac[k] = onset[k];
+      if (L.note === note) this._lvRetrig(site);
       keyHit({ ...fresh, t, end: end + (t - when) });
     });
     return hit;
@@ -247,13 +261,9 @@ export const sampleMethods = {
     return h?.ti === ti ? h : null;
   },
 
-  // A hit's level now: { vel, vol, master }.
+  // A hit's level now: its voice's (_sampleLevel).
   _chipPcmLevelAt(hit) {
-    return {
-      vel: hit.mac.vel ?? hit.vel,
-      vol: this._handVol(`voice:${hit.voice}`) ?? hit.mac.vol ?? this._lv(`strk:${hit.ti}`).vol,
-      master: this._handMaster() ?? this._masterVol ?? VOL_UNITY,
-    };
+    return this._sampleLevel(`voice:${hit.voice}`, hit.ti);
   },
 
   // A hit's pitch move now, in cents: the track's :pitch and the note's
@@ -597,14 +607,14 @@ export const sampleMethods = {
         const end = Math.min(entry.data.length, r.end != null ? at(r.end) : r.len != null ? start + at(r.len) : entry.data.length);
         if (end <= start) break;
         const mode = ev.args?.mode ?? "shot";
-        // The level at key-on: the note's vel (or its macro's first step),
-        // the track's :vol (or its macro's), the master, the strip.
+        // The level at key-on, baked into the bytes: the voice's (_sampleLevel)
+        // — its note's vel and :vol macro's first steps, the strip, the
+        // track's :vol, the master.
         const gateTicks = (this._gateOf(ti) ?? this._noteGate(ev, when)).macroGate;
-        const gain = levelGain({
-          vel: this._macroOnset(ev.args?.velMacro, when, gateTicks, "VEL") ?? Number(ev.args?.vel ?? 15),
-          faders: [this._handVol("voice:dpcm") ?? this._macroOnset(ev.args?.vol, when, gateTicks, "VOL") ?? this._lv(`strk:${ti}`).vol,
-            this._handMaster() ?? this._masterVol ?? VOL_UNITY],
-        });
+        this._lvNoteOn("voice:dpcm", Number(ev.args?.vel ?? 15));
+        this._lvMacros("voice:dpcm", ev.args ?? {}, when, gateTicks, () => false);
+        const lv = this._sampleLevel("voice:dpcm", ti);
+        const gain = levelGain({ vel: lv.vel, faders: [lv.vol, lv.master] });
         const rate = this._dmcRateOf(name);
         const levels = dmcLevels(entry, perSec, rate, gain, start, end);
         const bytes = dmcEncode(levels, mode === "loop");
@@ -785,49 +795,25 @@ export const sampleMethods = {
     // a :keyon step plays the blob again from its start. Each runs to the
     // next note on the track, which re-instantiates them; a :keyon retrigger
     // restarts the level envelopes, as it does on FM and PSG.
-    const { velMacro, vol: volMacro } = ev.args ?? {};
     const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     // Its close: the driver's key-off — a loop's release, its tail played
     // out (a shot's plays on); a `:mode gate` note's cut.
     this._sampleCloses(ev, (t, how) => this._pcmEv(t, { kind: how.cut ? "cut" : "off", voice }));
-    // A :keyon retrigger STARTs after its frame's level steps, so it
-    // carries them: they ride its event instead of sending a level of their
-    // own. Each retrigger is its frame's work at its time (_eachTime, before
-    // the frame's steps, MACRO), and STARTs after them (AFTER) — the last
-    // of its frame, which that frame's level steps ride (`due`).
+    // Its level is the voice model's: each step of its :vel / :vol macros
+    // goes to it (_lvWrite, _pcmLevelStep), and the note starts at their
+    // first samples (a leading hold: the note's own vel, the fader).
+    // A :keyon retrigger STARTs after its frame's level steps, so it carries
+    // them: they ride its event instead of sending a level of their own
+    // (`due`: the frames a retrigger is due in, after their steps, AFTER).
+    const site = `pcm:${voice}`;
+    const L = this._lvNoteOn(site, noteVel);
+    const due = (L.note.due = new Map());
     const retrigs = this._retrigsOf(ev._trackIndex);
-    const due = new Map();
-    const first = []; // the samples on the note itself: its key-on composes from them
     let on = false;
-    const level = (kind, value, t) => {
-      const r = due.get(this._eventFrame(t));
-      if (r) r.carried[kind] = value;
-      else this._pcmEv(t, { kind, voice, value, macro: true });
-    };
     this._envRetrigs = retrigs;
-    for (const [spec, kind, target] of [[velMacro, "vel", "VEL"], [volMacro, "vol", "VOL"]]) {
-      if (!spec) continue;
-      this._scheduleMacro(
-        spec, noteFrames, gateSecs, when,
-        (v, t) => {
-          const value = clampForTarget(target, v);
-          if (on) level(kind, value, t);
-          else first.push({ t, kind, value });
-        },
-        this._stepSecs(spec.step),
-      );
-    }
+    this._lvMacros(site, ev.args ?? {}, when, gateTicks, () => on);
     this._envRetrigs = null;
-    // The note starts at its :vel macro's first sample, as the driver's
-    // note-on composes it (a leading hold: the note's own vel).
-    const firstVel = velMacro && !macroLeadsWithHold(velMacro)
-      ? first.find((x) => x.kind === "vel")?.value ?? noteVel
-      : noteVel;
-    // ...and at its :vol macro's first sample, else the fader (restore_level_base).
-    const firstVol = volMacro && !macroLeadsWithHold(volMacro)
-      ? first.find((x) => x.kind === "vol")?.value ?? null
-      : null;
+    const firstVel = L.liveVel ?? noteVel, firstVol = L.liveVol;
     // A PCM note takes fm6 as the DAC: $2B on where it is off (its first
     // note, or after an fm6 note took it: _fmKey) — as the driver does.
     if (this._dacClaim && !this._dacOn) {
@@ -845,7 +831,9 @@ export const sampleMethods = {
       vol: firstVol,
     });
     on = true;
-    for (const x of first) level(x.kind, x.value, x.t);
+    // (its first samples, as the voice's macro values)
+    if (L.liveVel != null) this._pcmLevelStep(voice, "vel", L.liveVel, when);
+    if (L.liveVol != null) this._pcmLevelStep(voice, "vol", L.liveVol, when);
     // Each retrigger while the note is the track's: its next note takes over.
     this._noteRetriggers(ev._trackIndex, (t) => {
       const F = this._eventFrame(t), r = { carried: {} };

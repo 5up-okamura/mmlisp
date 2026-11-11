@@ -23,8 +23,10 @@ export const levelMethods = {
   // note's key-on, a macro's step, a :vol or :master write, a sweep's step,
   // the panel, a key — as the driver re-composes a keyed channel (driver.md
   // §7); only where the result is written differs by kind (_lvWrite). A
-  // sample voice and a MIDI channel keep the score's level in models of their
-  // own: here they have the panel's hand.
+  // chip's sample voice ("voice:adpcm", "voice:pcm8-0", a rhythm sound's) is
+  // one too, its fader the track's (_sampleLevel); a Mega Drive PCM voice
+  // ("pcm:0") is composed in the driver's own voice model, which its note's
+  // levels are sent to; a MIDI channel ("mtrk:0") is the output's.
   _lv(site) {
     let L = this._levels.get(site);
     if (!L) this._levels.set(site, (L = { vel: 15, vol: VOL_UNITY, liveVel: null, liveVol: null, note: null, ends: [], key: null, hand: null }));
@@ -45,8 +47,9 @@ export const levelMethods = {
     return L.liveVol ?? L.vol;
   },
 
-  // The level written again from what it is.
-  _lvWrite(site, when) {
+  // The level written again from what it is (`key`: what moved, where the
+  // voice's model takes the term itself).
+  _lvWrite(site, when, key = null) {
     const [kind, at] = site.split(":");
     const n = Number(at);
     if (kind === "fm") {
@@ -54,6 +57,19 @@ export const levelMethods = {
       else this._writeFmLevel(n, when);
     } else if (kind === "fm3op") this._writeFm3OpTl(n, when);
     else if (kind === "psg") this._psgRecompose(n, when);
+    else if (kind === "voice") this._chipPcmWrite(at, when);
+    else if (kind === "pcm" && key) this._pcmLevelStep(n, key === "liveVel" ? "vel" : "vol", this._lv(site)[key], when);
+  },
+
+  // A sample voice's level now — its note's velocity and :vol macro, the
+  // panel's hand, over its track's fader — and the master: { vel, vol, master }.
+  _sampleLevel(site, ti) {
+    const L = this._lv(site);
+    return {
+      vel: this._lvVel(L),
+      vol: L.hand ? L.hand.v : (L.liveVol ?? this._lv(`strk:${ti}`).vol),
+      master: this._handMaster() ?? this._masterVol ?? VOL_UNITY,
+    };
   },
 
   // A note begins on the voice: its velocity, the last note's macros gone.
@@ -69,6 +85,10 @@ export const levelMethods = {
   // the note's live value and — while `live()` — the level is written from
   // both as they are then. In bind order: which of the two steps first in a
   // frame. The note's `lvl`: when its level macros are done (_lvEnded).
+  // A first step on the note itself moves the value at once: what the note's
+  // key-on composes from, as the driver's note-on does (driver.md §7.2) —
+  // `live()` false until it has keyed — and what a :keyon retrigger starts
+  // over from (`first`, _lvRetrig).
   _lvMacros(site, args, when, gateTicks, live = null) {
     const L = this._lv(site);
     const note = L.note;
@@ -80,7 +100,7 @@ export const levelMethods = {
       this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
         if (L.note !== note) return; // the voice's next note took it over
         L[key] = clampForTarget(target, v);
-        if (!live || live()) this._lvWrite(site, t);
+        if (!live || live()) this._lvWrite(site, t, key);
       }, this._stepSecs(spec.step), (end) => {
         if (end != null) lvl.at = Math.max(lvl.at ?? -Infinity, end);
         if (--lvl.left === 0) for (const f of lvl.waiters.splice(0)) f(lvl.at);
@@ -90,6 +110,14 @@ export const levelMethods = {
     const pair = [[args.velMacro, "VEL", "liveVel"], [args.vol, "VOL", "liveVol"]];
     if (args.vol && args.velMacro && keys.indexOf("vol") < keys.indexOf("velMacro")) pair.reverse();
     for (const [spec, target, key] of pair) run(spec, target, key);
+    note.first = { liveVel: L.liveVel, liveVol: L.liveVol };
+  },
+
+  // A :keyon retrigger of the note at `site`: its level envelopes start over
+  // from their first samples, which the re-key composes from.
+  _lvRetrig(site) {
+    const L = this._lv(site), first = L.note?.first;
+    if (first) Object.assign(L, first);
   },
 
   // `fn(at)` once the note's level macros at `site` have written their last:

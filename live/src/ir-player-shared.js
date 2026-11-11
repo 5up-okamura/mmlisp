@@ -124,18 +124,6 @@ export function songOrEffectIr(ir, se) {
   return { ...ir, tracks: tracks.map((t, i) => ({ ...t, id: i })) };
 }
 
-// Whether a macro's first step writes nothing: a leading wait, a hold step, or
-// an empty attack/sustain (`[#rel …]`).
-export function macroLeadsWithHold(spec) {
-  if (spec?.type === "steps") return spec.releaseIndex === 0 || spec.steps?.[0] == null;
-  const first = spec?.type === "stages" ? spec.stages?.[0] : spec;
-  if (!first) return false;
-  return (
-    (spec.type === "stages" && !first.curve) ||
-    !!first.waitKeyOff || Number(first.waitFrames ?? 0) > 0 || Number(first.waitTicks ?? 0) > 0
-  );
-}
-
 // A tempo as the driver runs it: its tick increment, read back (the driver
 // has no fractional BPM — 120 is an increment of 819, 119.97 BPM).
 export function drvBpm(bpm) {

@@ -288,3 +288,14 @@ Design:
   order); an echo tail past the close keys off a step after the macro's
   end (FM and now FM3 alike). `_scheduleKeyonMacro`, `_fm3Retriggers`,
   `_letGoAt` / `_letGo` are gone; `_eachTime` has one caller.
+- Done: (4) — every voice's level is an `_lv` site and its onset one rule:
+  `_lvNoteOn`, then `_lvMacros(site, args, when, gate, live)` — first steps
+  on the note move the level at once, the key-on composes from them
+  (`live()` false till keyed), a :keyon retrigger starts over from them
+  (`note.first`, `_lvRetrig`). FM / FM3 now so too (its redundant first TL
+  write gone; frame-equal). Chip samples' level is `voice:<voice>`
+  (`_sampleLevel`: over the track's `strk:` fader), DMC's `voice:dpcm`;
+  MD PCM's `pcm:<n>` sends each step to the driver's voice model
+  (`_lvWrite(site, t, key)` → `_pcmLevelStep`, a due retrigger carrying
+  it). `_macroOnset` remains only for pitch (stage 5);
+  `macroLeadsWithHold` is gone.
