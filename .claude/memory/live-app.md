@@ -245,7 +245,15 @@ voice-specific copy of any of these; extend the adapter instead:
 - `_lv` + `_lvMacros` + `_lvWrite(site, t, why)` — every level, whatever
   moved it (a step, the fader, the panel's hand); onset from first steps.
 - `_pt` + `_ptMacros` + `_ptWrite` — every pitch, the driver's rule.
-- `_volWord` / `_panWord` — :vol and :pan on every track, dispatched in
-  `_dispatchEvent` beside MASTER.
+- `_volWord` / `_panWord` / `_pitchWord` / `_snapWord` — :vol :pan :pitch
+  :snap on every track, dispatched in `_dispatchEvent` beside MASTER (only
+  PARAM_ events: ef46725 swallowed every MIDI event until 844529b).
+- `_noteMacro` — a note's macro on any other word of its voice (pan, FM
+  operator words, wave, duty, mode, mixer, noise period): a :keyon restart
+  but for :pan, the driver's rule.
+- `_silence(site, t)` — a voice silenced, for a mute landing
+  (`_applyAudibility`) and a muted track's note (`_playNote`) alike.
+- `tools npm run check:note-path` holds all of it on every melodic channel
+  of every machine (closes, retriggers, mutes).
 Open after it: the PC Engine's PCM is too quiet (def-mod or the wave's
 vol — the user's to decide).

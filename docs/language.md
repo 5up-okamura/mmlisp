@@ -1535,14 +1535,16 @@ retriggers the envelope.
 `:keyon` is sampled once per `:step`; a sampled value ≥ 0.5 fires a key-on
 retrigger (key-off then key-on across the player's `KEY_OFF_LEAD` gap,
 restarting the envelopes: the FM EG and the note's level/timbre macros —
-`:vel`, `:vol`, `:tl1`…; `:pitch` and `:semi` run on, so a retriggered arp keeps
-its place, and so does `:pan`, a place rather than an envelope). The first sample at t = 0 coincides with the note's
+`:vel`, `:vol`, `:tl1`…, a lane's `:wave`, `:duty`, `:mode`; `:pitch` and
+`:semi` run on, so a retriggered arp keeps its place, and so does `:pan`, a
+place rather than an envelope — on every channel alike, as the driver restarts
+every slot but those). The first sample at t = 0 coincides with the note's
 own attack and is a no-op, so a roll starts at the second step whether it is
 written `[0 #sus 1]` or `[1 1 1 …]`. Steps before `#rel` loop until note-off (a roll);
 steps after `#rel` fire after note-off (a one-channel echo tail): each tap
 re-keys the FM EG while the level macros play their own `#rel` through the
 taps — `:vel [15 #rel 11 7 3]` makes each tap quieter — and the channel keys
-off a step after the last tap. While a
+off a step after the release's last step (its last tap, where it ends on one). While a
 `:keyon` macro is active it owns the channel keying.
 
 | Form                           | Result                                    |
@@ -2386,8 +2388,9 @@ looping curve (`sin`, `triangle`, `square`, `saw`, `ramp`, `noise`, `pink`,
 - **`:mode`** is sticky track state like every other parameter — it holds
   until the next `:mode` — and it is the note, not the sample, that decides:
   `shot` (the default) plays the note's range once; `loop` plays the attack,
-  cycles the range until KEY-OFF (a `PCM_NOTE_OFF` at the gate), then plays
-  the release tail to the sample's end; `gate` plays the range once, as a
+  cycles the range until KEY-OFF (a `PCM_NOTE_OFF` at the gate; a rest and the
+  track's end key off too, as on every channel), then plays the release tail
+  to the sample's end; `gate` plays the range once, as a
   shot, and stops it at the gate — the note's end at full gate. A note on a
   def with no range plays — or loops — the whole sample. Write `:mode shot`
   to go back.
