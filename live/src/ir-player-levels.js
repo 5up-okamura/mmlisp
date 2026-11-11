@@ -352,6 +352,24 @@ export const levelMethods = {
     return n;
   },
 
+  // A note's macro on a word of its voice beyond its level and pitch (an
+  // FM channel's :pan and operator words, a lane's :pan, :wave, :duty,
+  // :mode, the SSG's mixer and noise period): each step written by
+  // `write(v, t)` from the note's frames, within its gate. A :keyon
+  // retrigger starts it over — the driver restarts every slot but a
+  // place's: :pan runs on, as :pitch does (`runsOn`, driver.md §14).
+  // `moved`: a step written only where its rounded value moves (a register
+  // a rewrite would re-trigger).
+  _noteMacro(spec, n, when, write, { runsOn = false, moved = false } = {}) {
+    if (!spec) return;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, n.gate.macroGate);
+    let last = null;
+    const step = moved ? (v, t) => { const r = Math.round(v); if (r !== last) write(r, t); last = r; } : write;
+    this._envRetrigs = runsOn ? null : n.retrigs;
+    this._scheduleMacro(spec, noteFrames, gateSecs, when, step, this._stepSecs(spec.step));
+    this._envRetrigs = null;
+  },
+
   // ---- a track's note: one gate rule, one close, for every voice ----
   // A note's gate, as the driver keeps it on every channel (opcodes.md
   // §3.1): 0 holds — the host's key-off, a rest or the track's end closes

@@ -5,7 +5,7 @@
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
 import { clampForTarget, sampleCurveUnit, KEY_OFF_LEAD_SECS } from "./ir-utils.js";
-import { KEYED, OP_MACRO_MAP, scaleMacroSample, MACRO } from "./ir-player-shared.js";
+import { KEYED, scaleMacroSample, MACRO } from "./ir-player-shared.js";
 
 export const macroMethods = {
   // A glide ended by its target's next write before it ran its length.
@@ -425,51 +425,6 @@ export const macroMethods = {
     return when + Math.max(0, k) / 60;
   },
 
-  // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
-  // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
-  _scheduleFmOpMacros(
-    ch,
-    noteArgs,
-    when,
-    gateTicks,
-  ) {
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      when,
-      gateTicks,
-    );
-    const retrigs = this._envRetrigs;
-    for (const [key, target] of OP_MACRO_MAP) {
-      const spec = noteArgs[key];
-      if (!spec) continue;
-      const t = target; // capture for closure
-      // :pan is a place, not an envelope: it runs on through a :keyon
-      // retrigger, as :pitch/:semi do (driver.md §14).
-      this._envRetrigs = key === "pan" ? null : retrigs;
-      this._scheduleMacro(
-        spec,
-        noteFrames,
-        gateSecs,
-        when,
-        (v, when) => {
-          this._applyParam(
-            ch,
-            {
-              cmd: "PARAM_SET",
-              args: { target: t, value: v },
-            },
-            when,
-          );
-        },
-        this._stepSecs(spec.step),
-      );
-    }
-    this._envRetrigs = retrigs;
-  },
-
-  // A note's :vel and :vol macros, as one level: at every sample time of
-  // either, the note's level is recomposed from both lines' live values (the
-  // driver composes both every frame, §7). An FM3 operator's note writes that
-  // operator's TL; a channel's, its carriers.
   // The gap a :keyon retrigger keys off before it keys on again, so the
   // chip sees the transition: short, to keep the beat, under the key-off
   // lead (a step's 0.4 at most).
@@ -582,40 +537,4 @@ export const macroMethods = {
     next();
   },
 
-
-  // A PSG note's macro on a register word (the SSG's mixer, its noise
-  // period): each step written as it comes, where it moved.
-  _schedulePsgWordMacro(spec, noteWhen, gateTicks, write) {
-    if (!spec) return;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(noteWhen, gateTicks);
-    let last = null;
-    this._scheduleMacro(spec, noteFrames, gateSecs, noteWhen, (v, t) => {
-      const r = Math.round(v);
-      if (r !== last) write(r, t);
-      last = r;
-    }, this._stepSecs(spec.step));
-  },
-
-  _schedulePsgModeMacro(
-    psgCh,
-    modeMacro,
-    noteWhen,
-    gateTicks,
-  ) {
-    if (!modeMacro) return;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      noteWhen,
-      gateTicks,
-    );
-    this._scheduleMacro(
-      modeMacro,
-      noteFrames,
-      gateSecs,
-      noteWhen,
-      (v, t) => {
-        this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t, psgCh);
-      },
-      this._stepSecs(modeMacro.step),
-    );
-  },
 };

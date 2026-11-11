@@ -20,7 +20,7 @@ import { toneLaneOf, targetProfile, notYet } from "./targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "./mmb.js";
 import { PCM8_VOICES } from "./chips/msm6258.js";
 import { FM_OPS, fmInitVoice, fmOpWord } from "./chips/fm-words.js";
-import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
+import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
 import { workMethods } from "./ir-player-work.js";
 import { panelMethods } from "./ir-player-panel.js";
 import { keyMethods } from "./ir-player-keys.js";
@@ -3412,10 +3412,12 @@ export class IRPlayer {
 
     // The pitch it sounds from, written once (the driver's onset_pitch).
     if (!isFm3OpNote || n.pitchMoved()) this._ptWrite(isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`, when);
-    // Its timbre's envelopes, restarted by a :keyon retrigger as its level's are.
-    this._envRetrigs = n.retrigs;
-    this._scheduleFmOpMacros(ch, ev.args ?? {}, when, gate.macroGate);
-    this._envRetrigs = null;
+    // Its macros on its channel's words (_noteMacro): its pan, its timbre's
+    // envelopes (fm_tl1 → FM_TL1 …, chips/fm-words.js).
+    for (const [key, target] of OP_MACRO_MAP) {
+      this._noteMacro(ev.args?.[key], n, when, target === "PAN" ? (v, t) => this._setPan(`fm:${ch}`, v, t)
+        : (v, t) => this._applyParam(ch, { cmd: "PARAM_SET", args: { target, value: v } }, t), { runsOn: target === "PAN" });
+    }
 
     // A note at vol or master 0 keys nothing: it keys the channel off
     // instead, the previous note may have left its key-off to this one (a
@@ -3516,7 +3518,7 @@ export class IRPlayer {
       if (h && h.t < when - 1e-9 && h.end > when + 1e-9 && !h.dumped) { h.end = when; h.cut = true; }
     }
 
-    const { ti, gate } = n, psgMacroGate = gate.macroGate;
+    const { ti, gate } = n;
     let retrigger = null;
     // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
     // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
@@ -3525,26 +3527,19 @@ export class IRPlayer {
       reset(when);
       retrigger = reset;
     }
+    // Its macros on the lane's words (_noteMacro).
+    const mode = (v, t) => this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t, psgCh);
     if (rateNote) {
       // Its mode re-asserted, and the note's :mode macro, as the PSG's
       // noise has them; its rate is the pitch below.
       this._psgTriggerNoise(when, psgCh);
-      this._envRetrigs = n.retrigs;
-      this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgMacroGate);
-      this._envRetrigs = null;
+      this._noteMacro(ev.args?.noise_mode, n, when, mode);
     }
     // Its pitch as on FM (_pt): from its onset, written once.
     if (!isNoise) this._ptWrite(`psg:${psgCh}`, when);
     else {
       this._psgTriggerNoise(when, psgCh);
-      this._envRetrigs = n.retrigs;
-      this._schedulePsgModeMacro(
-        psgCh,
-        ev.args?.noise_mode,
-        when,
-        psgMacroGate,
-      );
-      this._envRetrigs = null;
+      this._noteMacro(ev.args?.noise_mode, n, when, mode);
     }
     // The SSG's mixer and its (song-wide) noise period stepped by the
     // note's `:mode` / `:noise-rate` macros, frame by frame. A macro is
@@ -3557,29 +3552,15 @@ export class IRPlayer {
     if (was?.rate && !rateMacro && this._noiseRateBase != null)
       this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? [], "noiseRate"), when);
     this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
-    // A note's (macro :pan …), where the channel has a pan of its own.
-    if (ev.args?.pan) {
-      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-      this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
-        (v, t) => this._setPan(`psg:${psgCh}`, v, t), this._stepSecs(ev.args.pan.step));
-    }
-    // A note's (macro :wave …): its def-waves a step at a time.
-    if (ev.args?.wave) {
-      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-      this._laneExpr[psgCh] = null;
-      this._scheduleMacro(ev.args.wave, noteFrames, gateSecs, when,
-        (v, t) => this._writeLaneWaveIndex(psgCh, v, t, true), this._stepSecs(ev.args.wave.step));
-    }
-    // A note's (macro :duty …), on a pulse (chips/rp2a03.js).
-    if (ev.args?.duty) {
-      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-      this._scheduleMacro(ev.args.duty, noteFrames, gateSecs, when,
-        (v, t) => this._psgSetDuty(psgCh, v, t), this._stepSecs(ev.args.duty.step));
-    }
-    this._schedulePsgWordMacro(mixMacro, when, psgMacroGate,
-      (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
-    this._schedulePsgWordMacro(rateMacro, when, psgMacroGate,
-      (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? [], "noiseRate"), t));
+    // A note's (macro :pan …) where the channel has a pan of its own; its
+    // def-waves a step at a time; a pulse's duty (chips/rp2a03.js); the SSG's
+    // mixer and noise period, written where they move.
+    this._noteMacro(ev.args?.pan, n, when, (v, t) => this._setPan(`psg:${psgCh}`, v, t), { runsOn: true });
+    if (ev.args?.wave) this._laneExpr[psgCh] = null;
+    this._noteMacro(ev.args?.wave, n, when, (v, t) => this._writeLaneWaveIndex(psgCh, v, t, true));
+    this._noteMacro(ev.args?.duty, n, when, (v, t) => this._psgSetDuty(psgCh, v, t));
+    this._noteMacro(mixMacro, n, when, (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, v, t) ?? []), t), { moved: true });
+    this._noteMacro(rateMacro, n, when, (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? [], "noiseRate"), t), { moved: true });
     // A lane on the envelope starts it over at a key-on (a slur's goes on).
     const envShape = this._psgEnv[psgCh];
     if (envShape >= 0 && !ev.args?.legato)
