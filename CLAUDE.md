@@ -137,8 +137,8 @@ writes every word every way (a value, `+` `*` `$slot`, sweeps) on every kind
 of Mega Drive track and holds the preview to MMLispDRV there — a word is one
 rule whatever track writes it; `check:loops` holds it there over several
 passes of a track's loop, which the A/B gate's one pass does not;
-`check:note-path` holds every melodic channel of every machine to the note's
-one path (where a note closes and how, its :keyon retriggers, a muted note's
+`check:note-path` holds every channel of every machine (its sample ones on a
+sample) to the note's one path (where a note closes and how, its :keyon retriggers, a muted note's
 silence). To write or
 check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the

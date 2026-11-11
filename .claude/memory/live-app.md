@@ -258,7 +258,7 @@ voice-specific copy of any of these; extend the adapter instead:
 - `VOICE_KINDS` (ir-player-levels.js) — each kind of voice's level, pitch,
   pan, silence and fader site in one entry (`_onVoice(site, op, …)`); add a
   kind there, not a branch in a dispatcher.
-- `tools npm run check:note-path` holds all of it on every melodic channel
-  of every machine (closes, retriggers, mutes).
+- `tools npm run check:note-path` holds all of it on every channel of every
+  machine, sample ones included (closes, retriggers, mutes): 107 channels.
 Open after it: the PC Engine's PCM is too quiet (def-mod or the wave's
 vol — the user's to decide).

@@ -1,5 +1,6 @@
 // The note path is one for every voice (live/src/ir-player-levels.js
-// _playNote): on every machine, every melodic channel plays one phrase and
+// _playNote): on every machine, every channel — its melodic ones, and its
+// sample ones on a sample (a rhythm channel its sound) — plays one phrase and
 // the path's own calls are held to one list — where each note closes and how
 // (_closeNote: the gate rule, _noteGate), where its :keyon retriggers fall
 // (_noteRetriggers), and that a muted track's note keys nothing but only
@@ -7,7 +8,9 @@
 // took a path of its own would part from the list on its channel.
 import assert from "node:assert/strict";
 import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { fileURLToPath } from "node:url";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
+import { bakedChipSamples } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/ir-player.js";
 import { TARGETS, targetProfile } from "../../live/src/targets.js";
 import { newScoreSource } from "../../live/src/new-score.js";
@@ -16,8 +19,11 @@ import { CORE_OF_KIND } from "../../live/src/ir-player-shared.js";
 // At :tempo 120 a quarter is 0.5 s: a full gate (the next note closes it), a
 // half gate (its own end), a full gate, a hold (the rest ends it), a rest,
 // and a half note rolled by :keyon on the eighths, which the track's end
-// closes.
-const PHRASE = ":len 4 c :gate* 0.5 d :gate* 1 e :gate 0 f _ :gate* 1 (macro :step 1/8 :keyon [0 1 1 1]) :len 2 g";
+// closes. One pitch: a rhythm sound has none.
+const PHRASE = ":len 4 c :gate* 0.5 c :gate* 1 c :gate 0 c _ :gate* 1 (macro :step 1/8 :keyon [0 1 1 1]) :len 2 c";
+// A sample channel's score sits beside drv/tests' wavs, which its :file reads.
+const SAMPLE_SCORE = fileURLToPath(new URL("../../drv/tests/note-path.mmlisp", import.meta.url));
+const RHYTHM = new Set(["rhythm", "opll-rhythm", "midi-drums"]); // a sound or a kit role by name
 const CLOSES = [
   [0.5, "next"], [0.75, "gate"], [1.5, "next"], [2.0, ""], [3.5, ""],
 ];
@@ -27,17 +33,36 @@ const NOTES = [0, 0.5, 1.0, 1.5, 2.5];
 const how = (h) => (h?.next ? "next" : h?.gate ? "gate" : h?.host ? "host" : "");
 const near = (a, b) => Math.abs(a - b) <= 1 / 60 + 1e-6; // a frame-clocked machine's frames
 
-function run(name, muted) {
-  const heads = [...newScoreSource(name).matchAll(/^\(([a-z0-9-]+)\b/gm)].map((m) => m[1])
-    .filter((h) => !["import", "def-score"].includes(h));
+// A machine's melodic channels (those of File > New's score), or its
+// sample ones (its channel table's: a DDA is another name of a wave channel,
+// a MIDI drum track a kit role),
+// each on the phrase.
+function score(name, samples) {
   const channels = targetProfile(name).channels;
-  const melodic = heads.filter((h) => ["fm", "psg", "none"].includes(CORE_OF_KIND[channels[h]?.part?.kind]));
-  const src = `(def-score :target ${name})\n` + melodic.map((h, i) => `(${h}${i ? "" : " :tempo 120"} ${PHRASE})`).join("\n");
-  const { ir, diagnostics } = compileMMLisp(src, "note-path.mmlisp", { imports: readImportSources("note-path.mmlisp", src) });
+  const sounds = new Map([...newScoreSource(name).matchAll(/^\((rhythm\d) (\S+)$/gm)].map((m) => [m[1], m[2]]));
+  const heads = samples
+    ? Object.keys(channels).filter((h) => channels[h].part?.kind === "sample")
+    : [...newScoreSource(name).matchAll(/^\(([a-z0-9-]+)\b/gm)].map((m) => m[1])
+      .filter((h) => ["fm", "psg", "none"].includes(CORE_OF_KIND[channels[h]?.part?.kind]));
+  if (!heads.length) return null;
+  const voice = (h) => (!samples ? "" : RHYTHM.has(channels[h].part.name) ? ` ${sounds.get(h) ?? "kick"}` : " blip");
+  return `(def-score :target ${name})\n${samples ? '(def-pcm blip :file "blip.wav")\n' : ""}`
+    + heads.map((h, i) => `(${h}${voice(h)}${i ? "" : " :tempo 120"} ${PHRASE})`).join("\n");
+}
+
+function run(name, samples, muted) {
+  const src = score(name, samples);
+  if (!src) return [];
+  const path = samples ? SAMPLE_SCORE : "note-path.mmlisp";
+  const { ir, diagnostics } = compileMMLisp(src, path, { imports: readImportSources(path, src) });
   const errors = diagnostics.filter((d) => d.severity === "error");
-  assert.deepEqual(errors.map((d) => d.message), [], `${name}: the phrase compiles on every melodic channel`);
+  assert.deepEqual(errors.map((d) => d.message), [], `${name}: the phrase compiles on every ${samples ? "sample" : "melodic"} channel`);
   const p = new IRPlayer(() => {});
   p.loadJSON(ir);
+  // The samples as Live bakes them: the chip's own RAM, or frames.
+  const { adpcm, frames } = bakedChipSamples(ir, targetProfile(name));
+  p.setAdpcmBank(adpcm);
+  p.setFrameBank(frames);
   if (muted) ir.tracks.forEach((_, ti) => p.muteTrack(ti, true));
   const seen = new Map(ir.tracks.map((t, ti) => [ti, { head: t.scoreChannel ?? t.channel, closes: [], retrigs: [], silences: [] }]));
   let base = null;
@@ -65,8 +90,8 @@ function run(name, muted) {
 
 let channels = 0;
 for (const name of Object.keys(TARGETS)) {
-  for (const muted of [false, true]) {
-    for (const s of run(name, muted)) {
+  for (const [samples, muted] of [[false, false], [false, true], [true, false], [true, true]]) {
+    for (const s of run(name, samples, muted)) {
       const at = `${name} ${s.head}${muted ? " (muted)" : ""}`;
       assert.equal(s.closes.length, CLOSES.length, `${at}: its notes close ${CLOSES.length} times: ${JSON.stringify(s.closes)}`);
       s.closes.forEach(([t, h], i) => {
