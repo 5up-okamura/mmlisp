@@ -2354,7 +2354,8 @@ them: a key-on starts a note, a key-off ends it.
   each hit takes a free voice, or cuts the sound that began longest ago —
   never an ADPCM-B note, the one melodic part — and the log counts the hits
   cut. A sample too long to bake into one 32 KB bank at its lowest pitch is
-  cut to fit; pan is not imported (the DAC is one channel). With PCM in the
+  cut to fit; a hit's pan is not imported (the DAC has one pan, fm6's,
+  for every voice). With PCM in the
   song, FM is offered fm1–fm5; the YM2612's own FM6, which plays where the
   song turns the DAC off, takes `fm6` in turn with the PCM when fm1–fm5 are
   full, each PCM step ending where the song hands fm6 back. A song whose log

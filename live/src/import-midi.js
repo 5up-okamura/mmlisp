@@ -696,7 +696,8 @@ export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
     const lane = analysis.lanes.find((l) => l.key === key);
     const part = tp.partOf(d);
     const src = (keptByLane.get(key) ?? []).sort((a, b) => a.tick - b.tick);
-    const panned = !!part.words("PAN");
+    // (the Mega Drive's DAC has one pan for every voice, fm6's: not a lane's)
+    const panned = !!part.words("PAN") && part.name !== "dac";
     const notes = [];
     let cur = null;
     for (const n of src) {

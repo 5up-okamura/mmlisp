@@ -2693,7 +2693,8 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
           note.waveMac = waveMacName(note.waveSteps);
         }
       }
-      note.pan = target.partOf(d)?.words?.("PAN") && n.pan ? n.pan : null;
+      // (the Mega Drive's DAC has one pan for every voice, fm6's: not a note's)
+      note.pan = target.partOf(d)?.words?.("PAN") && target.partOf(d).name !== "dac" && n.pan ? n.pan : null;
       note.mode = d === dests.noise ? noiseWord(n) : fmNoise && noisy ? `:mode ${n.noiseHz ? "noise" : "tone"}` : null;
       // The FDS's modulation, where the channel has its table (fc's wave1),
       // and the PC Engine's LFO, where the channel is the one it sways
@@ -2836,7 +2837,9 @@ export function vgmToMmlisp(parsed, options, a = analyzeVgm(parsed)) {
     ? chipPcmTracks(parsed, chipKeys, pcmVoices, tickOf, endTick, options.fileName,
       { bankFit: dacMix, mixed: !dacMix && dests.pcm.length > 1,
         beside: !dacMix && dests.pcm.length > 1 && a.channels.some((c) => c.kind === "opm" && (dest[c.key] ?? "drop") !== "drop"),
-        pan: !!target.partOf(dests.pcm[0])?.words?.("PAN"), more: kitAsked ? 1 : 0,
+        // (the Mega Drive's DAC has a pan, fm6's, but one for every voice: a
+        // hit's own is not its)
+        pan: !dacMix && !!target.partOf(dests.pcm[0])?.words?.("PAN"), more: kitAsked ? 1 : 0,
         // A part whose level is the chip's own register (pc88's ADPCM-B, $0B):
         // the hit's level as :vol — not a mix's gain (the DAC's, PCM8's).
         absolute: !!target.partOf(dests.pcm[0])?.level?.steps }) : null;
@@ -3742,9 +3745,10 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
   }
   if (stolen) warnings.push(`PCM: ${plural(stolen, "hit")} cut an earlier sound short — more rang at once than the score's ${plural(voices, "voice")}`);
   if (dropped) warnings.push(`PCM: ${plural(dropped, "hit")} dropped — every voice held a note that is not cut`);
-  // A part with a pan (pc88's ADPCM-B) takes each hit's; the DAC is one channel.
+  // A part with a pan (pc88's ADPCM-B) takes each hit's; the Mega Drive's DAC
+  // has one pan for every voice (fm6's), so not a hit's.
   const panned = pan && hits.some((h) => h.side && h.side !== "center");
-  if (!pan && hits.some((h) => h.pan)) warnings.push(`PCM: pan is not imported — ${bankFit ? "the DAC is one channel" : "the part has one stream"}`);
+  if (!pan && hits.some((h) => h.pan)) warnings.push(`PCM: pan is not imported — ${bankFit ? "the DAC has one pan for every voice" : "the part has one stream"}`);
 
   const tracks = [];
   lanes.forEach((notes, i) => {

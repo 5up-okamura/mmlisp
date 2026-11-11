@@ -407,7 +407,9 @@ const writesOf = (source, addr) => {
     for (const tok of [":pan left", ":pan right", ":mode loop", /:vol \d+/, /\se(?=[\d\s])/, /\sg(?=[\d\s])/])
       assert.match(pcm1, typeof tok === "string" ? new RegExp(tok) : tok, `pc88: ${tok} on pcm1`);
   }
-  imported(parsed, "md");
+  // On md the DAC has one pan for every voice (fm6's): a hit's own is not it.
+  const md = imported(parsed, "md").source;
+  assert.doesNotMatch(md.slice(md.indexOf("(pcm1")), /:pan/, "md: no hit's pan on the DAC");
 }
 
 // The YM2413 (the FM-PAC): an msx score's, its channels on fm1-fm9 by
