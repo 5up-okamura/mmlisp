@@ -2235,16 +2235,13 @@ export class IRPlayer {
     }
     // :vol is every track's fader, one word whatever the track's kind
     // (_volWord): its voice's level written again; :pan every track's pan
-    // that has one (_panWord). (A MIDI channel's are its output's.)
-    // :pitch and :snap every pitched track's (_pitchWord, _snapWord).
+    // that has one (_panWord); :pitch and :snap every pitched track's
+    // (_pitchWord, _snapWord).
+    // (A MIDI channel's :pan and :pitch are its output's.)
     const word = ev.cmd.startsWith("PARAM_") ? String(ev.args?.target ?? "").toUpperCase() : null;
-    const shared = word === "VOL" ? this._volWord(ev)
-      : this._target?.name === "midi" ? null
-      : word === "PAN" ? this._panWord(ev)
-      : word === "NOTE_PITCH" ? this._pitchWord(ev)
-      : word === "SNAP" ? this._snapWord(ev) : undefined;
-    if (shared !== undefined) {
-      this._word(ev, when, shared);
+    const SHARED = { VOL: "_volWord", PAN: "_panWord", NOTE_PITCH: "_pitchWord", SNAP: "_snapWord" };
+    if (SHARED[word] && (word === "VOL" || this._target?.name !== "midi")) {
+      this._word(ev, when, this[SHARED[word]](ev));
       return;
     }
     if (this._dispatchGlobalEvent(ev, when)) return;
@@ -3519,14 +3516,14 @@ export class IRPlayer {
     }
 
     const { ti, gate } = n;
-    let retrigger = null;
-    // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
-    // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
-    if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
-      const reset = (t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
-      reset(when);
-      retrigger = reset;
-    }
+    // A :keyon retrigger restarts the note's envelopes (_envRetrigs: PSG has
+    // no hardware one, that is the whole of it) — and with :lfo-sync, as the
+    // note's key-on does, starts the chip's LFO over (the PC Engine's $09
+    // reset, the FDS's counter).
+    const sync = this._laneLfoSync[psgCh] && !ev.args?.legato;
+    const resetLfo = (t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
+    if (sync) resetLfo(when);
+    const retrigger = (t) => { if (sync) resetLfo(t); };
     // Its macros on the lane's words (_noteMacro).
     const mode = (v, t) => this._psgSetNoiseCfg(this._snapMacroOutput("NOISE_MODE", v), t, psgCh);
     if (rateNote) {
@@ -3578,8 +3575,7 @@ export class IRPlayer {
       this._psgSilence(psgCh, ti, macros, t);
     };
     this._psgKeyedUntil[psgCh] = gate.timed ? gate.end : Infinity;
-    // Its level from its onset (_playNote: a :keyon retrigger restarts
-    // its envelopes — PSG has no hardware one, this is the whole of it).
+    // Its level from its onset (_playNote).
     this._psgRecompose(psgCh, when);
     return { close, retrigger };
   }
