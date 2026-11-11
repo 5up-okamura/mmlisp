@@ -232,8 +232,7 @@ export const wordMethods = {
         read: () => this._psgSnap[psgCh] ?? 0,
         write: (v, t) => {
           this._psgSnap[psgCh] = Math.max(0, Math.min(0xfff, int(v)));
-          if (!this._isNoiseLane(psgCh))
-            this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, this._psgPitchOffset[psgCh] ?? 0, t);
+          if (!this._isNoiseLane(psgCh)) this._ptOffset(`psg:${psgCh}`, null, t);
         },
       };
       // The fader: a keyed lane's level moves with it now (an idle one's
@@ -325,12 +324,8 @@ export const wordMethods = {
       };
       // The lane's offset, on the note sounding then.
       case "NOTE_PITCH": return {
-        read: () => this._psgPitchOffset[psgCh] ?? 0,
-        write: (v, t) => {
-          const cents = Math.round(v);
-          this._psgPitchOffset[psgCh] = cents;
-          this._psgSetPitch(psgCh, this._psgCurrentMidi[psgCh] ?? 60, cents, t);
-        },
+        read: () => this._pt(`psg:${psgCh}`).offset,
+        write: (v, t) => this._ptOffset(`psg:${psgCh}`, Math.round(v), t),
       };
       default: return null;
     }

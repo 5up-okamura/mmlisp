@@ -1,6 +1,7 @@
 // A voice's level (_lv: vel, the fader, a note's :vel / :vol macros, the
-// panel's hand) composed where it is written, and a full gate's key-off or
-// silence left to the track's next event.
+// panel's hand) composed where it is written; its pitch (_pt: the note, its
+// :pitch offset, a note's :pitch / :semi macros); and a track's note — its
+// gate, its close, its :keyon retriggers — one path for every voice.
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
@@ -134,6 +135,87 @@ export const levelMethods = {
     L.vol = Math.max(0, Math.min(31, vol));
     L.liveVol = null;
     return L;
+  },
+
+  // ---- a voice's pitch ----
+  // One model for every pitched voice — an FM channel ("fm:0"), an fm3
+  // operator ("fm3op:1"), a tone lane ("psg:0"), a chip's sample voice
+  // ("voice:adpcm") — as the driver keeps a channel's (driver.md §8, §13):
+  //
+  //   midi     the note sounding
+  //   offset   the voice's sticky :pitch, in cents (a sample track's own,
+  //            `strk:N`, copied onto the voice it plays: _chipPcmHit)
+  //   now      the pitch sounding, { note, cents }: a macro's step, or the
+  //            note's onset; null where a :pitch / :snap write left the plain
+  //            note + offset
+  //   note     the note it is (a macro's step asks whether it still is)
+  //
+  // A :pitch step sounds note + v cents, a :semi step note + v semitones,
+  // each over the offset where additive (`:pitch+`, `:semi+`) and over 0
+  // where not — the later bind winning in a frame — as the driver's
+  // NOTE_PITCH / NOTE_SEMI slots write; only where it is written differs by
+  // kind (_ptWrite).
+  _pt(site) {
+    let P = this._pitches.get(site);
+    if (!P) this._pitches.set(site, (P = { midi: 60, offset: 0, now: null, note: null }));
+    return P;
+  },
+
+  // The pitch sounding: { note, cents }.
+  _ptNow(P) {
+    return P.now ?? { note: P.midi, cents: P.offset };
+  },
+
+  // The pitch written again from what it is.
+  _ptWrite(site, when) {
+    const [kind, at] = site.split(":");
+    const n = Number(at);
+    const { note, cents } = this._ptNow(this._pt(site));
+    if (kind === "fm") this._writeFmNote(n, note, cents, when);
+    else if (kind === "fm3op") this._writeFm3OpPitch(n, note, cents, when);
+    else if (kind === "psg") this._psgSetPitch(n, note, cents, when);
+    else if (kind === "voice") this._chipPcmWrite(at, when);
+  },
+
+  // A note begins on the voice at `midi`, sounding from `cents` (the
+  // driver's onset_pitch: a running :pitch sweep's next value, else the
+  // offset — _onsetPitchOffset).
+  _ptNoteOn(site, midi, cents) {
+    const P = this._pt(site);
+    P.midi = midi;
+    P.now = { note: midi, cents };
+    P.note = {};
+    return P;
+  },
+
+  // A :pitch / :snap write: the offset (where given) and the plain note, now.
+  _ptOffset(site, cents, when) {
+    const P = this._pt(site);
+    if (cents != null) P.offset = cents;
+    P.now = null;
+    this._ptWrite(site, when);
+  },
+
+  // The note's :pitch and :semi macros (`args.pitchMacro`, `args.note_semi`),
+  // in bind order: each step sounds its pitch and — while `live()` — writes
+  // it. A first step on the note moves it at once: what the note sounds
+  // from, which it writes itself once it has (live() false till then).
+  _ptMacros(site, args, when, gateTicks, live = null) {
+    const P = this._pt(site), note = P.note;
+    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
+    const run = (spec, semi) => {
+      if (!spec) return;
+      this._scheduleMacro(spec, noteFrames, gateSecs, when, (v, t) => {
+        if (P.note !== note) return; // the voice's next note took it over
+        const base = spec.add ? P.offset : 0;
+        P.now = semi ? { note: P.midi + v, cents: base } : { note: P.midi, cents: base + v };
+        if (!live || live()) this._ptWrite(site, t);
+      }, this._stepSecs(spec.step));
+    };
+    const keys = Object.keys(args ?? {});
+    const pair = [[args?.pitchMacro, false], [args?.note_semi, true]];
+    if (args?.pitchMacro && args?.note_semi && keys.indexOf("note_semi") < keys.indexOf("pitchMacro")) pair.reverse();
+    for (const [spec, semi] of pair) run(spec, semi);
   },
 
   // ---- a tone lane's level ----

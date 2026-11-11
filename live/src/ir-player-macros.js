@@ -425,19 +425,6 @@ export const macroMethods = {
     return when + Math.max(0, k) / 60;
   },
 
-  // A macro's first sample, on the note itself (`when`), or null: what a
-  // key composes from, as the driver's note-on does (driver.md §7.2).
-  _macroOnset(spec, when, gateTicks, target) {
-    if (!spec) return null;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
-    for (const x of this._macroSteps(spec, noteFrames, gateSecs, when, this._stepSecs(spec.step))) {
-      if (x.wait) return null;
-      if ("k" in x) continue;
-      return x.t <= when + 1e-9 ? clampForTarget(target, this._macroValue(spec, x.v, x.t)) : null;
-    }
-    return null;
-  },
-
   // Schedule PAN and FM operator param macros embedded in NOTE_ON args.
   // Keys: pan → PAN, fm_tl1 → FM_TL1, etc. (snake_case from makeNoteArgs)
   _scheduleFmOpMacros(
@@ -483,69 +470,6 @@ export const macroMethods = {
   // either, the note's level is recomposed from both lines' live values (the
   // driver composes both every frame, §7). An FM3 operator's note writes that
   // operator's TL; a channel's, its carriers.
-  // Schedule a pitch macro for any channel (FM or PSG).
-  // writeFn(centOffset, t) performs the hardware write for the channel.
-  // `offsetGetter`: when the macro is additive (`:pitch+`/`:semi+`), each sample
-  // is composed with the channel's live pitch offset (read fresh so it rides a
-  // running pitch sweep). Override macros (`:pitch`/`:semi`) pass it unchanged.
-  _schedulePitchMacro(
-    pitchMacro,
-    when,
-    gateTicks,
-    writeFn,
-    offsetGetter = null,
-  ) {
-    if (!pitchMacro) return;
-
-    const wf =
-      pitchMacro.add && offsetGetter
-        ? (cents, t) => writeFn(cents + offsetGetter(), t)
-        : writeFn;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      when,
-      gateTicks,
-    );
-    this._scheduleMacro(
-      pitchMacro,
-      noteFrames,
-      gateSecs,
-      when,
-      wf,
-      this._stepSecs(pitchMacro.step),
-    );
-  },
-
-  // Schedule a :semi macro (discrete semitone offsets) on the pitch write path.
-  // Reuses the pitch writeFn; semitone values are ×100 to cents.
-  _scheduleSemiMacro(
-    semiMacro,
-    when,
-    gateTicks,
-    writeFn,
-    offsetGetter = null,
-  ) {
-    if (!semiMacro) return;
-
-    // The semitones stay whole (writeFn's third argument) so the channel's
-    // `:snap` mask sees note + semi, as the driver's write_note_semi does.
-    const wf =
-      semiMacro.add && offsetGetter
-        ? (semi, t) => writeFn(offsetGetter(), t, semi)
-        : (semi, t) => writeFn(0, t, semi);
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(
-      when,
-      gateTicks,
-    );
-    this._scheduleMacro(
-      semiMacro,
-      noteFrames,
-      gateSecs,
-      when,
-      wf,
-      this._stepSecs(semiMacro.step),
-    );
-  },
-
   // The gap a :keyon retrigger keys off before it keys on again, so the
   // chip sees the transition: short, to keep the beat, under the key-off
   // lead (a step's 0.4 at most).

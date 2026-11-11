@@ -299,3 +299,15 @@ Design:
   (`_lvWrite(site, t, key)` → `_pcmLevelStep`, a due retrigger carrying
   it). `_macroOnset` remains only for pitch (stage 5);
   `macroLeadsWithHold` is gone.
+- Done: (5) — every pitched voice's pitch is one model, `_pt(site)`
+  (ir-player-levels.js: midi, offset, now, note), the driver's rule: a
+  :pitch step note + v cents, a :semi step note + v semitones, over the
+  offset where additive, the later bind winning (`_ptMacros`); a :pitch /
+  :snap write the plain note + offset (`_ptOffset`); the onset written
+  once (`_ptNoteOn` + first steps, `_ptWrite`). FM's currentMidi /
+  pitchOffset, the PSG's arrays, the fm3 ops' midi / offset, the chips'
+  `cents` map and hit `mac`, `_schedulePitchMacro` / `_scheduleSemiMacro`,
+  `onsetWritten` and `_macroOnset` are gone; a sample track's :pitch is
+  `_pt("strk:N").offset`, copied onto its voices. m3-macro-multi (:pitch
+  with :semi) now matches the driver (A/B 127 clean). `_resetFm3` is the
+  one fm3 reset.

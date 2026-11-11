@@ -138,8 +138,6 @@ export class IRPlayer {
     // model the worklet runs (src/pcm-voices.js) — so this side only forwards
     // the score's events, in time order.
 
-    this._psgCurrentMidi = new Array(PSG_LANES).fill(60); // last NOTE_ON midi per PSG ch
-    this._psgPitchOffset = new Array(PSG_LANES).fill(0); // cents offset per PSG ch
     this._psgSnap = new Array(PSG_LANES).fill(0); // `:snap` mask per PSG ch
     // A NOTE_PITCH sweep is scheduled whole at dispatch, leaving the pitch
     // offsets above at its END value. A glide sweep is emitted just before its
@@ -147,6 +145,7 @@ export class IRPlayer {
     // FIRST value instead — else its onset write lands on the target pitch for
     // a frame before the slide begins. Keyed "fm:ch" / "psg:ch" / "op:n".
     this._levels = new Map(); // a voice's level, by its site ("fm:0", "fm3op:1", "psg:0" …): _lv
+    this._pitches = new Map(); // a voice's pitch, by its site: _pt
     this._psgKeyedUntil = new Array(PSG_LANES).fill(0); // when the current note keys off
     // Whether each PSG ch is currently sounding a note (att under its off). A PSG channel
     // drones whenever its attenuation is non-silent, regardless of frequency, so
@@ -204,13 +203,7 @@ export class IRPlayer {
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
     // operator of channel 3 via the shared 0x28 key register (see
     // _scheduleFm3OpKey).
-    this._resetFm3Keys();
-    // FM3 independent-OP: each operator's own note, sticky :pitch offset
-    // and level (index = op − 1) — what its F-number and TL are written
-    // from (driver.md §13.4).
-    this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-      midi: 60, offset: 0,
-    }));
+    this._resetFm3();
 
     // Per FM channel: a full-gate note has run up to the next note and left its
     // key-off for that note's dispatch to write (driver: `pendingOff`).
@@ -365,13 +358,7 @@ export class IRPlayer {
     // Initialize all channels with default voices
     this._initDefaultVoices();
 
-    this._resetFm3Keys();
-    // FM3 independent-OP: each operator's own note, sticky :pitch offset
-    // and level (index = op − 1) — what its F-number and TL are written
-    // from (driver.md §13.4).
-    this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-      midi: 60, offset: 0,
-    }));
+    this._resetFm3();
     this._open = [];
 
     // Build per-track scheduler state
@@ -451,6 +438,7 @@ export class IRPlayer {
     this._hands.clear(); // a run starts with the score's own values
     this._handCtl.clear();
     this._levels.clear();
+    this._pitches.clear();
     this._masterHand = null;
     // A sample track's range, loop and pan are its run's: a second run, or
     // the score reloaded, starts from the track's own again.
@@ -470,8 +458,6 @@ export class IRPlayer {
     this._reg27 = 0; // FM3 special / CSM mode
     this._fm3Ops = false;
     this._csmHold = false; // a rate rest stopped Timer A (driver.md §9)
-    this._psgCurrentMidi.fill(60);
-    this._psgPitchOffset.fill(0);
     this._psgSnap.fill(0);
     this._psgNoiseMode = 0b1_00;
     this._psgEnv.fill(-1);
@@ -672,10 +658,7 @@ export class IRPlayer {
       this._scheduledHorizon = 0; // the queue was flushed
       this._frameOrigin = start;
       this._initDefaultVoices();
-      this._resetFm3Keys();
-      this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-        midi: 60, offset: 0,
-      }));
+      this._resetFm3();
       this._open = [];
       this._tracks = this._flattenTracks();
       for (const tr of this._tracks) {
@@ -1538,13 +1521,7 @@ export class IRPlayer {
 
       this._initDefaultVoices(); // preamble register writes (when=undefined → sec 0)
 
-      this._resetFm3Keys();
-      // FM3 independent-OP: each operator's own note, sticky :pitch offset
-      // and level (index = op − 1) — what its F-number and TL are written
-      // from (driver.md §13.4).
-      this._fm3Op = Array.from({ length: FM_OPS }, () => ({
-        midi: 60, offset: 0,
-      }));
+      this._resetFm3();
       this._open = [];
       this._songEndAt = null;
       this._tracks = this._flattenTracks();
@@ -2067,7 +2044,11 @@ export class IRPlayer {
   // (driver.md §13.4). The edges are queued with that order and written once
   // no later dispatch can add to their frame (FM3_TL), so the preview
   // writes the driver's mask sequence.
-  _resetFm3Keys() {
+  // (and each operator's CSM span, csmOn / csmOff, _fm3OpTl; its note and
+  // :pitch are its pitch's, _pt `fm3op:N`, its level its _lv)
+  _resetFm3() {
+    this._fm3Op = Array.from({ length: FM_OPS }, () => ({}));
+    for (let op = 1; op <= FM_OPS; op++) this._pitches?.delete(`fm3op:${op}`);
     this._csmHoldSpans = []; // [start, end) in audio time: the rate track's rests
     this._fm3Mask = 0; // the operator bits $28 holds
     this._fm3KeyLast = -Infinity; // the last $28 write's time
@@ -2301,14 +2282,12 @@ export class IRPlayer {
         const fm3Op = Number(ev.args?.fm3Op);
         const isFm3OpNote =
           ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
-        const centOffset = this._onsetPitchOffset(ev, this._chRegs[ch]?.pitchOffset ?? 0);
         // The note's gate, by the one rule (_noteGate): its macros run as a
         // held note's until it closes, unless its gate is shorter.
         const ti = ev._trackIndex ?? 0;
         const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
         const macroGate = gate.macroGate;
         const regs = this._chRegs[ch];
-        regs.currentMidi = midi;
 
         // Apply per-note velocity (and any vol/master) to carrier TL,
         // attenuating from each operator's voiced TL. Runs on every note so
@@ -2344,59 +2323,20 @@ export class IRPlayer {
           && this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when))
           this._fmWrites(this._fmEnc.noteOn?.(ch, when) ?? [], when);
 
-        // FM3 operator notes had their F-number written by FM3_OP_PITCH.
-        const writesBasePitch = !isFm3OpNote;
-        if (writesBasePitch) {
-          // The note's pitch macros go first: when one's first sample lands
-          // on the note, that is the pitch it sounds from, and the plain one is
-          // never written — as the driver's note-on (onset_pitch) does.
-          let onsetWritten = false;
-          const basePitchWrite = (centOffset, t, semi = 0) => {
-            if (Math.abs(t - when) < 1e-9) onsetWritten = true;
-            this._writeFmNote(ch, midi + semi, centOffset, t);
-          };
-          const fmOffset = () => this._chRegs[ch]?.pitchOffset ?? 0;
-          this._schedulePitchMacro(
-            ev.args?.pitchMacro,
-            when,
-            macroGate,
-            basePitchWrite,
-            fmOffset,
-          );
-          this._scheduleSemiMacro(
-            ev.args?.note_semi,
-            when,
-            macroGate,
-            basePitchWrite,
-            fmOffset,
-          );
-          // Write F-number high first (block + MSB), then low
-          if (!onsetWritten) this._writeFmNote(ch, midi, centOffset, when);
-        } else {
-          // FM3 operator note: FM3_OP_PITCH already wrote this operator's
-          // F-number with its sticky :pitch offset; its pitch / semi macros
-          // write that operator's registers alone (driver.md §13.4).
-          const opState = this._fm3Op[fm3Op - 1];
-          opState.midi = midi;
-          const fm3PitchWrite = (noteCentOffset, t, semi = 0) => {
-            this._writeFm3OpPitch(fm3Op, midi + semi, noteCentOffset, t);
-          };
-          const fm3Offset = () => opState.offset;
-          this._schedulePitchMacro(
-            ev.args?.pitchMacro,
-            when,
-            macroGate,
-            fm3PitchWrite,
-            fm3Offset,
-          );
-          this._scheduleSemiMacro(
-            ev.args?.note_semi,
-            when,
-            macroGate,
-            fm3PitchWrite,
-            fm3Offset,
-          );
-        }
+        // The note's pitch (_pt): it sounds from its onset — a running :pitch
+        // sweep's next value, its :pitch / :semi macros' first samples, the
+        // later bind winning — written once, as the driver's note-on does
+        // (onset_pitch); the plain note is never written first. An fm3
+        // operator's note was written by its FM3_OP_PITCH, and its macros
+        // write that operator's registers alone (driver.md §13.4).
+        const pitchSite = isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`;
+        const P = isFm3OpNote ? this._pt(pitchSite)
+          : this._ptNoteOn(pitchSite, midi, this._onsetPitchOffset(ev, this._pt(pitchSite).offset));
+        const onset = P.now;
+        let pitched = false;
+        this._ptMacros(pitchSite, ev.args, when, macroGate, () => pitched);
+        if (!isFm3OpNote || P.now !== onset) this._ptWrite(pitchSite, when);
+        pitched = true;
         // (its timbre's envelopes, restarted by a :keyon retrigger as its level's are)
         this._envRetrigs = this._retrigsOf(ti);
         this._scheduleFmOpMacros(ch, ev.args ?? {}, when, macroGate);
@@ -2538,11 +2478,9 @@ export class IRPlayer {
       case "FM3_OP_PITCH": {
         const op = Number(ev.args?.op);
         if (!Number.isInteger(op) || op < 1 || op > 4) break;
-        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-        const st = this._fm3Op[op - 1];
-        st.midi = midi;
-        const offset = this._onsetPitchOffset(ev, st.offset);
-        this._writeFm3OpPitch(op, midi, offset, when);
+        const site = `fm3op:${op}`;
+        this._ptNoteOn(site, pitchToMidi(ev.args?.pitch ?? "c4"), this._onsetPitchOffset(ev, this._pt(site).offset));
+        this._ptWrite(site, when);
         break;
       }
     }
@@ -2656,7 +2594,7 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
-    if (fm3Op && t === "NOTE_PITCH") return this._fm3Op[fm3Op - 1].offset;
+    if (fm3Op && t === "NOTE_PITCH") return this._pt(`fm3op:${fm3Op}`).offset;
     // An fm3 operator's :vol is its own (driver.md §13.4).
     if (t === "VOL") return this._lv(fm3Op ? `fm3op:${fm3Op}` : `fm:${ch}`).vol;
     const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
@@ -2674,7 +2612,7 @@ export class IRPlayer {
       // Inline `:pitch+ N` accumulates onto the running cent offset (else it
       // would read 0 and overwrite rather than add).
       case "NOTE_PITCH":
-      case "NOTE_SEMI": return regs.pitchOffset ?? 0;
+      case "NOTE_SEMI": return this._pt(`fm:${ch}`).offset;
       default: return 0;
     }
   }
@@ -2992,17 +2930,9 @@ export class IRPlayer {
       case "NOTE_PITCH": {
         // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
         // F-number alone (driver.md §13.4).
-        const op = this._fm3OpOf(ev);
-        const cents = Math.round(value);
-        if (op) {
-          const st = this._fm3Op[op - 1];
-          st.offset = cents;
-          this._writeFm3OpPitch(op, st.midi, cents, when);
-          break;
-        }
         // Cent offset applied to the current note on this FM channel (100 cents = 1 semitone).
-        regs.pitchOffset = cents;
-        this._writeFmNote(ch, regs.currentMidi ?? 60, cents, when);
+        const op = this._fm3OpOf(ev);
+        this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, Math.round(value), when);
         break;
       }
       case "SNAP": {
@@ -3011,12 +2941,7 @@ export class IRPlayer {
         // an fm3-N track it is CH3's mask, and that operator's note moves.
         regs.snap = Math.max(0, Math.min(0xfff, Math.round(value)));
         const op = this._fm3OpOf(ev);
-        if (op) {
-          const st = this._fm3Op[op - 1];
-          this._writeFm3OpPitch(op, st.midi ?? 60, st.offset ?? 0, when);
-        } else {
-          this._writeFmNote(ch, regs.currentMidi ?? 60, regs.pitchOffset ?? 0, when);
-        }
+        this._ptOffset(op ? `fm3op:${op}` : `fm:${ch}`, null, when);
         break;
       }
 
@@ -3634,32 +3559,13 @@ export class IRPlayer {
           this._envRetrigs = null;
         }
         if (!isNoise) {
-          const midi = pitchToMidi(ev.args?.pitch ?? "c4");
-          this._psgCurrentMidi[psgCh] = midi;
-          const psgCentOffset = this._onsetPitchOffset(ev, this._psgPitchOffset[psgCh] ?? 0);
-          // Pitch macros first, as on FM: a first sample on the note is the
-          // pitch it sounds from (the driver's onset_pitch).
-          let onsetWritten = false;
-          const psgPitchWrite = (centOffset, t, semi = 0) => {
-            if (Math.abs(t - when) < 1e-9) onsetWritten = true;
-            this._psgSetPitch(psgCh, midi + semi, centOffset, t);
-          };
-          const psgOffset = () => this._psgPitchOffset[psgCh] ?? 0;
-          this._schedulePitchMacro(
-            ev.args?.pitchMacro,
-            when,
-            psgMacroGate,
-            psgPitchWrite,
-            psgOffset,
-          );
-          this._scheduleSemiMacro(
-            ev.args?.note_semi,
-            when,
-            psgMacroGate,
-            psgPitchWrite,
-            psgOffset,
-          );
-          if (!onsetWritten) this._psgSetPitch(psgCh, midi, psgCentOffset, when);
+          // Its pitch as on FM (_pt): from its onset, written once.
+          const site = `psg:${psgCh}`;
+          this._ptNoteOn(site, pitchToMidi(ev.args?.pitch ?? "c4"), this._onsetPitchOffset(ev, this._pt(site).offset));
+          let pitched = false;
+          this._ptMacros(site, ev.args, when, psgMacroGate, () => pitched);
+          this._ptWrite(site, when);
+          pitched = true;
         } else {
           this._psgTriggerNoise(when, psgCh);
           this._envRetrigs = this._retrigsOf(ti);

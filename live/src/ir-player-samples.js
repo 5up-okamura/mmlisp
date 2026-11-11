@@ -5,7 +5,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, pitchToMidi, levelOffset, levelSteps, levelGain, VOL_UNITY, KEY_ORDER_EPS_SECS } from "./ir-utils.js";
+import { pitchToMidi, levelOffset, levelSteps, levelGain, VOL_UNITY, KEY_ORDER_EPS_SECS } from "./ir-utils.js";
 import { curveId, curveUnit8, sweepValue, sweepStep } from "./mmb.js";
 import { engineImage } from "./engine-images.js";
 import { ROM_SOUND_SEC } from "./chips/rhythm-rom.js";
@@ -138,7 +138,6 @@ export const sampleMethods = {
   // a :vol 0) is dumped instead.
   _chipPcmState() {
     return (this._chipPcm ??= {
-      cents: new Map(), // track → its :pitch, in cents (its :vol is _lv(`strk:…`)'s)
       owner: new Map(), // voice ("adpcm", a rhythm sound, "pcm8-0", "dda-0" …) → the hit sounding on it
       lane: new Map(), // a kit's channel → the hit that last keyed it (a pair's tune, _chipPcmWrite)
       frames: false, // a DDA frame is waiting (_chipPcmFrame)
@@ -156,9 +155,13 @@ export const sampleMethods = {
       read: () => this._lv(`strk:${ti}`).vol,
       write: (v, t) => { this._lvSetVol(`strk:${ti}`, v); moved(t); },
     };
+    // (the track's :pitch, onto the voices it sounds on: _pt)
     if (target === "NOTE_PITCH" && own.pitch) return {
-      read: () => st.cents.get(ti) ?? 0,
-      write: (v, t) => { st.cents.set(ti, v); moved(t); },
+      read: () => this._pt(`strk:${ti}`).offset,
+      write: (v, t) => {
+        this._pt(`strk:${ti}`).offset = v;
+        for (const [voice, h] of st.owner) if (h.ti === ti) this._ptOffset(`voice:${voice}`, v, t);
+      },
     };
     return own[target] ?? null;
   },
@@ -173,46 +176,33 @@ export const sampleMethods = {
   // another track's holds it).
   _chipPcmHit(voice, ev, when, end, fields, key, release = null) {
     const st = this._chipPcmState();
-    const { pitchMacro, note_semi: semiMacro } = ev.args ?? {};
     const gateTicks = (this._gateOf(ev._trackIndex) ?? this._noteGate(ev, when)).macroGate;
-    const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, gateTicks);
     const mode = ev.args?.mode ?? "shot", held = mode === "gate" || mode === "loop";
     const ti = ev._trackIndex;
     if (release) this._sampleCloses(ev, (t, how) => release(t, this._chipPcmOwnHit(voice, ev._trackIndex), how));
     const retrigs = this._retrigsOf(ti);
-    // The note's level is its voice's (_lv at `voice:…`, _sampleLevel); its
-    // pitch macros as they are now, shared by its retriggers' hits.
+    // The note's level and pitch are its voice's (_lv and _pt at `voice:…`,
+    // _sampleLevel, _hitCents), shared by its retriggers' hits: its pitch
+    // over its track's :pitch (`strk:N`), from its onset as an FM or tone
+    // note's — a running :pitch sweep's next value, its macros' first steps.
     const site = `voice:${voice}`;
     const L = this._lvNoteOn(site, Number(ev.args?.vel ?? 15)), note = L.note;
-    const macros = [[pitchMacro, "cents", "NOTE_PITCH"], [semiMacro, "semi", "NOTE_SEMI"]];
-    const onset = {};
-    for (const [spec, k, target] of macros) onset[k] = this._macroOnset(spec, when, gateTicks, target);
-    const mac = { ...onset };
-    // A note under a running :pitch sweep sounds from the sweep's value on
-    // its frame, as an FM or tone note does (_onsetPitchOffset).
-    const sw = this._slots.get(this._slotKey(ev, "NOTE_PITCH"));
-    if (sw) st.cents.set(ev._trackIndex, this._sweepAt(sw, sw.next));
-    const hit = { t: when, end, voice, ti: ev._trackIndex, mac, ...fields };
-    // A tuned hit's (the OPLL rhythm's) pitch runs its note's whole length:
-    // the channel keeps moving through the sound's release.
-    const slot = fields.tune ? this._resolveNoteFramesAndGate(when, ev.args?.length ?? gateTicks) : null;
+    const P = this._pt(site);
+    P.offset = this._pt(`strk:${ti}`).offset;
+    this._ptNoteOn(site, fields.midi ?? 60, this._onsetPitchOffset(ev, P.offset));
+    const hit = { t: when, end, voice, ti: ev._trackIndex, note, ...fields };
     this._envRetrigs = retrigs;
     let keyed = false; // (its first steps are what its key composes from)
     this._lvMacros(site, ev.args ?? {}, when, gateTicks, () => keyed);
-    for (const [spec, k, target] of macros) {
-      if (!spec) continue;
-      const span = slot ?? { noteFrames, gateSecs };
-      this._scheduleMacro(spec, span.noteFrames, span.gateSecs, when, (v, t) => {
-        mac[k] = clampForTarget(target, v);
-        if (st.owner.get(voice)?.mac === mac) this._chipPcmWrite(voice, t);
-      }, this._stepSecs(spec.step));
-    }
     this._envRetrigs = null;
+    // (a tuned hit's pitch runs its note's whole length: the channel keeps
+    // moving through the sound's release)
+    this._ptMacros(site, ev.args, when, fields.tune ? ev.args?.length ?? gateTicks : gateTicks, () => keyed);
     const keyHit = (h) => {
       // The track's own sound on the channel ends at its next note (not at a
       // retrigger of the same note, which plays over it).
       const prev = st.owner.get(voice);
-      if (prev?.dda != null && prev.ti === h.ti && prev.mac !== h.mac && !prev.dumped && prev.end > h.t) {
+      if (prev?.dda != null && prev.ti === h.ti && prev.note !== h.note && !prev.dumped && prev.end > h.t) {
         prev.end = h.t;
         this._ddaFrame(prev, h.t);
       }
@@ -266,10 +256,10 @@ export const sampleMethods = {
     return this._sampleLevel(`voice:${hit.voice}`, hit.ti);
   },
 
-  // A hit's pitch move now, in cents: the track's :pitch and the note's
-  // :pitch / :semi macros.
+  // A hit's pitch move now, in cents: its voice's pitch (_pt) over its note.
   _hitCents(hit) {
-    return (this._chipPcm.cents.get(hit.ti) ?? 0) + (hit.mac.cents ?? 0) + 100 * (hit.mac.semi ?? 0);
+    const { note, cents } = this._ptNow(this._pt(`voice:${hit.voice}`));
+    return 100 * (note - hit.midi) + cents;
   },
 
   // The ADPCM-B's Delta-N for a hit now: its note and its pitch move over
