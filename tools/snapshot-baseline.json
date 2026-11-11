@@ -1311,6 +1311,22 @@
   "vgm": "93ff1fea59ac5810",
   "mid": "7c1fa1e18658af05"
  },
+ "drv/tests/m4-lfo-from-now.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "0850ea60e37d83ac",
+  "regs": "2121039d17d1b2b5",
+  "mmb": "e7f581fb3bc87c8e",
+  "vgm": "f1296fc8c91af5b4",
+  "mid": "d9ec6eee8bd3cf72"
+ },
+ "drv/tests/m4-lfo-from-now.mmlisp @pal": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "b0eeb9473b3fa5a9",
+  "regs": "2121039d17d1b2b5",
+  "mmb": "a51e642ee09d7475",
+  "vgm": "f1296fc8c91af5b4",
+  "mid": "d9ec6eee8bd3cf72"
+ },
  "drv/tests/m4-loop-break-state.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "fbcc4774d7de04f7",

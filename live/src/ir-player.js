@@ -20,7 +20,7 @@ import { toneLaneOf, targetProfile, notYet } from "./targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "./mmb.js";
 import { PCM8_VOICES } from "./chips/msm6258.js";
 import { FM_OPS, fmInitVoice, fmOpWord } from "./chips/fm-words.js";
-import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
+import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
 import { workMethods } from "./ir-player-work.js";
 import { panelMethods } from "./ir-player-panel.js";
 import { keyMethods } from "./ir-player-keys.js";
@@ -168,6 +168,7 @@ export class IRPlayer {
     // follows (`:env-rate note`), or null.
     this._psgEnv = new Array(PSG_LANES).fill(-1);
     this._envFollow = null;
+    this._envRate = 0; // the song's envelope rate (ENV_RATE; 0: following a lane's notes)
     // Each lane's moves on the period it gives (:env-semi semitones,
     // :env-detune steps), and the pitch it last wrote, which a following
     // envelope's period is rewritten from when they change.
@@ -461,6 +462,7 @@ export class IRPlayer {
     this._psgNoiseMode = 0b1_00;
     this._psgEnv.fill(-1);
     this._envFollow = null;
+    this._envRate = 0;
     this._envSemi.fill(0);
     this._envDetune.fill(0);
     this._psgHz.fill(0);
@@ -2155,7 +2157,7 @@ export class IRPlayer {
   // track's :vol (a value, a sweep, `+` `*` `$slot`), and a note's :vol
   // macro, which takes the fader's place until the next note (the output's
   // plan does the same, export-midi.js); the song's :master is every
-  // machine's (_masterEvent).
+  // machine's (_songWord).
   _midiLevel(ev, when) {
     const ti = ev._trackIndex;
     if (ti == null) return;
@@ -2201,11 +2203,16 @@ export class IRPlayer {
     // the panel shows of its levels is the score's, kept here (the output
     // reads the panel's hand beside it: read's `score`).
     if (this._target?.name === "midi") this._midiLevel(ev, when);
-    // MASTER is the song's, written on any track: one handler, whatever the
-    // track's kind.
-    if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "MASTER") {
-      this._masterEvent(ev, when);
-      return;
+    // A song-wide word is the song's, written on any track: one table,
+    // whatever the track's kind (_songWord) — MASTER, a value slot, the
+    // SSG's noise period and envelope rate, a wave chip's own LFO words.
+    // The language's LFO is the song's too (language.md §1): on a machine
+    // whose LFO is the FM's, a PSG or PCM track's write goes where an FM
+    // track's does, as the driver takes it from any track (below).
+    if (ev.cmd.startsWith("PARAM_")) {
+      const target = String(ev.args?.target ?? "").toUpperCase();
+      const song = isSongWord(target) ? this._songWord(ev, target) : null;
+      if (song || /^VAL\d+$/.test(target)) return void this._word(ev, when, song);
     }
     // :vol is every track's fader, one word whatever the track's kind
     // (_volWord): its voice's level written again; :pan every track's pan
@@ -2221,30 +2228,10 @@ export class IRPlayer {
     if (this._dispatchGlobalEvent(ev, when)) return;
     if (ev.cmd === "PCM_NOTE_ON" && this._onPosition && ev.args?.sample && this._isTrackAudible(ev._trackIndex))
       this._reportSample(ev, when);
-    // The chip's LFO is the song's, written on any track (language.md §1):
-    // a PSG or PCM track's write goes where an FM track's does, as the
-    // driver takes it from any track.
     const core = ev._route.core;
-    // A wave chip with an LFO of its own (the PC Engine's, the FDS's
-    // modulation) takes the song's LFO words it has: a value, or a sweep a
-    // frame at a time; the FDS's table whole. Through its lane, so an
-    // optional chip (the FDS) is started before its first write.
-    // `+`, `*` and a `$value` (PARAM_ADD / _MUL / _FROM_VAL) are a value
-    // read off the word as last written.
-    const waveLfo = /^PARAM_/.test(ev.cmd) ? this._waveLfoRoute(ev.args?.target) : null;
-    if (waveLfo) {
-      const { word: lfoWord, write } = waveLfo;
-      const cur = this._waveLfo[lfoWord] ?? 0;
-      const a = ev.args ?? {};
-      if (lfoWord === "lfoTable") { if (ev.cmd === "PARAM_SET") write(a.table ?? [], when); }
-      else this._word(ev, when, {
-        read: () => this._waveLfo[lfoWord] ?? 0,
-        write: (v, t) => write((this._waveLfo[lfoWord] = Math.round(v)), t),
-        sweep: () => this._sweepUnits(ev, when, cur, (v, t) => {
-          // A sweep's step is a score write of the word at its own time.
-          if (this._scoreWrites(String(ev.args.target).toUpperCase())) write((this._waveLfo[lfoWord] = v), t);
-        }),
-      });
+    // A wave chip's LFO table (LFO_WAVE) is written whole.
+    if (ev.cmd === "PARAM_SET" && this._waveLfoRoute(ev.args?.target)?.word === "lfoTable") {
+      this._waveLfoRoute(ev.args.target).write(ev.args.table ?? [], when);
       return;
     }
     if (core === "none") return; // a MIDI channel's: its sound is the MIDI output's
@@ -2365,47 +2352,6 @@ export class IRPlayer {
         return true;
       }
 
-      case "PARAM_SET":
-      case "PARAM_ADD":
-      case "PARAM_MUL":
-      case "PARAM_FROM_VAL":
-      case "PARAM_SWEEP":
-      case "PARAM_SWEEP_STOP": {
-        if (ev.args?.target === "NOISE_RATE") {
-          const write = (v, t) => this._psgWrites(this._psg((c) => c.noiseRate(v), "noiseRate"), t);
-          this._word(ev, when, {
-            read: () => this._noiseRateBase ?? 9,
-            write: (v, t) => write((this._noiseRateBase = v), t),
-            sweep: () => this._sweepUnits(ev, when, 9, write),
-          });
-          return true;
-        }
-        if (ev.args?.target === "ENV_RATE") {
-          // 0 follows the writing track's notes (a tone lane's), from its
-          // next; a rate is a cycle of the writing track's shape as it is now.
-          const lane = this._toneEnc[ev._psgCh]?.part?.songWords?.("ENV_RATE") ? ev._psgCh : null;
-          // The writing lane's shape and moves, as they are now.
-          const by = lane != null ? { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] } : {};
-          this._word(ev, when, {
-            read: () => this._envRate ?? 0,
-            write: (v, t) => {
-              this._envRate = v;
-              this._envFollow = v ? null : this._toneEnc[lane]?.part?.kind !== "noise" ? lane : null;
-              if (v) this._writeEnvPeriod(v, by, t);
-            },
-            sweep: () => {
-              this._envFollow = null;
-              this._sweepUnits(ev, when, 0, (v, t) => this._writeEnvPeriod((this._envRate = v), by, t), 64);
-            },
-          });
-          return true;
-        }
-        const m = /^VAL(\d+)$/.exec(ev.args?.target ?? "");
-        if (!m) return false;
-        this._writeVal(ev, this._valNames[Number(m[1])], when);
-        return true;
-      }
-
       // A rest closes the track's open note (_closeNote); so does the end
       // of a track that does not loop.
       case "REST":
@@ -2451,6 +2397,12 @@ export class IRPlayer {
       case "FM_ALG": return regs.algorithm ?? 0;
       case "FM_AMS": return regs.ams ?? 0;
       case "FM_FMS": return regs.fms ?? 0;
+      // The song's LFO, as last written (the OPM's own words its reading).
+      case "LFO_RATE": return this._lfoRate ?? 0;
+      case "LFO_FREQ": return this._opmLfo.freq ?? 0;
+      case "LFO_PMD": return this._opmLfo.pmd ?? 0;
+      case "LFO_AMD": return this._opmLfo.amd ?? 0;
+      case "LFO_WAVE": return this._opmLfo.wave ?? 0;
       default: return 0;
     }
   }

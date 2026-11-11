@@ -99,22 +99,71 @@ export const wordMethods = {
     this._vals[name] = v;
   },
 
-  // The score writing a value slot (`:name …`, language.md §8): a song-wide
-  // word, so it is handled here whichever track carries it — a word as any
-  // other (_word): a value, `+` `*` `$slot`, a sweep in the slot's own sweep
-  // slot (song-wide, stepped after a frame's macros, as the driver's global
-  // sweeps are), a stop. The slot is its value now: an event of a frame
-  // reads what the frame before left, a sweep's step writes it.
-  _writeVal(ev, name, when) {
-    if (name == null) return;
-    // A slot in the panel's hand: skipped while held, taken back once let go.
-    if (!this._scoreWrites(`val:${name}`)) return;
-    const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
-    this._word(ev, when, {
-      read: () => this._vals[name] ?? 0,
-      // (a sweep's step is a score write at its own time: the panel's hand first)
-      write: (v) => { if (this._scoreWrites(`val:${name}`)) this._vals[name] = i16(v); },
-    });
+  // ---- the song's words ----
+  // A song-wide word (isSongWord), written on any track: where it is read
+  // and how it is written, one table as a voice's words are — MASTER, a
+  // value slot, the SSG's noise period and envelope rate, a wave chip's own
+  // LFO words. A sweep without a :from starts at the word's value now and
+  // each step writes the value (a `+` / `*` after it reads where it left
+  // it). null where the machine has no such word (the FM's LFO words are an
+  // FM channel's, _applyParam).
+  _songWord(ev, target) {
+    // A sweep's step is a score write at its own time: the panel's hand first.
+    const gated = (id, write) => (v, t) => { if (this._scoreWrites(id)) write(v, t); };
+    if (target === "MASTER") return {
+      read: () => this._masterVol ?? VOL_UNITY,
+      write: (v, t) => this._applyMasterChange(v, t),
+    };
+    const val = /^VAL(\d+)$/.exec(target);
+    if (val) {
+      // A value slot (`:name …`, language.md §8): the slot is its value now,
+      // an i16; one in the panel's hand is skipped while held.
+      const name = this._valNames?.[Number(val[1])];
+      if (name == null || !this._scoreWrites(`val:${name}`)) return null;
+      const i16 = (v) => Math.max(-32768, Math.min(32767, Math.round(v)));
+      return {
+        read: () => this._vals[name] ?? 0,
+        write: gated(`val:${name}`, (v) => { this._vals[name] = i16(v); }),
+      };
+    }
+    if (target === "NOISE_RATE") {
+      const read = () => this._noiseRateBase ?? 9;
+      const write = (v, t) => {
+        this._noiseRateBase = v;
+        this._psgWrites(this._psg((c) => c.noiseRate(v), "noiseRate"), t);
+      };
+      return { read, write, sweep: (e, when) => this._sweepUnits(e, when, read(), write) };
+    }
+    if (target === "ENV_RATE") {
+      // 0 follows the writing track's notes (a tone lane's), from its next;
+      // a rate is a cycle of the writing track's shape as it is now.
+      const lane = this._toneEnc[ev._psgCh]?.part?.songWords?.("ENV_RATE") ? ev._psgCh : null;
+      const by = lane != null ? { shape: this._psgEnv[lane], semi: this._envSemi[lane], detune: this._envDetune[lane] } : {};
+      const read = () => this._envRate ?? 0;
+      return {
+        read,
+        write: (v, t) => {
+          this._envRate = v;
+          this._envFollow = v ? null : this._toneEnc[lane]?.part?.kind !== "noise" ? lane : null;
+          if (v) this._writeEnvPeriod(v, by, t);
+        },
+        sweep: (e, when) => {
+          this._envFollow = null;
+          this._sweepUnits(e, when, read(), (v, t) => this._writeEnvPeriod((this._envRate = v), by, t), 64);
+        },
+      };
+    }
+    // A wave chip with an LFO of its own (the PC Engine's, the FDS's
+    // modulation) takes the song's LFO words it has, through its lane, so an
+    // optional chip (the FDS) is started before its first write. (Its table,
+    // LFO_WAVE, is written whole: _dispatchEvent.)
+    const lfo = this._waveLfoRoute(target);
+    if (lfo && lfo.word !== "lfoTable") {
+      const read = () => this._waveLfo[lfo.word] ?? 0;
+      const write = (v, t) => lfo.write((this._waveLfo[lfo.word] = Math.round(v)), t);
+      return { read, write, sweep: (e, when) => this._sweepUnits(e, when, read(), gated(target, write)) };
+    }
+    return null;
   },
 
   getVal(name) {
@@ -382,16 +431,6 @@ export const wordMethods = {
       };
       default: return null;
     }
-  },
-
-  // A score write of MASTER on any track: a value, a `$slot`, `+` / `*` from
-  // the master now, a sweep (from the master now unless it names a :from),
-  // a stop (its slot freed, the master stays where the sweep left it).
-  _masterEvent(ev, when) {
-    this._word(ev, when, {
-      read: () => this._masterVol ?? VOL_UNITY,
-      write: (v, t) => this._applyMasterChange(v, t),
-    });
   },
 
   // A sweep holds a slot, as the driver's do (driver.md §4 step 3): a

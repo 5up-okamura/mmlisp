@@ -1042,6 +1042,7 @@ static int read_slot(const MMLSeq *s, uint8_t slot) {
  * already keeps, so a relative write has a real base instead of a silent 0. */
 static int read_param(const MMLSeq *s, int ch, int target) {
   if (target == T_MASTER) return s->master;
+  if (target == T_LFO_RATE) return s->lfo_rate;
   if (T_IS_VAL(target)) return s->val[target - T_VAL0];
   {
     int op = fm3_op_for(s, ch);

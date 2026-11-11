@@ -491,6 +491,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "m4-lfo-from-now.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "m4-loop-break-state.mmlisp": {
     "ok": true,
     "mismatches": 0,

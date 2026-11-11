@@ -1,0 +1,5 @@
+; The song's LFO rate read where it is now: a sweep with no :from starts at
+; the rate last written, a `+` and a `*` move it from where the sweep left
+; it (language.md §11) — the driver's read_param has the rate, as it has
+; :master.
+(fm1 :fms 7 :lfo-rate 2 :len 4 c :lfo-rate (linear :to 7 :len 1/2) c c :lfo-rate+ -3 c :lfo-rate* 0.5 c c)

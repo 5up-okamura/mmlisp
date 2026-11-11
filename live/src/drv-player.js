@@ -3008,6 +3008,7 @@ export class DrvPlayer {
   // Logical current value of a target, for PARAM_ADD read-modify-write.
   _readParam(ch, target) {
     if (target === TARGET_ID.MASTER) return this._master;
+    if (target === TARGET_ID.LFO_RATE) return this._lfoRate ?? 0;
     if (VAL_TARGET_IDS.has(target)) return this._valSlots[target - TARGET_ID.VAL0];
     {
       const op = this._fm3OpFor(ch);
