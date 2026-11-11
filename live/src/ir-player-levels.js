@@ -8,7 +8,117 @@
 import { clampForTarget, pitchToMidi, VOL_UNITY } from "./ir-utils.js";
 import { KEYON, MACRO } from "./ir-player-shared.js";
 
+// ---- a voice's kind ----
+// Every voice's site names its kind ("fm:0", "fm3op:1", "psg:2",
+// "voice:adpcm", "strk:4", "pcm:0", "mtrk:3"); what its level, pitch, pan
+// and silence are on its chip is its kind's, here, one entry a kind — a
+// kind's whole surface in one place (IRPlayer._onVoice). Each takes the
+// player, the site's number and its name (`at`), and its own arguments.
+//   level(when, why)    the level written again (_lvWrite: why "liveVel" /
+//                       "liveVol" a macro's step, "fader", "hand")
+//   pitch(when, now)    the pitch sounding written ({ note, cents }, _ptWrite)
+//   pan / setPan(v, t)  its pan -1..1 read and written (_panOf, _setPan)
+//   silence(when)       silenced (_silence: a mute, a muted track's note)
+//   fader(strip)        where a strip on it reads the score's fader (_volOf),
+//                       its own site when absent
+const step = (why) => why === "liveVel" || why === "liveVol";
+const chipWrite = (p, when) => (writes) => { for (const [port, a, d] of writes) p._write(port, a, d, when); };
+export const VOICE_KINDS = {
+  // An FM channel: its carriers' TL; its F-number; its $B4; its key off
+  // (under CSM Timer A keys CH3: none). Channel 3 in its special mode is its
+  // operators' (fm3op).
+  fm: {
+    level: (p, n, at, when) => (n === 2 && p._fm3Ops ? p._recomposeFm3Ops(when) : p._writeFmLevel(n, when)),
+    pitch: (p, n, at, when, { note, cents }) => p._writeFmNote(n, note, cents, when),
+    pan: (p, n) => p._chRegs[n]?.pan ?? 0,
+    setPan: (p, n, at, pan, when) => { p._chRegs[n].pan = pan; p._fmWrites(p._fmEnc.pan(n, p._chRegs[n]), when); },
+    silence: (p, n, at, when) => { if (!p._csmKeysCh3(n)) p._fmKey(n, 0, when); },
+  },
+  // An fm3 operator (driver.md §13.4): its own TL (the panel's hand only in
+  // the special mode); its own F-number; its key off, its key-ons waiting
+  // dropped — under CSM its level (TL 127 until its next note).
+  fm3op: {
+    level: (p, n, at, when, why) => { if (why !== "hand" || p._fm3Ops) p._writeFm3OpTl(n, when); },
+    pitch: (p, n, at, when, { note, cents }) => p._writeFm3OpPitch(n, note, cents, when),
+    silence: (p, n, at, when) => {
+      const bit = 0x10 << (n - 1);
+      if (p._reg27 & 0x80) p._fm3CsmRelease(bit, when);
+      else if (p._fm3Mask & bit) p._fm3KeysOff(bit, when);
+    },
+  },
+  // A tone lane: its attenuation — a fader or the panel moves a keyed lane's
+  // only (an idle one's would drone a tone; its next note composes from it;
+  // the panel's, while a run plays, where the sent writes end: a run knows a
+  // lane keyed at its cursor, not at the chip's now; stopped, the keys'
+  // lane is live); its period; its own pan (the PC Engine's $05, the Game
+  // Boy's NR51); its attenuation off, the lane no longer keyed.
+  psg: {
+    level: (p, n, at, when, why) => {
+      if (why === "hand" && p._playing && !p._lv(`psg:${at}`).key && !(when != null && when >= p._writeCursor - 1e-9)) return;
+      if (!step(why) && !p._psgKeyed(n, when)) return;
+      p._psgRecompose(n, when);
+    },
+    pitch: (p, n, at, when, { note, cents }) => p._psgSetPitch(n, note, cents, when),
+    pan: (p, n) => p._psgPan[n] ?? 0,
+    setPan: (p, n, at, pan, when) => { p._psgPan[n] = pan; p._psgWrites(p._lane(n, (e, ch) => e.pan?.(ch, pan, when) ?? []), when); },
+    silence: (p, n, at, when) => {
+      p._psgKeyedUntil[n] = Math.min(p._psgKeyedUntil[n], when);
+      p._psgSetAtt(n, p._psgOff(n), when);
+    },
+  },
+  // A chip's sample voice (`at` its name: "adpcm", a rhythm sound, "pcm8-0",
+  // "dda-0", "dpcm"): its sounding hit's level and pitch (_chipPcmWrite); a
+  // rhythm sound dumped, the ADPCM-B stopped, a PCM8 voice cut from the mix,
+  // a DDA channel off and fed no more frames, the DMC stopped.
+  voice: {
+    level: (p, n, at, when, why) => p._chipPcmWrite(at, when ?? p._audioContext?.currentTime ?? 0, why === "hand"),
+    fader: (p, n, at, strip) => `strk:${strip.tracks[0]}`, // its track's
+    pitch: (p, n, at, when) => p._chipPcmWrite(at, when),
+    silence: (p, n, at, when) => {
+      const write = chipWrite(p, when);
+      if (at === "dpcm") return void write(p._target?.chipFor?.("fc-dpcm")?.dmc?.stop() ?? []);
+      const h = p._chipPcm?.owner.get(at);
+      if (!h) return;
+      if (h.pcm8 != null) return void p._pcm8Ev(when, { kind: "cut", voice: h.pcm8 });
+      if (h.dda != null) {
+        h.dumped = true;
+        return void write(p._ddaEncoder()?.off(h.dda) ?? []);
+      }
+      if (at === "adpcm") write(p._target.chipFor("adpcm-b").adpcm.stop());
+      else if (p._rhythmEnc) write(p._rhythmEnc.dump(at, when)); // (a sample voice this player cannot dump: none)
+    },
+  },
+  // A sample track (its number): its fader, which the hits it sounds on the
+  // chips' voices follow; its pan, which its hits key on with.
+  strk: {
+    level: (p, n, at, when) => { for (const [voice, h] of p._chipPcm?.owner ?? []) if (h.ti === n) p._chipPcmWrite(voice, when); },
+    pan: (p, n) => p._trackPans?.get(n) ?? 0,
+    setPan: (p, n, at, pan) => (p._trackPans ??= new Map()).set(n, pan),
+  },
+  // A Mega Drive PCM voice: the driver's voice model composes its level and
+  // takes each term itself; the DAC mix has no key — it is released.
+  pcm: {
+    level: (p, n, at, when, why) => {
+      if (step(why)) p._pcmLevelStep(n, why === "liveVel" ? "vel" : "vol", p._lv(`pcm:${at}`)[why], when);
+      else p._pcmEv(when ?? 0, { kind: "vol", voice: n, value: p._lv(`pcm:${at}`).vol });
+    },
+    silence: (p, n, at, when) => p._pcmEv(when, { kind: "off", voice: n }),
+  },
+  // A MIDI channel: its sound is the output's, which plays the plan; the
+  // level here is the panel's reading — the strip's hand is the output's
+  // ("midi:<channel>", midi-output.js reads it), its score the channel's.
+  mtrk: {},
+  midi: { fader: (p, n, at, strip) => `mtrk:${strip.tracks[0]}` },
+};
+
 export const levelMethods = {
+  // `op` of the voice at `site` (VOICE_KINDS), with its arguments.
+  _onVoice(site, op, ...args) {
+    const i = site.indexOf(":");
+    const at = site.slice(i + 1);
+    return VOICE_KINDS[site.slice(0, i)]?.[op]?.(this, Number(at), at, ...args);
+  },
+
   // ---- a voice's level ----
   // One model for every voice whose level the player composes — an FM
   // channel ("fm:0"), an fm3 operator ("fm3op:1"), a tone lane ("psg:0") —
@@ -61,28 +171,7 @@ export const levelMethods = {
   //   pcm        a Mega Drive PCM voice: its model takes the term itself
   //   mtrk       a MIDI channel's: the output's plan plays it
   _lvWrite(site, when, why = "fader") {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    const step = why === "liveVel" || why === "liveVol";
-    if (kind === "fm") {
-      if (n === 2 && this._fm3Ops) this._recomposeFm3Ops(when);
-      else this._writeFmLevel(n, when);
-    } else if (kind === "fm3op") {
-      if (why !== "hand" || this._fm3Ops) this._writeFm3OpTl(n, when);
-    } else if (kind === "psg") {
-      // (the panel's move, while a run plays: a run knows a lane keyed at its
-      // cursor, not at the chip's now — its level moves where the sent writes
-      // end; stopped, the keys' lane is live)
-      if (why === "hand" && this._playing && !this._lv(site).key && !(when != null && when >= this._writeCursor - 1e-9)) return;
-      if (!step && !this._psgKeyed(n, when)) return;
-      this._psgRecompose(n, when);
-    } else if (kind === "voice") this._chipPcmWrite(at, when ?? this._audioContext?.currentTime ?? 0, why === "hand");
-    else if (kind === "strk") {
-      for (const [voice, h] of this._chipPcm?.owner ?? []) if (h.ti === n) this._chipPcmWrite(voice, when);
-    } else if (kind === "pcm") {
-      if (step) this._pcmLevelStep(n, why === "liveVel" ? "vel" : "vol", this._lv(site)[why], when);
-      else this._pcmEv(when ?? 0, { kind: "vol", voice: n, value: this._lv(site).vol });
-    }
+    this._onVoice(site, "level", when, why);
   },
 
   // The fader's site an event's track writes (:vol): its voice's level, a
@@ -224,13 +313,7 @@ export const levelMethods = {
 
   // The pitch written again from what it is.
   _ptWrite(site, when) {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    const { note, cents } = this._ptNow(this._pt(site));
-    if (kind === "fm") this._writeFmNote(n, note, cents, when);
-    else if (kind === "fm3op") this._writeFm3OpPitch(n, note, cents, when);
-    else if (kind === "psg") this._psgSetPitch(n, note, cents, when);
-    else if (kind === "voice") this._chipPcmWrite(at, when);
+    this._onVoice(site, "pitch", when, this._ptNow(this._pt(site)));
   },
 
   // A note begins on the voice at `midi`, sounding from `cents` (the

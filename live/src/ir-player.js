@@ -885,31 +885,7 @@ export class IRPlayer {
   //           stopped, a PCM8 voice cut from the mix, a DDA channel off and
   //           fed no more frames, the DMC stopped
   _silence(site, when) {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    if (kind === "fm") {
-      if (!this._csmKeysCh3(n)) this._fmKey(n, 0, when);
-    } else if (kind === "fm3op") {
-      const bit = 0x10 << (n - 1);
-      if (this._reg27 & 0x80) this._fm3CsmRelease(bit, when);
-      else if (this._fm3Mask & bit) this._fm3KeysOff(bit, when);
-    } else if (kind === "psg") {
-      this._psgKeyedUntil[n] = Math.min(this._psgKeyedUntil[n], when);
-      this._psgSetAtt(n, this._psgOff(n), when);
-    } else if (kind === "pcm") this._pcmEv(when, { kind: "off", voice: n });
-    else if (kind === "voice") {
-      const write = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
-      if (at === "dpcm") return void write(this._target?.chipFor?.("fc-dpcm")?.dmc?.stop() ?? []);
-      const h = this._chipPcm?.owner.get(at);
-      if (!h) return;
-      if (h.pcm8 != null) return void this._pcm8Ev(when, { kind: "cut", voice: h.pcm8 });
-      if (h.dda != null) {
-        h.dumped = true;
-        return void write(this._ddaEncoder()?.off(h.dda) ?? []);
-      }
-      if (at === "adpcm") write(this._target.chipFor("adpcm-b").adpcm.stop());
-      else if (this._rhythmEnc) write(this._rhythmEnc.dump(at, when)); // (a sample voice this player cannot dump: none)
-    }
+    this._onVoice(site, "silence", when);
   }
 
   /** Current tempo in BPM (changes during playback via tempo events / sweeps). */

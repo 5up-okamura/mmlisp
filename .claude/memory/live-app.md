@@ -255,6 +255,9 @@ voice-specific copy of any of these; extend the adapter instead:
   but for :pan, the driver's rule.
 - `_silence(site, t)` — a voice silenced, for a mute landing
   (`_applyAudibility`) and a muted track's note (`_playNote`) alike.
+- `VOICE_KINDS` (ir-player-levels.js) — each kind of voice's level, pitch,
+  pan, silence and fader site in one entry (`_onVoice(site, op, …)`); add a
+  kind there, not a branch in a dispatcher.
 - `tools npm run check:note-path` holds all of it on every melodic channel
   of every machine (closes, retriggers, mutes).
 Open after it: the PC Engine's PCM is too quiet (def-mod or the wave's

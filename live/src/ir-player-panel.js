@@ -214,12 +214,7 @@ export const panelMethods = {
   _volOf(strip) {
     const site = this._volSites(strip)[0];
     if (!site) return null;
-    const when = this._audioContext?.currentTime ?? 0;
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    const score = Math.round(kind === "fm" || kind === "fm3op" || kind === "psg" || kind === "pcm" ? this._lvScoreVol(this._lv(site))
-      : kind === "midi" ? this._lvScoreVol(this._lv(`mtrk:${strip.tracks[0]}`))
-      : this._lv(`strk:${strip.tracks[0]}`).vol);
+    const score = Math.round(this._lvScoreVol(this._lv(this._onVoice(site, "fader", strip) ?? site)));
     const hand = this._lv(site).hand;
     return { v: hand ? hand.v : score, hand: !!hand, score };
   },
@@ -253,17 +248,16 @@ export const panelMethods = {
     return this._levels.get(site)?.hand?.v ?? null;
   },
 
-  // A score write of :vol on track `ti` takes a strip the panel let go back.
-  // A Mega Drive PCM voice keeps its fader in the engine's model, where the
-  // panel's value went: it gets the score's back (a note's :vol macro would
-  // not say it).
+  // A score write of :vol on track `ti` takes a strip the panel let go back:
+  // its level written again from the score's (_lvWrite) — a Mega Drive PCM
+  // voice's model, where the panel's value went, gets the score's back, as a
+  // note's :vol macro would not say it.
   _volTakeBack(ti, when) {
     for (const hand of new Set([...this._levels.values()].map((L) => L.hand))) {
       if (!hand || hand.held || !hand.tracks.has(ti)) continue;
       for (const site of hand.sites) {
         this._lv(site).hand = null;
-        const [kind, n] = site.split(":");
-        if (kind === "pcm") this._pcmEv(when, { kind: "vol", voice: Number(n), value: this._lv(site).vol });
+        this._lvWrite(site, when, "fader");
       }
     }
   },

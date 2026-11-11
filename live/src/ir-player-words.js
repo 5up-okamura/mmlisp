@@ -227,23 +227,10 @@ export const wordMethods = {
     return null; // a MIDI channel's: the output's
   },
   _panOf(site) {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    if (kind === "fm") return this._chRegs[n]?.pan ?? 0;
-    if (kind === "psg") return this._psgPan[n] ?? 0;
-    return this._trackPans?.get(n) ?? 0;
+    return this._onVoice(site, "pan") ?? 0;
   },
   _setPan(site, v, when) {
-    const [kind, at] = site.split(":");
-    const n = Number(at);
-    const pan = Math.max(-1, Math.min(1, Number(v) || 0));
-    if (kind === "fm") {
-      this._chRegs[n].pan = pan;
-      this._fmWrites(this._fmEnc.pan(n, this._chRegs[n]), when);
-    } else if (kind === "psg") {
-      this._psgPan[n] = pan;
-      this._psgWrites(this._lane(n, (e, ch) => e.pan?.(ch, pan, when) ?? []), when);
-    } else (this._trackPans ??= new Map()).set(n, pan);
+    this._onVoice(site, "setPan", Math.max(-1, Math.min(1, Number(v) || 0)), when);
   },
   // :pan, on any track that has it: a value, `+` `*` `$slot`, a sweep — a
   // lane's on the encoder's fifteenths of a side, as its driver steps it.
