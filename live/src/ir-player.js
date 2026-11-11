@@ -2181,8 +2181,9 @@ export class IRPlayer {
     if (ev.cmd.startsWith("PARAM_") && String(ev.args?.target ?? "").toUpperCase() === "VOL")
       this._word(ev, when, { read: () => this._lv(site).vol, write: (v) => this._lvSetVol(site, v) });
     else if (ev.cmd === "NOTE_ON" || ev.cmd === "PCM_NOTE_ON") {
-      this._lvNoteOn(site, Number(ev.args?.vel ?? 15));
-      if (ev.args?.vol) this._lvMacros(site, { vol: ev.args.vol }, when, (this._gateOf(ti) ?? this._noteGate(ev, when)).macroGate);
+      // (its note's path every voice's, _playNote: the output's plan plays
+      // its :vel, the level here is the panel's reading of its :vol)
+      this._playNote(ev, when, { level: site, vel: Number(ev.args?.vel ?? 15), levelArgs: ev.args?.vol ? { vol: ev.args.vol } : {} });
     }
   }
 
@@ -2278,158 +2279,13 @@ export class IRPlayer {
 
     switch (ev.cmd) {
       case "NOTE_ON": {
-        const midi = pitchToMidi(ev.args?.pitch ?? "c4");
+        // The note's path is every voice's (_playNote); an fm3 operator's
+        // level and pitch are its own (driver.md §13.4), its note set by its
+        // FM3_OP_PITCH.
         const fm3Op = Number(ev.args?.fm3Op);
-        const isFm3OpNote =
-          ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4;
-        // The note's gate, by the one rule (_noteGate): its macros run as a
-        // held note's until it closes, unless its gate is shorter.
-        const ti = ev._trackIndex ?? 0;
-        const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
-        const macroGate = gate.macroGate;
-        const regs = this._chRegs[ch];
-
-        // Apply per-note velocity (and any vol/master) to carrier TL,
-        // attenuating from each operator's voiced TL. Runs on every note so
-        // static :vel works and a previously attenuated note is reset; vel 15
-        // / vol 31 / master 31 restores the voiced level.
-        // The previous note's level macros are done: this note starts from
-        // its own velocity and the fader, and its :vel / :vol macros' first
-        // samples on it (_lvMacros), as every voice's key-on composes.
-        // FM3 independent-OP: the note's velocity is THIS operator's, and it
-        // composes into that operator's own TL — not the channel's carriers,
-        // which belong to the other operators too (driver.md §13.4).
-        // A :keyon retrigger restarts the note's envelopes — level and timbre
-        // (driver.md §13.2) — while its :pitch / :semi and :pan run on.
-        const site = isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`;
-        this._lvNoteOn(site, ev.args?.vel ?? 15);
-        let leveled = false;
-        this._envRetrigs = this._retrigsOf(ti);
-        this._lvMacros(site, ev.args ?? {}, when, macroGate, () => leveled);
-        this._envRetrigs = null;
-        if (isFm3OpNote) {
-          // The note's span, CSM's level key (_fm3OpTl); its end is set once
-          // the gate is resolved below.
-          this._fm3Op[fm3Op - 1].csmOn = when;
-          this._fm3Op[fm3Op - 1].csmOff = Infinity;
-          this._writeFm3OpTl(fm3Op, when);
-        } else this._writeFmLevel(ch, when);
-        leveled = true;
-
-        // An encoder that reads whether a write is inside a note (the
-        // OPLL's) hears of the key-on before the note's pitch and voice
-        // macros go out, which are sent ahead of it (chips/ym2413.js).
-        if (!isFm3OpNote && !ev.args?.legato && !this._csmKeysCh3(ch)
-          && this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when))
-          this._fmWrites(this._fmEnc.noteOn?.(ch, when) ?? [], when);
-
-        // The note's pitch (_pt): it sounds from its onset — a running :pitch
-        // sweep's next value, its :pitch / :semi macros' first samples, the
-        // later bind winning — written once, as the driver's note-on does
-        // (onset_pitch); the plain note is never written first. An fm3
-        // operator's note was written by its FM3_OP_PITCH, and its macros
-        // write that operator's registers alone (driver.md §13.4).
-        const pitchSite = isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`;
-        const P = isFm3OpNote ? this._pt(pitchSite)
-          : this._ptNoteOn(pitchSite, midi, this._onsetPitchOffset(ev, this._pt(pitchSite).offset));
-        const onset = P.now;
-        let pitched = false;
-        this._ptMacros(pitchSite, ev.args, when, macroGate, () => pitched);
-        if (!isFm3OpNote || P.now !== onset) this._ptWrite(pitchSite, when);
-        pitched = true;
-        // (its timbre's envelopes, restarted by a :keyon retrigger as its level's are)
-        this._envRetrigs = this._retrigsOf(ti);
-        this._scheduleFmOpMacros(ch, ev.args ?? {}, when, macroGate);
-        this._envRetrigs = null;
-        // Key on: all 4 operators (unless muted or vol=0).
-        // YM2612: TL=127 gives totalAttn=1016 < 1023 (not silent at sustain),
-        // so when a volume control is 0 we skip key-on entirely to guarantee
-        // silence. vol and master are "volume": 0 mutes. (vel never mutes — it
-        // floors at its lowest ladder step.)
-        const isFmSilent = this._fmNoteSilent(ch, when);
-        const keys = this._isTrackAudible(ev._trackIndex) && !isFmSilent;
-        // A note that keys nothing (muted / non-soloed track, or vol 0) keys
-        // the channel off instead: the previous note may have left its key-off
-        // to this one, and if it was queued before a mute or solo landed it
-        // would ring on forever.
-        if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch)) this._fmKey(ch, 0, when);
-        // What closing the note is on its voice (_closeNote): at its gate's
-        // end, a rest, the track's end, the host's key-off — and at the
-        // track's next note, which a slur, or a hold, carries over into.
-        const opBit = isFm3OpNote ? 0x10 << (fm3Op - 1) : 0, csmOn = this._csmKeysCh3(ch);
-        const carries = (how) => how.next && (gate.hold || (how.legato && how.keys));
-        this._noteCloses(ti, !isFm3OpNote ? (t, how) => {
-          // (Under CSM, Timer A keys CH3: a note keys nothing to key off.)
-          if (!keys || csmOn || carries(how)) return;
-          // The next note's key-off goes an ordering margin ahead of its
-          // key-on, so the envelope sees the transition it attacks from.
-          if (how.next) return void this._fmKey(ch, 0, t - KEY_ORDER_EPS_SECS);
-          this._fmKey(ch, 0, Math.max(t, when + 0.001)); // never before its key-on
-        } : (t, how) => {
-          if (!keys || carries(how)) return;
-          if (this._reg27 & 0x80) {
-            // CSM: the key is the level — the host's key-off releases it;
-            // at the next note TL 127 there, before its own level; else
-            // after its level macros' release.
-            if (how.host) return void this._fm3CsmRelease(opBit, t);
-            if (!how.next) return void this._csmMute(fm3Op, t, when, ti);
-            this._fm3Op[fm3Op - 1].csmOff = t;
-            return void this._fmWrites(this._fmEnc.ch3Tl(fm3Op - 1, 127), t);
-          }
-          // The host's key-off drops its key-ons still waiting; a gate's
-          // close is an edge in the frame's order (_fm3Edge).
-          if (how.host) return void this._fm3KeysOff(opBit, t);
-          this._fm3Edge(opBit, t, this._eventFrame(t), 0, ti, false, null);
-        });
-        if (keys) {
-          const hasEventMask = ev.args?.opMask !== undefined;
-          let keyMask = this.getOpMask(ch);
-          if (hasEventMask) {
-            const eventMask = Number(ev.args?.opMask);
-            if (!Number.isFinite(eventMask)) {
-              throw new Error(`Invalid NOTE_ON opMask: ${ev.args?.opMask}`);
-            }
-            keyMask = eventMask & 0xf0;
-            if (keyMask === 0) {
-              throw new Error(`Invalid NOTE_ON opMask nibble: ${eventMask}`);
-            }
-          }
-          if (isFm3OpNote && this._reg27 & 0x80) {
-            // CSM: Timer A keys CH3 (driver.md §9), so the operator's key is
-            // its level — on at its note (written above), TL 127 at its
-            // close (above). A :keyon retrigger is moot: every Timer A
-            // overflow is one.
-            this._fm3Op[fm3Op - 1].csmOff = Infinity;
-          } else if (isFm3OpNote) {
-            // Merge this operator's key with the other FM3 operators sharing
-            // channel 3's 0x28 register instead of overwriting them. A :keyon
-            // retrigger re-attacks THIS operator only (driver.md §13.4).
-            const bit = keyMask & 0xf0, gen = this._fm3KeyGen[Math.log2(bit) - 4];
-            this._fm3Edge(bit, when, this._eventFrame(when), 0, ti, true, gen);
-            // A :keyon retrigger re-attacks THIS operator alone, merged with
-            // the others' in its frame's $28 edges (_fm3Edge).
-            const gap = this._retrigGap(this._retrigsOf(ti));
-            this._noteRetriggers(ti, (t) => {
-              const F = this._eventFrame(t);
-              this._fm3Edge(bit, Math.max(when, t - gap), F, 1, Math.log2(bit) - 4, false, gen);
-              this._fm3Edge(bit, t, F, 1, Math.log2(bit) - 4, true, gen);
-            }, (t) => this._fm3Edge(bit, t, this._eventFrame(t), 0, ti, false, null));
-          } else {
-            // The previous note's key-off came first (_closeNote, at this
-            // note's dispatch); a slur cancelled it, so the envelope carries
-            // over: it keys nothing.
-            const csmKeys = this._csmKeysCh3(ch);
-            if (!ev.args?.legato && !csmKeys) this._fmKey(ch, keyMask, when);
-            // :keyon retriggers (a drum roll, an echo tail): each keys the
-            // channel off and on again (Timer A's under CSM).
-            const gap = this._retrigGap(this._retrigsOf(ti));
-            if (!csmKeys) this._noteRetriggers(ti, (t) => {
-              if (this._csmKeysCh3(ch)) return;
-              this._fmKey(ch, 0, Math.max(when, t - gap));
-              this._fmKey(ch, keyMask, t);
-            }, (t) => { if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, t); });
-          }
-        }
+        const op = ch === 2 && Number.isInteger(fm3Op) && fm3Op >= 1 && fm3Op <= 4 ? fm3Op : 0;
+        const site = op ? `fm3op:${op}` : `fm:${ch}`;
+        this._playNote(ev, when, { level: site, pitch: site, pitchOn: !op, key: (n) => this._fmNoteKey(ev, when, ch, op, n) });
         break;
       }
 
@@ -3525,116 +3381,16 @@ export class IRPlayer {
           this._psgSetAtt(psgCh, this._psgOff(psgCh), when);
           break;
         }
-        // A note starting: a chip that keys something on it hears it.
-        this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch, when, !!ev.args?.legato) ?? []), when);
-        // A DDA note on this channel (another of its names) still sounding
-        // ends here, its channel off a key-order lead before this key-on.
-        if (this._toneEnc[psgCh]?.part?.sharePrio != null && this._ddaEncoder()) {
-          const h = this._chipPcm?.owner.get(`dda-${this._toneEnc[psgCh].ch}`);
-          if (h && h.t < when - 1e-9 && h.end > when + 1e-9 && !h.dumped) { h.end = when; h.cut = true; }
-        }
-
-        // The PSG's noise lane — but for a noise whose note is its rate (the
-        // 2A03's: `rateNote`), pitched as a tone, its mode re-asserted.
+        // The note's path is every voice's (_playNote).
+        // The PSG's noise lane is unpitched — but for a noise whose note is
+        // its rate (the 2A03's: `rateNote`), pitched as a tone.
         const rateNote = this._isNoiseLane(psgCh) && this._toneEnc[psgCh]?.part?.rateNote;
         const isNoise = this._isNoiseLane(psgCh) && !rateNote;
-        // The note's gate, by the one rule (_noteGate): its macros run as a
-        // held note's until it closes, unless its gate is shorter.
-        const ti = ev._trackIndex ?? 0;
-        const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
-        const psgMacroGate = gate.macroGate;
-        // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
-        // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
-        if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
-          const reset = (t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
-          reset(when);
-          this._noteRetriggers(ti, reset);
-        }
-        if (rateNote) {
-          // Its mode re-asserted, and the note's :mode macro, as the PSG's
-          // noise has them; its rate is the pitch below.
-          this._psgTriggerNoise(when, psgCh);
-          this._envRetrigs = this._retrigsOf(ti);
-          this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgMacroGate);
-          this._envRetrigs = null;
-        }
-        if (!isNoise) {
-          // Its pitch as on FM (_pt): from its onset, written once.
-          const site = `psg:${psgCh}`;
-          this._ptNoteOn(site, pitchToMidi(ev.args?.pitch ?? "c4"), this._onsetPitchOffset(ev, this._pt(site).offset));
-          let pitched = false;
-          this._ptMacros(site, ev.args, when, psgMacroGate, () => pitched);
-          this._ptWrite(site, when);
-          pitched = true;
-        } else {
-          this._psgTriggerNoise(when, psgCh);
-          this._envRetrigs = this._retrigsOf(ti);
-          this._schedulePsgModeMacro(
-            psgCh,
-            ev.args?.noise_mode,
-            when,
-            psgMacroGate,
-          );
-          this._envRetrigs = null;
-        }
-        // The SSG's mixer and its (song-wide) noise period stepped by the
-        // note's `:mode` / `:noise-rate` macros, frame by frame. A macro is
-        // its note's: after one, a note without it has the track's :mode and
-        // the song's :noise-rate back.
-        const mixMacro = ev.args?.ssg_mix, rateMacro = ev.args?.noise_rate;
-        const was = this._ssgMacroed[psgCh];
-        if (was?.mix && !mixMacro && this._ssgMixBase[psgCh] != null)
-          this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, this._ssgMixBase[psgCh], when) ?? []), when);
-        if (was?.rate && !rateMacro && this._noiseRateBase != null)
-          this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? [], "noiseRate"), when);
-        this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
-        // A note's (macro :pan …), where the channel has a pan of its own.
-        if (ev.args?.pan) {
-          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-          this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
-            (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step));
-        }
-        // A note's (macro :wave …): its def-waves a step at a time.
-        if (ev.args?.wave) {
-          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-          this._laneExpr[psgCh] = null;
-          this._scheduleMacro(ev.args.wave, noteFrames, gateSecs, when,
-            (v, t) => this._writeLaneWaveIndex(psgCh, v, t, true), this._stepSecs(ev.args.wave.step));
-        }
-        // A note's (macro :duty …), on a pulse (chips/rp2a03.js).
-        if (ev.args?.duty) {
-          const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
-          this._scheduleMacro(ev.args.duty, noteFrames, gateSecs, when,
-            (v, t) => this._psgSetDuty(psgCh, v, t), this._stepSecs(ev.args.duty.step));
-        }
-        this._schedulePsgWordMacro(mixMacro, when, psgMacroGate,
-          (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
-        this._schedulePsgWordMacro(rateMacro, when, psgMacroGate,
-          (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? [], "noiseRate"), t));
-        // A lane on the envelope starts it over at a key-on (a slur's goes on).
-        const envShape = this._psgEnv[psgCh];
-        if (envShape >= 0 && !ev.args?.legato)
-          this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? [], null, psgCh), when);
-        const baseVel = ev.args?.vel ?? 15;
-        const velMacro = ev.args?.velMacro ?? null;
-        // What closing the note is on its lane (_closeNote): silence —
-        // after its level macros' release where it has them (its soft
-        // envelope) — at its gate's end, a rest, the track's end, the host's
-        // key-off; nothing at the track's next note, whose key-on restarts
-        // the level (`~` holds the tone over). Until then the lane is keyed.
-        const macros = !!(velMacro || ev.args?.vol);
-        this._noteCloses(ti, (t, how) => {
-          if (how.next) return;
-          this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], t);
-          this._psgSilence(psgCh, ti, macros, t);
+        const site = `psg:${psgCh}`;
+        this._playNote(ev, when, {
+          level: site, vel: Math.max(0, Math.min(15, ev.args?.vel ?? 15)), pitch: isNoise ? null : site,
+          key: (n) => this._psgNoteKey(ev, when, psgCh, isNoise, rateNote, n),
         });
-        this._psgKeyedUntil[psgCh] = gate.timed ? gate.end : Infinity;
-        const volMacro = ev.args?.vol ?? null;
-        // A :keyon retrigger restarts the level envelopes (PSG has no
-        // hardware one: this is the whole of the retrigger).
-        this._envRetrigs = velMacro || volMacro ? this._retrigsOf(ti) : null;
-        this._psgNoteLevel(psgCh, ev, when, psgMacroGate, baseVel);
-        this._envRetrigs = null;
         break;
       }
 
@@ -3662,6 +3418,226 @@ export class IRPlayer {
       default:
         break;
     }
+  }
+
+  // An FM note's key-on (_playNote's adapter): its level and pitch written
+  // from their onset — an fm3 operator's level its own TL, its pitch written
+  // by its FM3_OP_PITCH unless its macros' first steps moved it — its
+  // timbre's envelopes, and its key; returning what closing is on it and
+  // what a :keyon retrigger is.
+  // Velocity, vol and master compose into the carriers' TL from each
+  // operator's voiced TL (vel 15 / vol 31 / master 31 the voiced level);
+  // vol or master 0 keys nothing (TL 127 is not silent at sustain), vel
+  // never mutes — it floors at its lowest ladder step.
+  _fmNoteKey(ev, when, ch, fm3Op, n) {
+    const { ti, gate } = n;
+    const isFm3OpNote = fm3Op > 0;
+    if (isFm3OpNote) {
+      // The note's span, CSM's level key (_fm3OpTl); its end is its close's.
+      this._fm3Op[fm3Op - 1].csmOn = when;
+      this._fm3Op[fm3Op - 1].csmOff = Infinity;
+      this._writeFm3OpTl(fm3Op, when);
+    } else this._writeFmLevel(ch, when);
+
+    // An encoder that reads whether a write is inside a note (the OPLL's)
+    // hears of the key-on before the note's pitch and voice macros go out,
+    // which are sent ahead of it (chips/ym2413.js).
+    if (!isFm3OpNote && !ev.args?.legato && !this._csmKeysCh3(ch)
+      && this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when))
+      this._fmWrites(this._fmEnc.noteOn?.(ch, when) ?? [], when);
+
+    // The pitch it sounds from, written once (the driver's onset_pitch).
+    if (!isFm3OpNote || n.pitchMoved()) this._ptWrite(isFm3OpNote ? `fm3op:${fm3Op}` : `fm:${ch}`, when);
+    // Its timbre's envelopes, restarted by a :keyon retrigger as its level's are.
+    this._envRetrigs = n.retrigs;
+    this._scheduleFmOpMacros(ch, ev.args ?? {}, when, gate.macroGate);
+    this._envRetrigs = null;
+
+    const keys = this._isTrackAudible(ev._trackIndex) && !this._fmNoteSilent(ch, when);
+    // A note that keys nothing (muted / non-soloed track, or vol 0) keys the
+    // channel off instead: the previous note may have left its key-off to
+    // this one, and if it was queued before a mute or solo landed it would
+    // ring on forever.
+    if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch)) this._fmKey(ch, 0, when);
+    // What closing the note is on its voice (_closeNote): at its gate's end,
+    // a rest, the track's end, the host's key-off — and at the track's next
+    // note, which a slur, or a hold, carries over into.
+    const opBit = isFm3OpNote ? 0x10 << (fm3Op - 1) : 0, csmOn = this._csmKeysCh3(ch);
+    const carries = (how) => how.next && (gate.hold || (how.legato && how.keys));
+    const close = !isFm3OpNote ? (t, how) => {
+      // (Under CSM, Timer A keys CH3: a note keys nothing to key off.)
+      if (!keys || csmOn || carries(how)) return;
+      // The next note's key-off goes an ordering margin ahead of its key-on,
+      // so the envelope sees the transition it attacks from.
+      if (how.next) return void this._fmKey(ch, 0, t - KEY_ORDER_EPS_SECS);
+      this._fmKey(ch, 0, Math.max(t, when + 0.001)); // never before its key-on
+    } : (t, how) => {
+      if (!keys || carries(how)) return;
+      if (this._reg27 & 0x80) {
+        // CSM: the key is the level — the host's key-off releases it; at the
+        // next note TL 127 there, before its own level; else after its level
+        // macros' release.
+        if (how.host) return void this._fm3CsmRelease(opBit, t);
+        if (!how.next) return void this._csmMute(fm3Op, t, when, ti);
+        this._fm3Op[fm3Op - 1].csmOff = t;
+        return void this._fmWrites(this._fmEnc.ch3Tl(fm3Op - 1, 127), t);
+      }
+      // The host's key-off drops its key-ons still waiting; a gate's close
+      // is an edge in the frame's order (_fm3Edge).
+      if (how.host) return void this._fm3KeysOff(opBit, t);
+      this._fm3Edge(opBit, t, this._eventFrame(t), 0, ti, false, null);
+    };
+    if (!keys) return { close };
+    let keyMask = this.getOpMask(ch);
+    if (ev.args?.opMask !== undefined) {
+      const eventMask = Number(ev.args?.opMask);
+      if (!Number.isFinite(eventMask)) throw new Error(`Invalid NOTE_ON opMask: ${ev.args?.opMask}`);
+      keyMask = eventMask & 0xf0;
+      if (keyMask === 0) throw new Error(`Invalid NOTE_ON opMask nibble: ${eventMask}`);
+    }
+    const gap = this._retrigGap(n.retrigs);
+    if (isFm3OpNote && this._reg27 & 0x80) {
+      // CSM: Timer A keys CH3 (driver.md §9), so the operator's key is its
+      // level — on at its note (written above), TL 127 at its close. A
+      // :keyon retrigger is moot: every Timer A overflow is one.
+      this._fm3Op[fm3Op - 1].csmOff = Infinity;
+      return { close };
+    }
+    if (isFm3OpNote) {
+      // This operator's key merged with the other FM3 operators sharing
+      // channel 3's $28 (_fm3Edge); a :keyon retrigger re-attacks it alone.
+      const bit = keyMask & 0xf0, op = Math.log2(bit) - 4, gen = this._fm3KeyGen[op];
+      this._fm3Edge(bit, when, this._eventFrame(when), 0, ti, true, gen);
+      return {
+        close,
+        retrigger: (t) => {
+          const F = this._eventFrame(t);
+          this._fm3Edge(bit, Math.max(when, t - gap), F, 1, op, false, gen);
+          this._fm3Edge(bit, t, F, 1, op, true, gen);
+        },
+        tailOff: (t) => this._fm3Edge(bit, t, this._eventFrame(t), 0, ti, false, null),
+      };
+    }
+    // The previous note's key-off came first (_closeNote, at this note's
+    // dispatch); a slur cancelled it, so the envelope carries over: it keys
+    // nothing. Under CSM Timer A keys CH3, and its retriggers.
+    const csmKeys = this._csmKeysCh3(ch);
+    if (!ev.args?.legato && !csmKeys) this._fmKey(ch, keyMask, when);
+    if (csmKeys) return { close };
+    return {
+      close,
+      // a drum roll, an echo tail: each keys the channel off and on again
+      retrigger: (t) => {
+        if (this._csmKeysCh3(ch)) return;
+        this._fmKey(ch, 0, Math.max(when, t - gap));
+        this._fmKey(ch, keyMask, t);
+      },
+      tailOff: (t) => { if (!this._csmKeysCh3(ch)) this._fmKey(ch, 0, t); },
+    };
+  }
+
+  // A tone lane's note's key-on (_playNote's adapter): the chip's key, the
+  // lane's LFO and envelope started over, its noise mode, its pitch from its
+  // onset, its register macros (pan, wave, duty, the SSG's mixer and noise
+  // period), its level from its onset; returning what closing is on it and
+  // what a :keyon retrigger is (the LFO's reset). `isNoise`: the PSG's noise
+  // lane, unpitched; `rateNote`: a noise whose note is its rate (the 2A03's),
+  // pitched as a tone, its mode re-asserted.
+  _psgNoteKey(ev, when, psgCh, isNoise, rateNote, n) {
+    // A note starting: a chip that keys something on it hears it.
+    this._psgWrites(this._lane(psgCh, (e, ch) => e.keyOn?.(ch, when, !!ev.args?.legato) ?? []), when);
+    // A DDA note on this channel (another of its names) still sounding
+    // ends here, its channel off a key-order lead before this key-on.
+    if (this._toneEnc[psgCh]?.part?.sharePrio != null && this._ddaEncoder()) {
+      const h = this._chipPcm?.owner.get(`dda-${this._toneEnc[psgCh].ch}`);
+      if (h && h.t < when - 1e-9 && h.end > when + 1e-9 && !h.dumped) { h.end = when; h.cut = true; }
+    }
+
+    const { ti, gate } = n, psgMacroGate = gate.macroGate;
+    let retrigger = null;
+    // :lfo-sync: the note's key-on, and each :keyon retrigger, start the
+    // chip's LFO over (the PC Engine's $09 reset, the FDS's counter).
+    if (this._laneLfoSync[psgCh] && !ev.args?.legato) {
+      const reset = (t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.lfoReset?.(ch) ?? []), t);
+      reset(when);
+      retrigger = reset;
+    }
+    if (rateNote) {
+      // Its mode re-asserted, and the note's :mode macro, as the PSG's
+      // noise has them; its rate is the pitch below.
+      this._psgTriggerNoise(when, psgCh);
+      this._envRetrigs = n.retrigs;
+      this._schedulePsgModeMacro(psgCh, ev.args?.noise_mode, when, psgMacroGate);
+      this._envRetrigs = null;
+    }
+    // Its pitch as on FM (_pt): from its onset, written once.
+    if (!isNoise) this._ptWrite(`psg:${psgCh}`, when);
+    else {
+      this._psgTriggerNoise(when, psgCh);
+      this._envRetrigs = n.retrigs;
+      this._schedulePsgModeMacro(
+        psgCh,
+        ev.args?.noise_mode,
+        when,
+        psgMacroGate,
+      );
+      this._envRetrigs = null;
+    }
+    // The SSG's mixer and its (song-wide) noise period stepped by the
+    // note's `:mode` / `:noise-rate` macros, frame by frame. A macro is
+    // its note's: after one, a note without it has the track's :mode and
+    // the song's :noise-rate back.
+    const mixMacro = ev.args?.ssg_mix, rateMacro = ev.args?.noise_rate;
+    const was = this._ssgMacroed[psgCh];
+    if (was?.mix && !mixMacro && this._ssgMixBase[psgCh] != null)
+      this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, this._ssgMixBase[psgCh], when) ?? []), when);
+    if (was?.rate && !rateMacro && this._noiseRateBase != null)
+      this._psgWrites(this._psg((c) => c.noiseRate?.(this._noiseRateBase) ?? [], "noiseRate"), when);
+    this._ssgMacroed[psgCh] = mixMacro || rateMacro ? { mix: !!mixMacro, rate: !!rateMacro } : null;
+    // A note's (macro :pan …), where the channel has a pan of its own.
+    if (ev.args?.pan) {
+      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
+      this._scheduleMacro(ev.args.pan, noteFrames, gateSecs, when,
+        (v, t) => this._psgSetPan(psgCh, v, t), this._stepSecs(ev.args.pan.step));
+    }
+    // A note's (macro :wave …): its def-waves a step at a time.
+    if (ev.args?.wave) {
+      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
+      this._laneExpr[psgCh] = null;
+      this._scheduleMacro(ev.args.wave, noteFrames, gateSecs, when,
+        (v, t) => this._writeLaneWaveIndex(psgCh, v, t, true), this._stepSecs(ev.args.wave.step));
+    }
+    // A note's (macro :duty …), on a pulse (chips/rp2a03.js).
+    if (ev.args?.duty) {
+      const { noteFrames, gateSecs } = this._resolveNoteFramesAndGate(when, psgMacroGate);
+      this._scheduleMacro(ev.args.duty, noteFrames, gateSecs, when,
+        (v, t) => this._psgSetDuty(psgCh, v, t), this._stepSecs(ev.args.duty.step));
+    }
+    this._schedulePsgWordMacro(mixMacro, when, psgMacroGate,
+      (v, t) => this._psgWrites(this._lane(psgCh, (e, ch) => e.mix?.(ch, Math.round(v), t) ?? []), t));
+    this._schedulePsgWordMacro(rateMacro, when, psgMacroGate,
+      (v, t) => this._psgWrites(this._psg((c) => c.noiseRate?.(v) ?? [], "noiseRate"), t));
+    // A lane on the envelope starts it over at a key-on (a slur's goes on).
+    const envShape = this._psgEnv[psgCh];
+    if (envShape >= 0 && !ev.args?.legato)
+      this._psgWrites(this._psg((c) => c.envShape?.(envShape) ?? [], null, psgCh), when);
+    const velMacro = ev.args?.velMacro ?? null;
+    // What closing the note is on its lane (_closeNote): silence —
+    // after its level macros' release where it has them (its soft
+    // envelope) — at its gate's end, a rest, the track's end, the host's
+    // key-off; nothing at the track's next note, whose key-on restarts
+    // the level (`~` holds the tone over). Until then the lane is keyed.
+    const macros = !!(velMacro || ev.args?.vol);
+    const close = (t, how) => {
+      if (how.next) return;
+      this._psgKeyedUntil[psgCh] = Math.min(this._psgKeyedUntil[psgCh], t);
+      this._psgSilence(psgCh, ti, macros, t);
+    };
+    this._psgKeyedUntil[psgCh] = gate.timed ? gate.end : Infinity;
+    // Its level from its onset (_playNote: a :keyon retrigger restarts
+    // its envelopes — PSG has no hardware one, this is the whole of it).
+    this._psgRecompose(psgCh, when);
+    return { close, retrigger };
   }
 
   _writeKeyOff(chIndex) {

@@ -402,17 +402,17 @@
  "drv/tests/m3-macro-multi.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "4e6bc1999e389f70",
-  "regs": "383b66318369e126",
+  "regs": "2a3dc3c3b5399d79",
   "mmb": "399c94abe15b5ecf",
-  "vgm": "d0d7f32052d767f6",
+  "vgm": "0de3f9b2bef08378",
   "mid": "ca1a287199da9150"
  },
  "drv/tests/m3-macro-multi.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "2aad2b9aad481c46",
-  "regs": "383b66318369e126",
+  "regs": "2a3dc3c3b5399d79",
   "mmb": "fbac26cf3e6e9333",
-  "vgm": "d0d7f32052d767f6",
+  "vgm": "0de3f9b2bef08378",
   "mid": "ebe8685baf082db4"
  },
  "drv/tests/m3-macro-pitch.mmlisp": {
@@ -2220,7 +2220,7 @@
  "tools/tests/fc/mmc5.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "a95510548f07f724",
-  "regs": "c48634d1ae7868d5",
+  "regs": "927b998f20f2d6a5",
   "vgm": "5f8a4bd05e85f14c",
   "mid": "e5309daebb3a2aa9"
  },
@@ -2393,8 +2393,8 @@
  "tools/tests/pc88/ssg-macro.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "e23d8cd576270ab6",
-  "regs": "a28987a3e8483a5a",
-  "vgm": "a69d117d0ecf6b76",
+  "regs": "855893b083fefe44",
+  "vgm": "a30bbde96474513e",
   "mid": "1cd15e92a845eb40"
  },
  "tools/tests/pc88/ssg.mmlisp": {

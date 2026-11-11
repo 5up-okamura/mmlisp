@@ -311,3 +311,11 @@ Design:
   `_pt("strk:N").offset`, copied onto its voices. m3-macro-multi (:pitch
   with :semi) now matches the driver (A/B 127 clean). `_resetFm3` is the
   one fm3 reset.
+- Done: (6) — every note takes `_playNote(ev, when, v)` (ir-player-levels.js):
+  gate, retriggers, level (`v.level`) and pitch (`v.pitch`) with their
+  macros held till the key-on; `v.key(n)` is the voice's key-on, returning
+  `{ close, retrigger, tailOff }`. Adapters: `_fmNoteKey` (fm, fm3 op,
+  CSM), `_psgNoteKey` (tone, noise, rate noise), `_chipPcmHit` (ADPCM-B,
+  PCM8, rhythm, DDA), the DMC's, the MD PCM's (`_dispatchPcmNoteOn`), the
+  MIDI channel's level. `_sampleClose(ev, release)` is the samples' close
+  rule; `_psgNoteLevel` is gone. Next: (7) the word tables.

@@ -5,7 +5,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, VOL_UNITY } from "./ir-utils.js";
+import { clampForTarget, pitchToMidi, VOL_UNITY } from "./ir-utils.js";
 import { KEYON, MACRO } from "./ir-player-shared.js";
 
 export const levelMethods = {
@@ -235,20 +235,6 @@ export const levelMethods = {
     return L.note != null && (t ?? -Infinity) < (this._psgKeyedUntil[lane] ?? 0) - 1e-6;
   },
 
-  // A note's level on its lane: its key-on's, then its :vel and :vol macros a
-  // step at a time (its silence is its close's, _psgSilence).
-  _psgNoteLevel(psgCh, ev, noteWhen, gateTicks, baseVel) {
-    const args = ev.args;
-    const site = `psg:${psgCh}`;
-    const L = this._lvNoteOn(site, Math.max(0, Math.min(15, baseVel)));
-    // A first sample on the note itself is what the key-on composes from
-    // (driver.md §7.2): the macros' steps write once the key-on has.
-    let keyed = false;
-    this._lvMacros(site, args, noteWhen, gateTicks, () => keyed);
-    this._psgRecompose(psgCh, noteWhen);
-    keyed = true;
-  },
-
   // A tone lane's silence at the end of its note's gate `off`: there, or
   // with a level macro at its tail.
   _psgSilence(psgCh, ti, macros, off) {
@@ -258,6 +244,49 @@ export const levelMethods = {
       const at = Math.max(end ?? off, off);
       this._whileNote(ti, at, () => this._psgSetAtt(psgCh, this._psgOff(psgCh), at));
     });
+  },
+
+  // ---- a note: one path for every voice ----
+  // A note on any voice, `v` its adapter. What every note is, is this path's:
+  // its gate (_noteGate) and :keyon retriggers (_keyonRetrigs), its level
+  // (_lv at `v.level`) and pitch (_pt at `v.pitch`) with their macros, whose
+  // first steps on the note move them at once and write nothing until it has
+  // keyed. The voice says only what it writes: `v.key(n)` its key-on — the
+  // level and pitch its first steps composed among its own writes, in its
+  // chip's order — returning what closing is on it (`close(t, how)`,
+  // _closeNote) and what a retrigger is (`retrigger(t, closed)`, `tailOff(t)`,
+  // _noteRetriggers). `n`: { ti, gate, retrigs, pitchMoved() }.
+  //   v.vel       its velocity (the note's when absent)
+  //   v.levelArgs the macros its level takes (the note's :vel and :vol)
+  //   v.midi      its note (the note's pitch when absent)
+  //   v.pitchOn   false where an event before it set its note (an fm3
+  //               operator's FM3_OP_PITCH): its macros only
+  //   v.pitchGate the span its pitch macros run (the note's macros')
+  _playNote(ev, when, v) {
+    const ti = ev._trackIndex ?? 0;
+    const gate = this._gateOf(ti) ?? this._noteGate(ev, when);
+    const retrigs = this._retrigsOf(ti);
+    let keyed = false;
+    const live = () => keyed;
+    if (v.level) {
+      this._lvNoteOn(v.level, v.vel ?? ev.args?.vel ?? 15);
+      this._envRetrigs = retrigs; // (its level's envelopes start over at each)
+      this._lvMacros(v.level, v.levelArgs ?? ev.args ?? {}, when, gate.macroGate, live);
+      this._envRetrigs = null;
+    }
+    let onset = null;
+    if (v.pitch) {
+      const P = v.pitchOn === false ? this._pt(v.pitch)
+        : this._ptNoteOn(v.pitch, v.midi ?? pitchToMidi(ev.args?.pitch ?? "c4"), this._onsetPitchOffset(ev, this._pt(v.pitch).offset));
+      onset = P.now;
+      this._ptMacros(v.pitch, ev.args, when, v.pitchGate ?? gate.macroGate, live);
+    }
+    const n = { ti, gate, retrigs, pitchMoved: () => this._pt(v.pitch).now !== onset };
+    const r = v.key?.(n) ?? {};
+    keyed = true;
+    if (r.close) this._noteCloses(ti, r.close);
+    if (r.retrigger) this._noteRetriggers(ti, r.retrigger, r.tailOff);
+    return n;
   },
 
   // ---- a track's note: one gate rule, one close, for every voice ----
