@@ -101,8 +101,8 @@ export const macroMethods = {
         return;
       }
     };
-    // Let go at `off` (the host's key-off, triggerKeyOff; the track's next
-    // event, _resolveOff): the gate closes there and the steps go on from
+    // Let go at `off` (the host's key-off, triggerKeyOff; the note's close,
+    // _closeNote): the gate closes there and the steps go on from
     // where they are — a step waiting that is no longer the note's (by its
     // own rule: a sustain's in the key-off's frame or after it, a curve's
     // past the note's frames) goes, and what follows it comes.

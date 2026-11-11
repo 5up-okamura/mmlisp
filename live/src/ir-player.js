@@ -202,7 +202,7 @@ export class IRPlayer {
 
     // FM3 independent-operator mode: each fm3-1..fm3-4 track keys a single
     // operator of channel 3 via the shared 0x28 key register (see
-    // _scheduleFm3OpKey).
+    // _fm3Edge).
     this._resetFm3();
 
     // Per FM channel: a full-gate note has run up to the next note and left its

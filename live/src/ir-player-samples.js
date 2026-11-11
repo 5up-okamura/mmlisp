@@ -157,7 +157,7 @@ export const sampleMethods = {
     return (this._chipPcm ??= {
       owner: new Map(), // voice ("adpcm", a rhythm sound, "pcm8-0", "dda-0" …) → the hit sounding on it
       lane: new Map(), // a kit's channel → the hit that last keyed it (a pair's tune, _chipPcmWrite)
-      frames: false, // a DDA frame is waiting (_chipPcmFrame)
+      frames: false, // a DDA frame is waiting (_chipPcmNext)
     });
   },
 

@@ -70,7 +70,7 @@ export const workMethods = {
   },
 
   // `ord`: within its frame and phase, the place the item takes — a list
-  // compared in turn (FM3_KEYS: the driver's order, _scheduleFm3OpKey); a
+  // compared in turn (FM3_KEYS: the driver's order, _fm3Edge); a
   // dispatch's timed parts by time; the rest in the order they were made.
   _putWork(F, phase, t, run, ord = null, endless = false) {
     const q = this._work;

@@ -53,8 +53,8 @@ export const KEYON = 1.5;
 // frame's edges once every write to them is known (_fm3Edge), each
 // at its own time.
 export const FM3_KEYS = 5, FM3_TL = 6;
-// The chips' own sample voices (_chipPcmFrame): each frame's level, pitch
-// and samples, once the frame's steps are done, at the frame's start.
+// The DDA's sample stream (_chipPcmNext): each frame's samples, once the
+// frame's steps are done, at the frame's start.
 export const VOICES = 7;
 // The phases whose writes keep their own time (_runWork).
 export const UNSHIFTED = new Set([KEYED, FM3_KEYS, FM3_TL, VOICES]);
@@ -104,9 +104,9 @@ export const DRIVER_SWEEP_CURVES = new Set([
 // The tracks a playback takes from the IR: the song's (every track but an
 // effect's part), or one effect's parts alone — renumbered, since a track's
 // index is its id here.
-// The NOTE_ON macro args _scheduleFmOpMacros runs, keyed as makeNoteArgs
-// writes them (fm_tl1 → FM_TL1). :vel and :vol are the note's level, scheduled
-// with it (_scheduleFmLevelMacros); these are the channel's other targets.
+// The NOTE_ON macro args an FM note runs on its channel's words (_noteMacro),
+// keyed as makeNoteArgs writes them (fm_tl1 → FM_TL1). :vel and :vol are the
+// note's level (_lvMacros); these are the channel's other targets.
 export const OP_MACRO_MAP = [
   ["pan", "PAN"],
   // The FM family's (chips/fm-words.js): a macro's key is its word lower-cased.
