@@ -170,4 +170,7 @@ gate before each push (drv `verify:all`, `node tools/ab-gate.mjs`,
   gets its own off now); a :noise-rate / :env-rate / :lfo-rate sweep with
   no :from, and their `+` (from the value now).
   A Mega Drive pcm track's `:pan` (fm6's L / R, every voice's): heard
-  in the preview, not yet on hardware.
+  in the preview, not yet on hardware. Sound effects over a song
+  (Tools > MMLispDRV Backend, the panel's Sound Effects): a part comes
+  back at its next note, not mid-note, on FM, PSG and PCM alike; a PCM
+  SE's own pan; a VGM's / DefleMask module's DAC pan on a real file.

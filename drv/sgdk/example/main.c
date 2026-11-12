@@ -75,7 +75,7 @@ static const u8* const SONGS[] = { MMLISP_SONG_LIST };
 // DROPPED — leaving the one playing alone — while the equal-or-higher one takes
 // the channel over and inherits its duty to hand the song back. Press A then B
 // to hear the takeover, B then A to hear the drop: in both cases the song's
-// held note returns, re-keyed mid-sustain, when the LAST effect ends.
+// part returns, at its next note, when the LAST effect ends.
 
 // ── Value slots (driver.md §6.4) ────────────────────────────────────────────
 // The score's `(def-val …)` declarations, in declaration order. demo.mmlisp

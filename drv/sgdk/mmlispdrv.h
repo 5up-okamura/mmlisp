@@ -137,13 +137,12 @@ void MMLisp_startSong(void);
 // same in every song of a bundle (driver.md §2.5). Unlike MMLisp_startTrack an
 // effect does not evict: on each of its parts' channels the song's part is
 // suspended with its live state kept, and when the effect ends — its own end,
-// or MMLisp_stopSe for a held or looping one — the song's part resumes and its
-// note is re-keyed mid-sustain. Against an effect already on the channel the
+// or MMLisp_stopSe for a held or looping one — the song's part has its state
+// back and sounds again from its next note. Against an effect already on the channel the
 // priority decides — the def-se's, or `priority`: a lower one is dropped and
 // the playing one left alone, an equal or higher one replaces it and the song
-// returns after the LAST effect. A PCM part overwrites the voice; a looping
-// song note there restarts when the effect ends. Playing is whether a part
-// still runs.
+// returns after the LAST effect. A PCM voice is a channel like any other
+// here. Playing is whether a part still runs.
 void MMLisp_playSe(u8 se);
 void MMLisp_playSePrio(u8 se, u8 priority);
 void MMLisp_stopSe(u8 se);

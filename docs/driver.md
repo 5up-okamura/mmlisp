@@ -87,7 +87,8 @@ named collection of tracks; the game starts and stops tracks individually
 already owned by a running track, the running track is released on that
 channel — with its release tail if the voice defines one (key-off, envelope
 runs out), otherwise immediately. The owner is found by walking the tracks:
-the running, unsuspended track on that channel.
+the running, unsuspended track on that channel. A PCM voice is such a channel
+too (`owned_ch`).
 
 **Claiming a channel wipes its modulators.** The new owner finds the channel's
 macro binds cleared, its running macro slots dropped and its sweep slots

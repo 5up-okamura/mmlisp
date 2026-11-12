@@ -2103,15 +2103,16 @@ static MMLDur read_dur(const uint8_t *b, uint32_t o) {
 }
 
 static void reclaim_se(MMLSeq *s, MMLTrack *se);
-/* A displaced part's channel (§2.5), defined with the SE code below. */
 /* CH3 — the shared channel 2 and the operator ids 16-19 — is one channel its
  * tracks share, so the ownership rule leaves it alone; an effect never plays
  * there (the compiler refuses it, E_SE_PART). */
 static int ch3_group(int ch) { return ch == 2 || (ch >= 16 && ch <= 19); }
 /* The channels a track owns, which an effect displaces it from into a ghost
- * (driver.md §2.5): the register channels but CH3, and the PCM voices. */
+ * (driver.md §2.5): the register channels but CH3, and the PCM voices — and
+ * a channel's place among the ghosts. */
 static int owned_ch(int ch) { return (ch < 10 && !ch3_group(ch)) || (ch >= CH_PCM1 && ch <= CH_PCM3); }
 static int ghost_ix(int ch) { return ch < 10 ? ch : 10 + ch - CH_PCM1; }
+/* A displaced part's channel (§2.5), defined with the SE code below. */
 static void ghost_swap(MMLSeq *s, int ch);
 static int ghost_in(MMLSeq *s, const MMLTrack *t);
 static void ghost_out(MMLSeq *s, int ch);
@@ -3157,8 +3158,9 @@ void mml_start_all(MMLSeq *s) {
 }
 
 /* ── SE: suspend and restore (driver.md §2.5) ──────────────────────────────
- * Mirrors drv-player _ghostCapture / _restoreGhost / _reclaimSe. The restore's write order — the patch, carrier level, pitch,
- * re-key — is normative: the gate diffs it byte for byte.
+ * Mirrors drv-player _ghostCapture / _restoreGhost / _reclaimSe. The
+ * restore's write order — the patch, then the carrier level — is normative:
+ * the gate diffs it byte for byte.
  */
 /* The patch an FM channel's structured shadow encodes, in VOICE_TABLE order
  * — the shadow is what the chip has, whatever wrote it. drv-player fmPatchOf. */
@@ -3354,7 +3356,6 @@ static void release_suspended(MMLSeq *s, MMLTrack *t) {
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].is_se && s->trk[i].displaced == idx) s->trk[i].displaced = 0xff;
 }
-
 
 /* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,
  * at mml_stop_track and at a fade's terminal stop (a held or looping SE ends

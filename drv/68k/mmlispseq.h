@@ -482,10 +482,11 @@ void mml_start_track(MMLSeq *s, uint8_t track_id);
  * `priority` when it is not MML_SE_PRIO_DEFAULT (driver.md §2.5). On each part's
  * channel the current owner is SUSPENDED, not evicted, and plays on unheard
  * into a ghost of its channel; the part's END_OF_TRACK or mml_stop_se puts
- * the ghost on the chip, re-keying a note the owner still holds. Against an effect already on the channel, the priority decides:
- * lower is dropped (the playing one is untouched), equal or higher preempts
- * it and inherits its restore duty. A PCM part overwrites the voice instead;
- * a looping song note there is restarted at the effect's end.
+ * the ghost's state back, and the owner sounds again from its next note (a
+ * note it still holds is not keyed anew). Against an effect already on the
+ * channel, the priority decides: lower is dropped (the playing one is
+ * untouched), equal or higher preempts it and inherits its restore duty. A
+ * PCM voice is a channel like any other here.
  * Stop ends every part; playing is whether any part still runs. */
 #define MML_SE_PRIO_DEFAULT (-1)
 void mml_play_se(MMLSeq *s, uint8_t se, int priority);

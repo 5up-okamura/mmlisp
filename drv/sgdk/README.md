@@ -271,7 +271,8 @@ while (TRUE) {
   `#include "mmlisp_se.h"` for the `SE_<NAME>` numbers. Each of its parts
   plays on the channel it names: the song's part there is suspended, not
   evicted — it plays on unheard — and when the effect ends (its own end, or
-  `MMLisp_stopSe`) it comes back in time, re-keying a note it still holds. An
+  `MMLisp_stopSe`) it comes back in time, sounding again from its next note
+  (a note it still holds is not keyed anew). An
   effect has no part on CH3 (`fm3`, its operators, CSM — the compiler
   refuses one). A second effect on the same
   channel is dropped if its priority is lower than the playing one's and
