@@ -58,9 +58,19 @@ Rules for every phase:
   (score-port's copy of RHYTHM_KIT gone); PORT_TARGETS → machine/targets.js.
   `check:paths` also holds every named import to an export of its module
   (a page's miss fails only in the browser).
-- Next: phase 3. mmlisp2ir.js has three top-level `let`s
-  (`compileFrameHz`, `drawStreams`, `freshNameCounter`): their writers stay
-  with them, or the state becomes an object.
+- Phase 3: done for the two planned files — mmlisp2ir.js into
+  lang/compile/ (13 modules, a DAG: diag → keywords / length → curves →
+  macros, params, voices, defs, imports, expand → notes, layers → track;
+  two lets got setters), import-vgm.js into vgm-chips.js, nes-chips.js and
+  audio/pcm-decode.js. Still large, not planned: ir-player.js (3.6k, the
+  mixins — see live-app.md), drv-player.js (3.6k, the C's twin),
+  import-mucom.js (3k), score-port.js (2.5k), export-mmb.js (2.1k).
+- Phase 5 is put to the user, not done: 76 files in tools/scripts and
+  drv/tools build repo paths by climbing from their own place (~340
+  lines), generators write to those paths, many are outside every gate;
+  a deeper directory would misplace their output for a prefix's worth of
+  order.
+- Next: phase 4 (index.html), section by section with the user.
 - The splits were done by a scratch tool (acorn: each top-level declaration
   verbatim with its comments, its file's imports computed, every importer
   rewritten, a line-multiset check that nothing was lost or doubled); it is
