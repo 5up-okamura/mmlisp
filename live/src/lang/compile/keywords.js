@@ -3,7 +3,7 @@
 // PCM's and the song's own words, a target or a track that lacks one.
 
 import { pushDiag } from "./diag.js";
-import { FM_CHANNEL_WORDS, opWords, FM_OP_WORDS } from "../../machine/chips/fm-words.js";
+import { FM_CHANNEL_WORDS, opWords, FM_OP_WORDS } from "../../ir/fm-words.js";
 import { NAMED_CC } from "../../machine/chips/midi.js";
 import { partsWithWord } from "../../machine/targets.js";
 

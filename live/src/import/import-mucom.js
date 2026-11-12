@@ -19,7 +19,7 @@ import { PPQN, qstr, noteName } from "./import-song.js";
 import { lineItems } from "./import-shapes.js";
 import { ym2608 } from "../machine/chips/ym2608.js";
 import { envCycle } from "../machine/chips/ssg.js";
-import { pruneUnnamedDefs } from "../port/score-port.js";
+import { pruneUnnamedDefs } from "../editor/edit-tools.js";
 import { PORT_TARGETS } from "../machine/targets.js";
 import { RHYTHM_SOUNDS, RHYTHM_KIT } from "./rhythm-kit.js";
 

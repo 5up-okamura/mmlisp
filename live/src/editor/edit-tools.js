@@ -29,6 +29,47 @@ function lineStarts(text) {
   return starts;
 }
 
+// A form `(head …)` (any head when none is given).
+export const isList = (n, head) => n?.kind === "list" && n.bracket === "()" && (head == null || n.items[0]?.value === head);
+
+/**
+ * A score with the defs nothing names taken out — a macro, a voice, a wave,
+ * a sample of a dropped track's, one a rule replaced, one only kept — and
+ * then what only they named: { text, gone } (the names, in the score's order).
+ */
+export function pruneUnnamedDefs(text) {
+  const gone = [];
+  let out = text;
+  for (let pass = 0; pass < 8; pass++) {
+    let roots;
+    try { roots = parse(out); } catch { break; }
+    const named = new Map();
+    const count = (n) => {
+      if (n?.kind === "atom") for (const v of new Set([n.value, String(n.value).replace(/^[$']/, "")])) named.set(v, (named.get(v) ?? 0) + 1);
+      if (n?.kind === "list") n.items.forEach(count);
+    };
+    roots.forEach(count);
+    const inside = (n, name) => { let c = 0; const w = (m) => { if (m?.kind === "atom" && m.value === name) c++; if (m?.kind === "list") m.items.forEach(w); }; w(n); return c; };
+    const defs = roots.filter((n) => ["def", "def-fm", "def-wave", "def-pcm"].some((h) => isList(n, h)) && n.items[1]?.kind === "atom"
+      && named.get(n.items[1].value) - inside(n, n.items[1].value) === 0);
+    if (!defs.length) break;
+    const starts = lineStarts(out);
+    const names = [];
+    for (const n of defs.sort((a, b) => b.line - a.line || b.column - a.column)) {
+      const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
+      // Its line too where it stood alone on it, and a blank line after.
+      const lineStart = out.lastIndexOf("\n", from - 1) + 1;
+      const alone = /^[ \t]*$/.test(out.slice(lineStart, from)) && out[to] === "\n";
+      const end = alone && out[to + 1] === "\n" && (lineStart === 0 || out[lineStart - 2] === "\n") ? to + 2 : alone ? to + 1 : to;
+      out = out.slice(0, alone ? lineStart : from) + out.slice(end);
+      names.unshift(n.items[1].value);
+    }
+    gone.push(...names);
+  }
+  return { text: out, gone };
+}
+
+
 // A node's [from, to) in the text. Lists carry their end; an atom ends after
 // its value, a string after its quotes.
 function nodeSpan(node, starts) {

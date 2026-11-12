@@ -6,7 +6,7 @@
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { TARGETS } from "../../live/src/machine/targets.js";
 import { defTemplates } from "../../live/src/editor/def-templates.js";
-import { fmInitVoice } from "../../live/src/machine/chips/fm-words.js";
+import { fmInitVoice } from "../../live/src/ir/fm-words.js";
 
 let n = 0;
 for (const [name, target] of Object.entries(TARGETS)) {

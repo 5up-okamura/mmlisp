@@ -4,7 +4,7 @@
 // (export-midi.js) and, while Live plays, to a MIDI output (midi-output.js).
 // The IR player runs its clock and writes nothing (its `none` core).
 import { words } from "./parts.js";
-import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "../../midi/gm-names.js";
+import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "./gm-names.js";
 
 // A channel's controllers, CC0–CC127 (`:cc74`), each a value 0–127 a write,
 // a macro or a sweep moves; its channel pressure; its program and bank, and

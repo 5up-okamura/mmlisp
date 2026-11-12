@@ -19,9 +19,9 @@
 // ---------------------------------------------------------------------------
 
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
-import { IRPlayer } from "../player/ir-player.js";
-import { DrvPlayer } from "./drv-player.js";
-import { encodeMmb } from "./export-mmb.js";
+import { IRPlayer } from "./ir-player.js";
+import { DrvPlayer } from "../driver/drv-player.js";
+import { encodeMmb } from "../driver/export-mmb.js";
 
 const FRAME_SKEW = 1; // frames of allowed timing skew
 

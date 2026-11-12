@@ -70,7 +70,20 @@ Rules for every phase:
   lines), generators write to those paths, many are outside every gate;
   a deeper directory would misplace their output for a prefix's worth of
   order.
-- Next: phase 4 (index.html), section by section with the user.
+- The review (2026-11-12) found the layers still looped (six mutual
+  pairs); fixed by moving fm-words.js → ir/, sample-bank.js → export/,
+  ab-compare.js → player/, export-midi.js → midi/, gm-names.js →
+  machine/chips/, pruneUnnamedDefs (+ isList) → editor/edit-tools.js.
+  `check:paths` now fails on a loop between live/src's directories.
+- Phase 4, as the review recast it: no addEventListener pass (each module
+  can keep `window.X =`; the smoke already catches a handler that does not
+  resolve). First the page's pure code out — 290 declarations, ~1,370
+  lines that read no top-level `let` (directly or through a callee) and
+  touch no document / window / audio (CodeMirror's language support, the
+  bracket scan, the def readers). Then stop and decide: 95 of the page's
+  235 top-level lets are written from another section, which ES modules
+  cannot import-and-assign; moving the bound sections needs them made one
+  state object first, and a smoke that drives those sections.
 - The splits were done by a scratch tool (acorn: each top-level declaration
   verbatim with its comments, its file's imports computed, every importer
   rewritten, a line-multiset check that nothing was lost or doubled); it is

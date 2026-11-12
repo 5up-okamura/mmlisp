@@ -24,7 +24,7 @@ import { KEY_OFF_LEAD_SECS, KEY_ORDER_EPS_SECS, HOLD_FRAMES, expandLoops } from 
 import { toneLaneOf, targetProfile, notYet } from "../machine/targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "../driver/mmb.js";
 import { PCM8_VOICES } from "../machine/chips/msm6258.js";
-import { FM_OPS, fmInitVoice, fmOpWord } from "../machine/chips/fm-words.js";
+import { FM_OPS, fmInitVoice, fmOpWord } from "../ir/fm-words.js";
 import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
 import { workMethods } from "./ir-player-work.js";
 import { panelMethods } from "./ir-player-panel.js";

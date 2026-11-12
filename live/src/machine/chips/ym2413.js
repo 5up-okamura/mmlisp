@@ -11,7 +11,7 @@
 // the modulator, op2 the carrier, whose level is the channel's 4-bit volume.
 // A voice is one of the ROM's when its registers are, and the user voice
 // otherwise — one for the chip, the last written winning.
-import { fmWords } from "./fm-words.js";
+import { fmWords } from "../../ir/fm-words.js";
 import { NO_WORDS } from "./parts.js";
 import { pitchToMidi } from "../../ir/pitch.js";
 

@@ -2,7 +2,8 @@
 // Every path the code names by a literal resolves to a file: a module's
 // relative imports (static and dynamic), a worker's, a worklet's and a
 // `new URL(…, import.meta.url)`'s, the page's script, link and image
-// references, and any "…live/src/….js" a tool spells out. Moving a file
+// references, and any "…live/src/….js" a tool spells out; every named import
+// is an export of its module; live/src's directories import in no cycle. Moving a file
 // breaks one of these silently in a page or a worker nobody runs in node.
 
 import { execFileSync } from "node:child_process";
@@ -96,8 +97,37 @@ for (const f of files) {
     }
   }
 }
+// live/src's directories are layers: the imports between them form no cycle
+// (CLAUDE.md's map lists them bottom to top).
+const SRC = join(repo, "live/src");
+const edges = new Map();
+for (const f of files.filter((f) => f.startsWith("live/src/") && f.endsWith(".js"))) {
+  const from = f.split("/")[2];
+  if (!f.slice("live/src/".length).includes("/")) continue;
+  for (const m of readFileSync(join(repo, f), "utf8").matchAll(/(?:\bfrom|\bimport)\s*\(?\s*["'](\.\.?\/[^"']+)["']/g)) {
+    const to = resolve(dirname(join(repo, f)), m[1]);
+    if (!to.startsWith(SRC + "/")) continue;
+    const dir = to.slice(SRC.length + 1).split("/")[0];
+    if (dir === from || !to.slice(SRC.length + 1).includes("/")) continue;
+    if (!edges.has(from)) edges.set(from, new Map());
+    if (!edges.get(from).has(dir)) edges.get(from).set(dir, `${f} → ${m[1]}`);
+  }
+}
+const done = new Set();
+const visit = (d, stack) => {
+  if (done.has(d)) return;
+  if (stack.includes(d)) {
+    const loop = stack.slice(stack.indexOf(d)).concat(d);
+    bad.push(`live/src's layers loop: ${loop.join(" → ")} (${loop.slice(0, -1).map((x, i) => edges.get(x).get(loop[i + 1])).join("; ")})`);
+    return;
+  }
+  for (const to of edges.get(d)?.keys() ?? []) visit(to, stack.concat(d));
+  done.add(d);
+};
+for (const d of edges.keys()) visit(d, []);
+
 if (bad.length) {
-  console.error(`check:paths: ${bad.length} path(s) or name(s) that name nothing:\n  ${bad.join("\n  ")}`);
+  console.error(`check:paths: ${bad.length} problem(s) — a path or a name that names nothing, or a layer loop:\n  ${bad.join("\n  ")}`);
   process.exit(1);
 }
 console.log(`check:paths ok (${files.length} files)`);

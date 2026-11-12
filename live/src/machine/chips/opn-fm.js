@@ -2,7 +2,7 @@
 // registers, the algorithm and feedback, the chip's one LFO, and FM3's
 // independent-operator and CSM tracks.
 import { words } from "./parts.js";
-import { fmWords } from "./fm-words.js";
+import { fmWords } from "../../ir/fm-words.js";
 import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80 } from "./opn-regs.js";
 import { fnumBlockOf, noteCents } from "../../ir/pitch.js";
 

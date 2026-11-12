@@ -8,7 +8,7 @@ import { pushDiag, nodeSrc, atomValue, parseNumberLike } from "./diag.js";
 import { expandNode } from "./expand.js";
 import { canonicalTarget, VEL_SENS_TARGETS, velSensSixteenths, targetLacks, VEL_SENS_AUTO, keywordOf } from "./keywords.js";
 import { evalValue, makeEnv } from "../mmlisp-eval.js";
-import { fmInitVoice, FM_CHANNEL_WORDS, opWords, FM_OP_WORDS } from "../../machine/chips/fm-words.js";
+import { fmInitVoice, FM_CHANNEL_WORDS, opWords, FM_OP_WORDS } from "../../ir/fm-words.js";
 
 // `init-fm`, the empty voice: a sine on the machine's FM part (chips/fm-words.js fmInitVoice).
 export function createInitFmKwMap(target) {

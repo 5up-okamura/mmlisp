@@ -1123,15 +1123,15 @@
     import { IRPlayer, songOrEffectIr } from './src/player/ir-player.js';
     import { DrvPlayer } from './src/driver/drv-player.js';
     import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/driver/export-mmb.js';
-    import { abCompare, formatAbReport } from './src/driver/ab-compare.js';
+    import { abCompare, formatAbReport } from './src/player/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export/export-vgm.js';
-    import { exportMidi } from './src/export/export-midi.js';
+    import { exportMidi } from './src/midi/export-midi.js';
     import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith, PORT_TARGETS } from './src/machine/targets.js';
-    import { fmOpWord, fmInitVoice } from './src/machine/chips/fm-words.js';
+    import { fmOpWord, fmInitVoice } from './src/ir/fm-words.js';
     import { opllRomVoices } from './src/machine/chips/ym2413.js';
     import { bakeAdpcmB } from './src/machine/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/machine/chips/msm6258.js';
-    import { bakeSampleBank, hasSampleBank, sampleBankKind } from './src/audio/sample-bank.js';
+    import { bakeSampleBank, hasSampleBank, sampleBankKind } from './src/export/sample-bank.js';
     import { bakeRhythmStandIn } from './src/machine/chips/rhythm-rom.js';
     import { Mp4Muxer } from './src/export/mp4-mux.js';
     import { renderWav } from './src/export/export-wav.js';
@@ -12012,7 +12012,7 @@ import { collectImports } from './src/lang/compile/imports.js';
     // the OPN's, DT2 the OPM's, WS / EG / KSL / VIB the OPLL's, and the OPLL
     // has two operators, op1's TL alone.
     // In the panel's order (the envelope's first), each row the FM family's
-    // word (src/machine/chips/fm-words.js): its range, label and regs field. VEL's
+    // word (src/ir/fm-words.js): its range, label and regs field. VEL's
     // slider runs 0–1 in sixteenths (language.md §6), not its -1 "the role's own".
     const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG',
       'FM_WS', 'FM_EG', 'FM_KSL', 'FM_VIB', 'FM_VEL']

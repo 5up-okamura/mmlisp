@@ -12,7 +12,7 @@
 // the `noise` channel plays it alone on that operator; both encoders keep
 // the one $0F (noiseReg).
 import { NO_WORDS, words } from "./parts.js";
-import { fmWords } from "./fm-words.js";
+import { fmWords } from "../../ir/fm-words.js";
 import { encode30, encode80, panSide } from "./opn-regs.js";
 
 const CLOCK = 4000000; // the X68000's

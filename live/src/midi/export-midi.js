@@ -45,7 +45,7 @@
 // export compiles with; without it no program change is written.
 // ---------------------------------------------------------------------------
 
-import { GM_DRUM_NOTE, programOf } from "../midi/gm-names.js";
+import { GM_DRUM_NOTE, programOf } from "../machine/chips/gm-names.js";
 import { targetProfile } from "../machine/targets.js";
 import { pitchToMidi } from "../ir/pitch.js";
 import { snapNote, clampForTarget } from "../ir/ranges.js";

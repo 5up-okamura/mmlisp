@@ -18,7 +18,7 @@ import { bakedChipSamples, loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 import { renderWavSamples } from "../../live/src/export/export-wav.js";
 import { TARGETS, PORT_TARGETS } from "../../live/src/machine/targets.js";
-import { bakeSampleBank, sampleBankKind } from "../../live/src/audio/sample-bank.js";
+import { bakeSampleBank, sampleBankKind } from "../../live/src/export/sample-bank.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const OUT = join(repo, "live/src/machine/part-levels.js");

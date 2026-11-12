@@ -3,7 +3,7 @@
 // a value as a slot holds it. The compiler, the player and the driver's
 // export read the same table.
 
-import { FM_CHANNEL_WORDS, FM_OP_WORDS } from "../machine/chips/fm-words.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS } from "./fm-words.js";
 
 // ---------------------------------------------------------------------------
 // Macro target range table

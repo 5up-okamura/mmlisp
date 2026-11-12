@@ -6,7 +6,7 @@
 // After '(' — the def heads, the forms, the compile-time eval heads (§7), the
 // curves (§11) and the def-pcm :fx effects (§16).
 import { ALL_CHANNEL_NAMES, partsWithWord } from "../machine/targets.js";
-import { FM_CHANNEL_WORDS, opWords } from "../machine/chips/fm-words.js";
+import { FM_CHANNEL_WORDS, opWords } from "../ir/fm-words.js";
 
 export const AC_FORMS = [
   'def', 'def-val', 'def-fm', 'def-pcm', 'def-wave', 'def-se', 'def-score', 'def-mod', 'import',

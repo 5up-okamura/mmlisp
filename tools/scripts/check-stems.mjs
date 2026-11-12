@@ -29,7 +29,7 @@ import { renderWavSamples } from "../../live/src/export/export-wav.js";
 import { renderStems, mixerStrips, stemName, soloStrip } from "../../live/src/export/stems.js";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { targetProfile } from "../../live/src/machine/targets.js";
-import { bakeSampleBank, sampleBankKind } from "../../live/src/audio/sample-bank.js";
+import { bakeSampleBank, sampleBankKind } from "../../live/src/export/sample-bank.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 

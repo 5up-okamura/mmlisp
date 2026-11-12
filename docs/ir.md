@@ -302,7 +302,7 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 Notes: voice defs (`(def-fm name :alg …)` etc.) compile to a burst of same-tick
 `PARAM_SET`s (each carrying `_voiceSet`, the voice's name, under
 `compileMMLisp`'s `voiceStamps: true` — the MIDI export follows a channel's
-voice by it; stripped otherwise) in a fixed key order, `live/src/machine/chips/fm-words.js`'s (ALG, FB,
+voice by it; stripped otherwise) in a fixed key order, `live/src/ir/fm-words.js`'s (ALG, FB,
 AMS, FMS, then op1–4 × AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN,DT2,WS,EG,KSL,VIB),
 of the words the track's FM part has. An unsupported target is a diagnostic,
 and no event is emitted.

@@ -3,7 +3,7 @@
 // def-pcm — read off the parts of the score's machine (targets.js). No
 // machine is named here: a part brings its template as it brings its words,
 // and `tools npm run check:def-templates` compiles each one on its machine.
-import { FM_CHANNEL_WORDS, OPS, opWords, fmInitVoice } from "../machine/chips/fm-words.js";
+import { FM_CHANNEL_WORDS, OPS, opWords, fmInitVoice } from "../ir/fm-words.js";
 
 /**
  * A def-fm's text: `values` (Map IR word → value, any order) laid out the

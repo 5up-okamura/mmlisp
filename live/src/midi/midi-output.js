@@ -38,7 +38,7 @@
 // (tools: check:midi-out).
 // ---------------------------------------------------------------------------
 
-import { RPN_BEND, midiPlan, faderDb, velocity7 } from "../export/export-midi.js";
+import { RPN_BEND, midiPlan, faderDb, velocity7 } from "./export-midi.js";
 
 // CC7 for a level in dB, as the plan writes it (export-midi.js level7).
 const cc7Of = (db) => (db === -Infinity ? 0 : Math.max(0, Math.min(127, Math.round(127 * 10 ** (db / 40)))));

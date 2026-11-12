@@ -11,7 +11,7 @@
 // Mute and solo are the player's (a stem's strip soloed).
 // ---------------------------------------------------------------------------
 
-import { midiPlan } from "../export/export-midi.js";
+import { midiPlan } from "./export-midi.js";
 import { MidiOutRun } from "./midi-output.js";
 import { planVoices, GM_REVERB_DEFAULT } from "./gm-output.js";
 import { GmSynth } from "./gm-synth.js";

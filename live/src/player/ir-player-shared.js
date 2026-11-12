@@ -2,7 +2,7 @@
 // the frame order's phases, the routes and words the dispatchers share.
 import { TARGETS, TONE_LANES, toneLaneOf } from "../machine/targets.js";
 import { bpmToTickIncrement, tickIncrementToBpm } from "../driver/mmb.js";
-import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "../machine/chips/fm-words.js";
+import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords } from "../ir/fm-words.js";
 
 // A held DDA note (:len 0) with no next note: how long its sample is written.
 export const DDA_HOLD_SEC = 30;

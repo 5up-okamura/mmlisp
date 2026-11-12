@@ -33,6 +33,7 @@
 import { parse } from "../lang/mmlisp-parser.js";
 import { TARGETS, partsWithWord, configuredTarget, PORT_TARGETS } from "../machine/targets.js";
 import { RHYTHM_KIT } from "../import/rhythm-kit.js";
+import { isList, pruneUnnamedDefs } from "../editor/edit-tools.js";
 import { canonicalTarget } from "../lang/compile/keywords.js";
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
 import { loudDefs } from "../import/import-song.js";
@@ -107,7 +108,6 @@ const NOTE = /^([a-g][+-]?)((?:\d+(?:\/\d+)?)?(?:t|f|ms)?\.*)$/;
 const isNote = (v) => typeof v === "string" && NOTE.test(v);
 const restOf = (v) => `_${NOTE.exec(v)[2]}`;
 const num = (node) => (node?.kind === "atom" && /^-?\d+(\.\d+)?$/.test(node.value) ? Number(node.value) : null);
-const isList = (n, head) => n?.kind === "list" && n.bracket === "()" && (head == null || n.items[0]?.value === head);
 // The two FM families: the OPLL's 2 operators (a ROM of voices, `romNames`)
 // and the OPN's and OPM's 4. A voice goes as written within one.
 const twoOp = (part) => !!part?.romNames;
@@ -275,43 +275,6 @@ const knownRank = (n, heard) => rankOfName(n) ?? (heard?.has(n) ? rankOfName(hea
 function drumRank(h, heard = null) {
   const ranks = [...(h?.samples ?? [])].map((n) => knownRank(n, heard) ?? 4);
   return ranks.length ? Math.min(...ranks) : 4;
-}
-
-/**
- * A score with the defs nothing names taken out — a macro, a voice, a wave,
- * a sample of a dropped track's, one a rule replaced, one only kept — and
- * then what only they named: { text, gone } (the names, in the score's order).
- */
-export function pruneUnnamedDefs(text) {
-  const gone = [];
-  let out = text;
-  for (let pass = 0; pass < 8; pass++) {
-    let roots;
-    try { roots = parse(out); } catch { break; }
-    const named = new Map();
-    const count = (n) => {
-      if (n?.kind === "atom") for (const v of new Set([n.value, String(n.value).replace(/^[$']/, "")])) named.set(v, (named.get(v) ?? 0) + 1);
-      if (n?.kind === "list") n.items.forEach(count);
-    };
-    roots.forEach(count);
-    const inside = (n, name) => { let c = 0; const w = (m) => { if (m?.kind === "atom" && m.value === name) c++; if (m?.kind === "list") m.items.forEach(w); }; w(n); return c; };
-    const defs = roots.filter((n) => ["def", "def-fm", "def-wave", "def-pcm"].some((h) => isList(n, h)) && n.items[1]?.kind === "atom"
-      && named.get(n.items[1].value) - inside(n, n.items[1].value) === 0);
-    if (!defs.length) break;
-    const starts = lineStarts(out);
-    const names = [];
-    for (const n of defs.sort((a, b) => b.line - a.line || b.column - a.column)) {
-      const from = starts[n.line - 1] + n.column - 1, to = starts[n.endLine - 1] + n.endColumn - 1;
-      // Its line too where it stood alone on it, and a blank line after.
-      const lineStart = out.lastIndexOf("\n", from - 1) + 1;
-      const alone = /^[ \t]*$/.test(out.slice(lineStart, from)) && out[to] === "\n";
-      const end = alone && out[to + 1] === "\n" && (lineStart === 0 || out[lineStart - 2] === "\n") ? to + 2 : alone ? to + 1 : to;
-      out = out.slice(0, alone ? lineStart : from) + out.slice(end);
-      names.unshift(n.items[1].value);
-    }
-    gone.push(...names);
-  }
-  return { text: out, gone };
 }
 
 // A sample limited where a machine's samples come up short: driven into a

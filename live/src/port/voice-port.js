@@ -15,8 +15,8 @@
 // ---------------------------------------------------------------------------
 
 import { parse } from "../lang/mmlisp-parser.js";
-import { programOf } from "../midi/gm-names.js";
-import { fmInitVoice } from "../machine/chips/fm-words.js";
+import { programOf } from "../machine/chips/gm-names.js";
+import { fmInitVoice } from "../ir/fm-words.js";
 import { opllRomVoices, opllWordsAs4op, OPLL_ROM_NAMES } from "../machine/chips/ym2413.js";
 import { nearestVoiceOfWords } from "../import/import-fm-voices.js";
 import { canonicalTarget } from "../lang/compile/keywords.js";

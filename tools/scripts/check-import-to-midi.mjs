@@ -18,7 +18,7 @@ import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 import { renderVgm } from "../../live/src/export/export-vgm.js";
-import { midiPlan } from "../../live/src/export/export-midi.js";
+import { midiPlan } from "../../live/src/midi/export-midi.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import/import-vgm.js";
 import { parseDmf } from "../../live/src/import/import-dmf.js";
 import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import/import-tracker.js";
