@@ -33,7 +33,7 @@
 import { parse } from "../lang/mmlisp-parser.js";
 import { TARGETS, partsWithWord, configuredTarget, PORT_TARGETS } from "../machine/targets.js";
 import { RHYTHM_KIT } from "../import/rhythm-kit.js";
-import { isList, pruneUnnamedDefs } from "../editor/edit-tools.js";
+import { isList, lineStarts, pruneUnnamedDefs } from "../editor/edit-tools.js";
 import { canonicalTarget } from "../lang/compile/keywords.js";
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
 import { loudDefs } from "../import/import-song.js";
@@ -77,12 +77,6 @@ const midiOfNote = (v, oct) => {
   return 12 * (oct + 1) + SEMI[name[0]] + (name[1] === "+" ? 1 : name[1] === "-" ? -1 : 0);
 };
 
-// 0-based offsets of each line's start, for the parser's 1-based line / column.
-function lineStarts(text) {
-  const starts = [0];
-  for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);
-  return starts;
-}
 // The melodic kinds: a track of one goes onto a channel of any (wave-port.js).
 const MELODIC_KINDS = ["fm", "tone", "wave"];
 // The kinds whose channel is a timbre of its own — FM, a wave, a sample —

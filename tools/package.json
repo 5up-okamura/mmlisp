@@ -53,7 +53,8 @@
     "check:share": "node scripts/check-share.mjs",
     "check:lessons": "node scripts/check-lessons.mjs",
     "check:all": "node scripts/check-all.mjs",
-    "check:paths": "node scripts/check-paths.mjs"
+    "check:paths": "node scripts/check-paths.mjs",
+    "check:editor-parts": "node scripts/check-editor-parts.mjs"
   },
   "engines": {
     "node": ">=18"

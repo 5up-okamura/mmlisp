@@ -18,9 +18,9 @@ const TRACKS = new Set(AC_TRACKS);
 
 // 0-based offsets of each line start, for the parser's 1-based line/column.
 // The last text's are kept: the panel asks again on every cursor move, and
-// a long score is a long scan.
+// a long score is a long scan — so a caller only reads them.
 let _startsText = null, _starts = null;
-function lineStarts(text) {
+export function lineStarts(text) {
   if (text === _startsText) return _starts;
   const starts = [0];
   for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);

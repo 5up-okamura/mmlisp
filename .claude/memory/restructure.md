@@ -81,6 +81,13 @@ Rules for every phase:
   app/theme-colors.js; CodeMirror's `await import` became a static import
   (nothing ran before it). The smoke now drives the editor (it needs the
   score's top in view: a paste leaves it scrolled to the end).
+- After its review: score-port reads edit-tools' lineStarts (one copy);
+  `check:editor-parts` holds value-fields / fm-def / brackets in node; both
+  it and the smoke's editor step were seen to fail on a broken part.
+  Open, the user's call: names that read off since the layer fix —
+  sample-bank.js in export/ (the page's play bakes through it too),
+  midi/export-midi.js, editor/edit-tools.js holding the import's
+  pruneUnnamedDefs.
 - Phase 4, as the review recast it: no addEventListener pass (each module
   can keep `window.X =`; the smoke already catches a handler that does not
   resolve). First the page's pure code out — 290 declarations, ~1,370
