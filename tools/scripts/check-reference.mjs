@@ -5,7 +5,8 @@
 // editor's completion offers (completion-names.js) must have an entry.
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { collectImports } from "../../live/src/lang/compile/imports.js";
 import { parse } from "../../live/src/lang/mmlisp-parser.js";
 import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from "../../live/src/lang/reference.js";
 import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from "../../live/src/editor/completion-names.js";

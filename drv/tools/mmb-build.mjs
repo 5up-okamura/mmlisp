@@ -4,7 +4,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectImports, compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { collectImports } from "../../live/src/lang/compile/imports.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { encodeMmb } from "../../live/src/driver/export-mmb.js";
 import { loadSamplesForIr } from "./wav.mjs";
 

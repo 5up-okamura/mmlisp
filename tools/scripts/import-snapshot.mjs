@@ -33,7 +33,8 @@ import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp } from "../../
 import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import/import-tracker.js";
 import { parseDmf } from "../../live/src/import/import-dmf.js";
 import { parseFur } from "../../live/src/import/import-fur.js";
-import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { collectImports } from "../../live/src/lang/compile/imports.js";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 
 // A preset an imported score names, read from live/ (and what it imports).

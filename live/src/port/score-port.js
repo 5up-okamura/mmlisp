@@ -33,7 +33,8 @@
 import { parse } from "../lang/mmlisp-parser.js";
 import { TARGETS, partsWithWord, configuredTarget, PORT_TARGETS } from "../machine/targets.js";
 import { RHYTHM_KIT } from "../import/rhythm-kit.js";
-import { canonicalTarget, compileMMLisp } from "../lang/mmlisp2ir.js";
+import { canonicalTarget } from "../lang/compile/keywords.js";
+import { compileMMLisp } from "../lang/mmlisp2ir.js";
 import { loudDefs } from "../import/import-song.js";
 import { OPN_LFO_HZ, lfoHz } from "../machine/chips/ym2151.js";
 import { opllRomVoices, romVoicesAs4op, opllWordsAs4op } from "../machine/chips/ym2413.js";

@@ -7,7 +7,11 @@
 
 import { parse } from "../lang/mmlisp-parser.js";
 import { AC_TRACKS } from "./completion-names.js";
-import { compileMMLisp, canonicalTarget, macroCurveSteps, waveCurveSteps, dirnamePosix, importKeyOf, isAbsolutePath, resolveSamplePath } from "../lang/mmlisp2ir.js";
+import { compileMMLisp } from "../lang/mmlisp2ir.js";
+import { canonicalTarget } from "../lang/compile/keywords.js";
+import { macroCurveSteps } from "../lang/compile/curves.js";
+import { waveCurveSteps } from "../lang/compile/voices.js";
+import { dirnamePosix, importKeyOf, isAbsolutePath, resolveSamplePath } from "../lang/compile/imports.js";
 import { MACRO_TARGET_RANGE, WAVE } from "../ir/ranges.js";
 
 const TRACKS = new Set(AC_TRACKS);
