@@ -21,6 +21,17 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
   (2026-11-12). It reads what the score wrote, not state to come; counting
   ticks instead would rebuild the player for no symptom. Reopen only on a
   note across a tempo change that parts from the driver.
+- **Live's keys on a tone lane the song plays are played over the song**
+  (2026-11-12): the song's notes there move a held key's pitch and its
+  wave / duty writes its timbre; the key's level is its own and the lane is
+  the song's again at its next note. The keys take free lanes first, so it
+  shows only with every lane of the kind in use. Not held as FM is: FM's
+  hold is the worklet's per-chip FM bus (`hold-ch`, `opnHoldBus` …), and a
+  tone chip has no key register, shares registers between lanes (the AY's
+  mixer, the HuC6280's select) or takes bytes (the SN76489). A hold would
+  need a gate in the player (`_lane`) and in the worklet (the lookahead's
+  writes already sent) and the queued encoders (ssg, rp2a03, lr35902,
+  queued-tone) to carry their lane — reopen only for a symptom worth that.
 - **The PC Engine's PCM default level is not raised**: the DDA and a wave
   peak alike (−18.1 dBFS measured); the difference is the samples' energy,
   the machine's own balance.
@@ -146,32 +157,20 @@ voice-specific copy of any of these; extend the adapter instead:
 - `tools npm run check:note-path` holds all of it on every channel of every
   machine, sample ones included (closes, retriggers, mutes): 107 channels.
 
-## Waiting on the user (ask, do not decide)
+## Working here
 
-From the 2026-11-11 review (its items 1–4 are done: the song words' table,
-check:word-rule, the MIDI port's offs on a stop, stale names). Commits
-follow the repo's style (`refactor(player): …`, `fix(live): …`); author
-and committer hiroshi okamura <hiroshi_okamura@me.com>, no Claude
-attribution; work on `main` and push (it deploys mmlisp.com). Run every
-gate before each push (drv `verify:all`, `node tools/ab-gate.mjs`,
-`npm run pcm-ab`; tools `check:snapshot`, `check:note-path`,
-`check:word-rule`, `check:words`, `check:loops`, `check:panel`,
-`check:stems`, `check:gm-output`, `check:midi-out` …).
+Commits follow the repo's style (`refactor(player): …`, `fix(live): …`)
+with the Why / What / Impact body; author and committer hiroshi okamura
+<hiroshi_okamura@me.com>, no Claude attribution; on `main`, pushed only when
+the user asks (a push deploys mmlisp.com). Run every gate before a push (drv
+`verify:all`, `node tools/ab-gate.mjs`, `npm run pcm-ab`; tools
+`check:snapshot`, `check:note-path`, `check:word-rule`, `check:words`,
+`check:loops`, `check:panel`, `check:stems`, `check:gm-output`,
+`check:midi-out` …).
 
-- Live's keys on a tone lane the song plays: the song's notes move a held
-  key's pitch, and its wave / duty writes its timbre (the level is the
-  key's, `_lv().key`). FM's hold is not there to extend: it is the
-  worklet's per-chip FM bus (`hold-ch`, `opnHoldBus` …), dropping the
-  song's writes as they apply and replaying its registers at its next
-  key-on; a tone chip has no key register, shares registers between lanes
-  (the AY's mixer, the HuC6280's select) or takes bytes (the SN76489).
-  Options put to the user (2026-11-12): leave it; a gate in the player
-  (`_lane`: the song's writes to a lane a key holds are not encoded, its
-  words written back at the key's release) — one mechanism for every
-  machine, but writes already sent (≤ the lookahead) still land; a hold
-  bus per tone chip (~10 chips).
-- Not yet heard on a device (the user checks on their phone):
-  :target midi playback, mute / solo switching, the DMC's :keyon, the
+## To hear on a device
+
+- The user checks on their phone: :target midi playback, mute / solo switching, the DMC's :keyon, the
   GM note-off fix (cce183d); a stop on an external MIDI port (each key
   gets its own off now); a :noise-rate / :env-rate / :lfo-rate sweep with
   no :from, and their `+` (from the value now).
