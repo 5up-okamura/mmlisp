@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// File > Export > MIDI (live/src/midi/export-midi.js), held three ways:
+// File > Export > MIDI (live/src/midi/midi-plan.js), held three ways:
 //
 //   the corpus  every test score (drv/tests, examples, tools/tests/<target>)
 //               exports, the file reads back (import-midi.js parseMidi) as
@@ -26,7 +26,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
-import { exportMidi, midiPlan } from "../../live/src/midi/export-midi.js";
+import { exportMidi } from "../../live/src/export/export-midi.js";
+import { midiPlan } from "../../live/src/midi/midi-plan.js";
 import { GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/machine/chips/gm-names.js";
 import { OPLL_ROM_NAMES } from "../../live/src/machine/chips/ym2413.js";
 import { VRC7_ROM_NAMES } from "../../live/src/machine/chips/vrc7.js";

@@ -20,7 +20,7 @@ import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { canonicalTarget } from "../../live/src/lang/compile/keywords.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { pitchToMidi } from "../../live/src/ir/pitch.js";
-import { midiPlan } from "../../live/src/midi/export-midi.js";
+import { midiPlan } from "../../live/src/midi/midi-plan.js";
 import { TARGETS, PORT_TARGETS } from "../../live/src/machine/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
 import { importMucom, MUCOM_TARGETS } from "../../live/src/import/import-mucom.js";

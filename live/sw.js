@@ -18,7 +18,7 @@
 // so a preset, a snippet or the synth's worklet works offline before it was
 // ever opened.
 // Bump VERSION to drop the old cache on the next activation.
-const VERSION = 'mmlisp-v2';
+const VERSION = 'mmlisp-v3';
 const CACHE = `mmlisp-${VERSION}`;
 
 self.addEventListener('install', () => {

@@ -34,10 +34,10 @@ import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { targetProfile } from "../../live/src/machine/targets.js";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
-import { sampleBankKind } from "../../live/src/export/sample-bank.js";
+import { sampleBankKind } from "../../live/src/render/sample-bank.js";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 import { renderVgm } from "../../live/src/export/export-vgm.js";
-import { exportMidi } from "../../live/src/midi/export-midi.js";
+import { exportMidi } from "../../live/src/export/export-midi.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE = join(ROOT, "tools", "snapshot-baseline.json");

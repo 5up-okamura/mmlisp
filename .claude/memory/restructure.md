@@ -12,9 +12,9 @@ Rules for every phase:
   drv `verify:all`) and `cd live && npm run smoke` (the page boots, every
   inline handler resolves on `window`, one score per machine builds and
   plays). `check:paths` holds every literal path to a file.
-- Basenames stay (`import/import-vgm.js`, not `import/vgm.js`): the docs,
-  the memory and the commit history name files by them, and `midi.js`
-  would be three files.
+- A file is named for what it is (renames allowed); the directory
+  prefixes stay (`import/import-vgm.js`, not `import/vgm.js`): dropping
+  them makes four `midi.js`.
 - `live/src` stays the toolchain's home: the deploy serves `live/`, and
   moving the library out of it would need the server to serve the repo.
 
@@ -84,10 +84,20 @@ Rules for every phase:
 - After its review: score-port reads edit-tools' lineStarts (one copy);
   `check:editor-parts` holds value-fields / fm-def / brackets in node; both
   it and the smoke's editor step were seen to fail on a broken part.
-  Open, the user's call: names that read off since the layer fix —
-  sample-bank.js in export/ (the page's play bakes through it too),
-  midi/export-midi.js, editor/edit-tools.js holding the import's
-  pruneUnnamedDefs.
+- Names made true (the user, 2026-11-13: names may change, right beats
+  kept): render/ for what spans layers (sample-bank, gm-render,
+  ab-compare); midi/midi-plan.js (midiPlan) apart from
+  export/export-midi.js (the SMF); lang/score-text.js (lineStarts,
+  isList, nodeSpan, channelForms, pruneUnnamedDefs); fm-model.js →
+  machine/chips/; rhythm-kit.js dissolved — RHYTHM_SOUNDS / RHYTHM_KIT
+  into chips/rhythm-rom.js, ringGate into import-song.js. Left by
+  choice: the import- / export- / synth- / ir-player- prefixes inside
+  their directories (dropping them makes four midi.js), and
+  import-song.js / import-shapes.js's names (a matter of taste, low gain).
+- Open: phases 0–3 are pushed (2026-11-12); from ec38f7f6 on is not —
+  to be played by the user first (value drag, Logical Editor, themes, the
+  FM panel's write-back, completion templates, :target midi's WAV and MIDI
+  export). sw.js's cache version was bumped for the moved modules.
 - Phase 4, as the review recast it: no addEventListener pass (each module
   can keep `window.X =`; the smoke already catches a handler that does not
   resolve). First the page's pure code out — 290 declarations, ~1,370

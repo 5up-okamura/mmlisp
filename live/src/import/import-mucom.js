@@ -19,9 +19,9 @@ import { PPQN, qstr, noteName } from "./import-song.js";
 import { lineItems } from "./import-shapes.js";
 import { ym2608 } from "../machine/chips/ym2608.js";
 import { envCycle } from "../machine/chips/ssg.js";
-import { pruneUnnamedDefs } from "../editor/edit-tools.js";
+import { pruneUnnamedDefs } from "../lang/score-text.js";
 import { PORT_TARGETS } from "../machine/targets.js";
-import { RHYTHM_SOUNDS, RHYTHM_KIT } from "./rhythm-kit.js";
+import { RHYTHM_SOUNDS, RHYTHM_KIT } from "../machine/chips/rhythm-rom.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)

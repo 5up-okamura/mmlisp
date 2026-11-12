@@ -2161,7 +2161,7 @@ export class IRPlayer {
   // `:target midi`'s levels as the score writes them, for the panel: a
   // track's :vol (a value, a sweep, `+` `*` `$slot`), and a note's :vol
   // macro, which takes the fader's place until the next note (the output's
-  // plan does the same, export-midi.js); the song's :master is every
+  // plan does the same, midi-plan.js); the song's :master is every
   // machine's (_songWord).
   _midiLevel(ev, when) {
     const ti = ev._trackIndex;

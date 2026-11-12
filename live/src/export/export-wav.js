@@ -255,7 +255,7 @@ export async function renderWavSamples(player, opts = {}) {
   // SoundFont, its bytes `opts.gmBank` (gm-render.js, loaded only for it).
   if (target?.sound === "midi") {
     if (!opts.gmBank) throw new Error(noSound(target));
-    const { renderGmSamples } = await import("../midi/gm-render.js");
+    const { renderGmSamples } = await import("../render/gm-render.js");
     return renderGmSamples(player, { bank: opts.gmBank, reverb: opts.gmReverb, sampleRate, fadeSec, onProgress: opts.onProgress ?? null });
   }
   const synth = await synthFor(target?.name).create(sampleRate);

@@ -18,7 +18,7 @@ export default {
     ...Object.fromEntries([...Array(16).keys()].filter((v) => v !== 9).map((v) => [`ch${v + 1}`, on(midiChannel, v, v)])),
     // The drums: channel 10, eight tracks of it, so hits sound together (a
     // kick under a hat), as a ROM rhythm's tracks do (the YM2608 has six) —
-    // each a voice of the part, all on channel 10 (export-midi.js names them).
+    // each a voice of the part, all on channel 10 (midi-plan.js names them).
     ...Object.fromEntries([...Array(8).keys()].map((v) => [`drum${v + 1}`, on(midiDrums, v, 9)])),
   },
   hints: {},

@@ -65,7 +65,7 @@ function sortObject(value) {
  *   before this synchronous compile. Absent paths surface E_IMPORT_NOT_FOUND.
  * @param {boolean} [options.voiceStamps] - keep each NOTE_ON's voice as
  *   `_voice` and each voice change's writes as `_voiceSet` (ir.md §5.1,
- *   §5.6), for an export that names them (export-midi.js).
+ *   §5.6), for an export that names them (midi-plan.js).
  * @returns {{ ir: object, diagnostics: array, sourceMap: array }}
  */
 export function compileMMLisp(src, filename = "untitled.mmlisp", options = {}) {
@@ -770,7 +770,7 @@ function compileScore(src, filename, options, frameHz, tempoAt) {
   }
 
   // A note's voice is the compiler's alone (a def-mod :voice), but for an
-  // export that names it (export-midi.js's program change): `voiceStamps`.
+  // export that names it (midi-plan.js's program change): `voiceStamps`.
   tracks.forEach((t, idx) => {
     t.id = idx;
     if (!options.voiceStamps) for (const ev of t.events) { delete ev._voice; delete ev._voiceSet; }

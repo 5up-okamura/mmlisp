@@ -5,7 +5,7 @@
 // feedback saw (exact rules, so near-zero error). No recording is kept in the
 // repository. A hiss must be read as a noise and come out with its note as
 // :key.
-import { renderModel, RATE } from "../../live/src/import/fm-model.js";
+import { renderModel, RATE } from "../../live/src/machine/chips/fm-model.js";
 import { estimateVoice, features, distance, patchToDef, patchToRegs } from "../../live/src/import/voice-estimate.js";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import createNukedModule from "../../live/nuked-opn2.js";

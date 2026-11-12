@@ -2570,7 +2570,7 @@ at a time, as on every machine: a chord is several channels.
 A word of another machine's chips (`:tl1`, `:duty`, `:wave`) is `E_TARGET`
 here, and the MIDI words are `E_TARGET` on every other machine.
 
-**Every target exports MIDI** (File ▸ Export ▸ MIDI…, `live/src/midi/export-midi.js`):
+**Every target exports MIDI** (File ▸ Export ▸ MIDI…: `live/src/midi/midi-plan.js` reads the score, `live/src/export/export-midi.js` writes the file):
 a Standard MIDI File, format 1 at the IR's 96 ticks a quarter, of what the
 language has on every channel, as the score writes it (the Mega Drive's
 voice hoist, which moves a voice change into the silence before its note for

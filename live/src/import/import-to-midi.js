@@ -21,7 +21,7 @@
 // mode, the samples' own sound — is not carried.
 // ---------------------------------------------------------------------------
 
-import { exportMidi } from "../midi/export-midi.js";
+import { exportMidi } from "../export/export-midi.js";
 import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp } from "./import-midi.js";
 import { targetProfile } from "../machine/targets.js";
 import { programOf, GM_DRUM_NOTE } from "../machine/chips/gm-names.js";

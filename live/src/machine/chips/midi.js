@@ -1,7 +1,7 @@
 // MIDI (`:target midi`, language.md §19): fifteen melodic channels and the
 // drums (eight tracks of channel 10), a General MIDI instrument's. A chip
 // with no sound of its own: the score goes out as a Standard MIDI File
-// (export-midi.js) and, while Live plays, to a MIDI output (midi-output.js).
+// (midi-plan.js) and, while Live plays, to a MIDI output (midi-output.js).
 // The IR player runs its clock and writes nothing (its `none` core).
 import { words } from "./parts.js";
 import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "./gm-names.js";
@@ -9,7 +9,7 @@ import { GM_KIT_ROLES, GM_PROGRAMS, NAMED_VOICES, programOf } from "./gm-names.j
 // A channel's controllers, CC0–CC127 (`:cc74`), each a value 0–127 a write,
 // a macro or a sweep moves; its channel pressure; its program and bank, and
 // its pitch bend's range, which a channel sets. A controller a word of the
-// language writes is that word's (export-midi.js writes it): `:cc7` is
+// language writes is that word's (midi-plan.js writes it): `:cc7` is
 // refused for `:vol`, so the two never fight over CC7.
 export const NAMED_CC = {
   0: ":bank", 32: ":bank", // its MSB and LSB
@@ -47,7 +47,7 @@ export const midiDrums = {
   words: words(),
   points: false,
   // The GM kit's roles, built in: `kick` plays key 36. A sample that is no
-  // role plays its written note as the key (export-midi.js says so). The
+  // role plays its written note as the key (midi-plan.js says so). The
   // kit's order is the drum tracks' first sounds in a new score.
   kit: Object.fromEntries([...new Set(["kick", "snare", "hat", "hat-open", "crash", "ride", "tom4", "tom2", ...Object.values(GM_KIT_ROLES)])].map((role) => [role, role])),
   // The mixer's strips are its tracks, not its sounds: the MIDI output keys

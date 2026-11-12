@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
-import { IRPlayer } from "./ir-player.js";
+import { IRPlayer } from "../player/ir-player.js";
 import { DrvPlayer } from "../driver/drv-player.js";
 import { encodeMmb } from "../driver/export-mmb.js";
 

@@ -25,7 +25,7 @@ import { GM_KIT_ROLES } from "../machine/chips/gm-names.js";
 const KIT_RATE = 22050;
 
 // Role names by GM key: the vocabulary every preset kit shares.
-// The GM drum keys' kit roles: the MIDI export's table (export-midi.js).
+// The GM drum keys' kit roles: the MIDI export's table (gm-names.js).
 const KIT_ROLES = GM_KIT_ROLES;
 
 // Level (RMS of the loudest 50 ms, dBFS) and longest length (s) by role, as

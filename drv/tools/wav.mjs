@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decodeWav } from "../../live/src/audio/wav-decode.js";
-import { bakeSampleBank, sampleBankKind } from "../../live/src/export/sample-bank.js";
+import { bakeSampleBank, sampleBankKind } from "../../live/src/render/sample-bank.js";
 
 // Returns { data: Float32Array (mono, -1..1), sampleRate }.
 export function loadWav(path) {
@@ -77,7 +77,7 @@ export function loadSamplesForIr(ir, diagnostics = null) {
 
 /**
  * The sample images a VGM target's chips play from, baked as Live does for
- * Play and File > Export > VGM (live/src/export/sample-bank.js): the YM2608's
+ * Play and File > Export > VGM (live/src/render/sample-bank.js): the YM2608's
  * ADPCM-B RAM (`adpcm`), or the samples as frames (`frames`: PCM8's, the PC
  * Engine's DDA, the 2A03's DMC). Each null where the target has no such part
  * or the score names no sample file.

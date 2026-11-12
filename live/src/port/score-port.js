@@ -32,8 +32,8 @@
 
 import { parse } from "../lang/mmlisp-parser.js";
 import { TARGETS, partsWithWord, configuredTarget, PORT_TARGETS } from "../machine/targets.js";
-import { RHYTHM_KIT } from "../import/rhythm-kit.js";
-import { isList, lineStarts, pruneUnnamedDefs } from "../editor/edit-tools.js";
+import { RHYTHM_KIT } from "../machine/chips/rhythm-rom.js";
+import { isList, lineStarts, pruneUnnamedDefs } from "../lang/score-text.js";
 import { canonicalTarget } from "../lang/compile/keywords.js";
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
 import { loudDefs } from "../import/import-song.js";

@@ -22,7 +22,7 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { abCompare } from "../../live/src/player/ab-compare.js";
+import { abCompare } from "../../live/src/render/ab-compare.js";
 import { loadSamplesForIr } from "./wav.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));

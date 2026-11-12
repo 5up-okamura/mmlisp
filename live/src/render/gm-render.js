@@ -3,7 +3,7 @@
 // stems and the MCP render (export-wav.js renderWavSamples hands it over).
 //
 // The machine has no register log to play back: what sounds is the MIDI
-// export's plan (export-midi.js midiPlan), so a render runs MidiOutRun
+// export's plan (midi-plan.js midiPlan), so a render runs MidiOutRun
 // (midi-output.js) as the GM output does, on a clock of its own made from
 // the plan's tempo map, into the same synthesizer (gm-synth.js) — what Live
 // plays, rendered. Its length is the WAV export's: a looping score's loop
@@ -11,10 +11,10 @@
 // Mute and solo are the player's (a stem's strip soloed).
 // ---------------------------------------------------------------------------
 
-import { midiPlan } from "./export-midi.js";
-import { MidiOutRun } from "./midi-output.js";
-import { planVoices, GM_REVERB_DEFAULT } from "./gm-output.js";
-import { GmSynth } from "./gm-synth.js";
+import { midiPlan } from "../midi/midi-plan.js";
+import { MidiOutRun } from "../midi/midi-output.js";
+import { planVoices, GM_REVERB_DEFAULT } from "../midi/gm-output.js";
+import { GmSynth } from "../midi/gm-synth.js";
 
 const QUANTUM = 128;
 const PASS_FRAMES = 1024; // MidiOutRun sends ahead every ~20 ms, as Live's timer does

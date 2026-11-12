@@ -8,11 +8,12 @@
 // they share stay shared objects on the page (the piano roll keys on them).
 // With kind: 'logical', return source notes and channel spans instead. The
 // persistent Logical Editor must not compile on the page after each edit.
-// With kind: 'midi', the MIDI output's plan of the score (export-midi.js
+// With kind: 'midi', the MIDI output's plan of the score (midi-plan.js
 // midiPlan, `vals` the sliders' values): { id, plan } — null on an error.
 
 import { compileMMLisp } from '../lang/mmlisp2ir.js';
-import { layeredNotes, channelForms } from '../editor/edit-tools.js';
+import { layeredNotes } from '../editor/edit-tools.js';
+import { channelForms } from '../lang/score-text.js';
 import { midiPlanOf } from '../midi/midi-output.js';
 
 self.onmessage = (e) => {

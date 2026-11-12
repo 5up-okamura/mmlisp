@@ -13,7 +13,7 @@
 // either way: a drum is a drum.
 import { parse } from "../lang/mmlisp-parser.js";
 import { TARGETS } from "../machine/targets.js";
-import { channelForms } from "../editor/edit-tools.js";
+import { channelForms } from "../lang/score-text.js";
 
 const SOURCE = TARGETS.md;
 const MELODIC = ["fm", "tone", "wave"];

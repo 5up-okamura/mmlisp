@@ -18,6 +18,8 @@
 import { targetProfile } from "../machine/targets.js";
 
 export const PPQN = 96; // must match mmlisp2ir.js
+// A rhythm sound's ring time (rhythm-rom.js RHYTHM_SOUNDS) as the :gate its layer's hits hold the line for.
+export const ringGate = (s, bpm) => `:gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((bpm ?? 120) / 60) * PPQN))}t`;
 /** The time base estimateGrid works in: onsets in samples at this rate. */
 export const RATE = 44100;
 const WHOLE = PPQN * 4;

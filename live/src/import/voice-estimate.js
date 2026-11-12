@@ -20,7 +20,7 @@
  * The stages are separate functions that take and return plain data, so the
  * page can run the algorithms in parallel workers (voice-estimate-worker.js).
  */
-import { renderModel, RATE, CARRIERS } from "./fm-model.js";
+import { renderModel, RATE, CARRIERS } from "../machine/chips/fm-model.js";
 
 export { RATE };
 // computed on the signal decimated by 2 (≈26.6 kHz): FFT 1024, hop 512 ≈ 19 ms

@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
-import { midiPlan } from "../../live/src/midi/export-midi.js";
+import { midiPlan } from "../../live/src/midi/midi-plan.js";
 import { MidiOutRun, channelOpening } from "../../live/src/midi/midi-output.js";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 

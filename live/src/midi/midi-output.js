@@ -2,7 +2,7 @@
 // MIDI output (MMLisp > MIDI > Output): a `:target midi` score played to a
 // MIDI port as it plays — a sound module, a DAW, a synth.
 //
-// What goes out is the MIDI export's (export-midi.js midiPlan): the same
+// What goes out is the MIDI export's (midi-plan.js midiPlan): the same
 // channels, notes, programs, levels, pans and bends a .mid of the score
 // holds, sent ahead of the audio with Web MIDI's timestamps, on the
 // preview's own clock — each track on its IR track's (IRPlayer trackTickAt),
@@ -38,9 +38,9 @@
 // (tools: check:midi-out).
 // ---------------------------------------------------------------------------
 
-import { RPN_BEND, midiPlan, faderDb, velocity7 } from "./export-midi.js";
+import { RPN_BEND, midiPlan, faderDb, velocity7 } from "./midi-plan.js";
 
-// CC7 for a level in dB, as the plan writes it (export-midi.js level7).
+// CC7 for a level in dB, as the plan writes it (midi-plan.js level7).
 const cc7Of = (db) => (db === -Infinity ? 0 : Math.max(0, Math.min(127, Math.round(127 * 10 ** (db / 40)))));
 import { compileMMLisp } from "../lang/mmlisp2ir.js";
 
@@ -310,7 +310,7 @@ export class MidiOutRun {
       let lo = 0, hi = ev.length;
       while (lo < hi) { const m = (lo + hi) >> 1; if (ev[m].tick < ta) lo = m + 1; else hi = m; }
       // Round the loop again (past the plan's end), what stood before the
-      // label at the loop point plays no more (export-midi.js `once`).
+      // label at the loop point plays no more (midi-plan.js `once`).
       const again = a >= endTick;
       const out = (e, raw) => { if (e.bytes[0] < 0xf0 && !(again && e.once)) emit(e, raw); };
       let i = lo;

@@ -3,7 +3,7 @@
 // preset set's voices (presets/gm), the voices named for an instrument (the
 // roles, the OPLL's ROM) as the program each stands for, and the drum keys
 // as the kit roles (presets/gm-drums). Read by the MIDI chip (chips/midi.js),
-// the MIDI export (export-midi.js) and the imports (import-midi.js,
+// the MIDI export (midi-plan.js) and the imports (import-midi.js,
 // import-sf2.js).
 // ---------------------------------------------------------------------------
 

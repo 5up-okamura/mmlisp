@@ -80,9 +80,9 @@ import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
   assignBends, PITCH_NONE, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
 import { targetProfile, PORT_TARGETS } from "../machine/targets.js";
 import { envCycle } from "../machine/chips/ssg.js";
-import { rhythmRom } from "../machine/chips/rhythm-rom.js";
+import { rhythmRom, RHYTHM_SOUNDS, RHYTHM_KIT } from "../machine/chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "../machine/chips/msm6258.js";
-import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./rhythm-kit.js";
+import { ringGate } from "./import-song.js";
 import { assignEnvelopes, shapeOf } from "./import-shapes.js";
 import { beatClock, shuffleTokens, timingLine } from "./import-timing.js";
 import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";

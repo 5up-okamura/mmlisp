@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// MIDI export (File > Export > MIDI…)
-//
-// The score's portable core as a Standard MIDI File, on every target: what
+// The score's MIDI plan (midiPlan): its portable core as MIDI events, on
+// every target — what File > Export > MIDI writes (export/export-midi.js),
+// MMLisp > MIDI > Output sends and the GM render plays. What
 // a note, a level, a pan and a pitch are, read off the IR at its own
-// resolution (format 1, 96 ticks a quarter, the IR's). A machine's own words
+// resolution (96 ticks a quarter, the IR's). A machine's own words
 // — an FM operator, a duty, a wave, a noise mode, the SSG's envelope — have
 // no MIDI reading and are left out, said once in `notes`.
 //
@@ -53,7 +53,7 @@ import { expandLoops, FRAME_HZ_NTSC } from "../ir/timing.js";
 import { sampleCurveUnit } from "../ir/curves.js";
 import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "../ir/levels.js";
 
-const PPQN = 96;
+export const PPQN = 96;
 const DRUM_CH = 9;
 const BEND_RANGES = [2, 12, 24];
 // Tracks that loop are written out to a common length, the LCM of their loops;
@@ -642,52 +642,13 @@ function trackEvents(events, ctx, chan, drums, notes) {
 }
 
 // ── The file ─────────────────────────────────────────────────────────────
-const vlq = (v) => {
+export const vlq = (v) => {
   const b = [v & 0x7f];
   while ((v >>>= 7)) b.unshift((v & 0x7f) | 0x80);
   return b;
 };
 const text = (s) => [...new TextEncoder().encode(s)];
-const meta = (type, data) => [0xff, type, ...vlq(data.length), ...data];
-
-function encodeTrack(events) {
-  const sorted = events
-    .map((e, i) => ({ ...e, tick: Math.max(0, Math.round(e.tick)), i: e.seq ?? i }))
-    .sort((a, b) => a.tick - b.tick || a.order - b.order || a.i - b.i);
-  const body = [];
-  let at = 0;
-  for (const e of sorted) {
-    body.push(...vlq(e.tick - at), ...e.bytes);
-    at = e.tick;
-  }
-  body.push(0, ...meta(0x2f, []));
-  return [0x4d, 0x54, 0x72, 0x6b, (body.length >>> 24) & 255, (body.length >>> 16) & 255, (body.length >>> 8) & 255, body.length & 255, ...body];
-}
-
-/**
- * The score as a Standard MIDI File.
- *
- * @param {object} ir  compileMMLisp's IR, compiled with `voiceStamps: true`
- *                     for the voices' program changes and `voiceHoist: false`:
- *                     the hoist is the driver's wire (voice-hoist.js), and
- *                     cuts a note short for the voice change after it
- * @returns {{ bytes: Uint8Array, notes: string[],
- *             tracks: Array<{ name, channel, port, drums, notes: Array<{on, off, key, velocity}> }> }}
- *          `notes`: what the file could not say, one line each
- */
-export function exportMidi(ir) {
-  const plan = midiPlan(ir);
-  const chunks = [encodeTrack(plan.conductor), ...plan.tracks.map((t) => encodeTrack(t.events))];
-  const header = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (chunks.length >> 8) & 255, chunks.length & 255, 0, PPQN];
-  const bytes = new Uint8Array(header.length + chunks.reduce((m, c) => m + c.length, 0));
-  bytes.set(header, 0);
-  let p = header.length;
-  for (const c of chunks) { bytes.set(c, p); p += c.length; }
-  return {
-    bytes, notes: plan.notes,
-    tracks: plan.tracks.map(({ name, channel, port, drums, notes }) => ({ name, channel: channel + 1, port, drums, notes })),
-  };
-}
+export const meta = (type, data) => [0xff, type, ...vlq(data.length), ...data];
 
 /**
  * What exportMidi writes, before it is a file: the song's MIDI, a track an IR
