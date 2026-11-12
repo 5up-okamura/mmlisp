@@ -75,6 +75,12 @@ Rules for every phase:
   ab-compare.js → player/, export-midi.js → midi/, gm-names.js →
   machine/chips/, pruneUnnamedDefs (+ isList) → editor/edit-tools.js.
   `check:paths` now fails on a loop between live/src's directories.
+- Phase 4 step 1 done: the page's editor parts and theme colours out of
+  index.html (16.1k → 15.0k lines) into editor/ (mmlisp-mode, brackets,
+  value-fields, playhead, completion-sources, fm-def) and
+  app/theme-colors.js; CodeMirror's `await import` became a static import
+  (nothing ran before it). The smoke now drives the editor (it needs the
+  score's top in view: a paste leaves it scrolled to the end).
 - Phase 4, as the review recast it: no addEventListener pass (each module
   can keep `window.X =`; the smoke already catches a handler that does not
   resolve). First the page's pure code out — 290 declarations, ~1,370

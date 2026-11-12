@@ -1127,7 +1127,7 @@
     import { renderVgm, configurePcmRate } from './src/export/export-vgm.js';
     import { exportMidi } from './src/midi/export-midi.js';
     import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith, PORT_TARGETS } from './src/machine/targets.js';
-    import { fmOpWord, fmInitVoice } from './src/ir/fm-words.js';
+    import { fmInitVoice } from './src/ir/fm-words.js';
     import { opllRomVoices } from './src/machine/chips/ym2413.js';
     import { bakeAdpcmB } from './src/machine/chips/adpcm-b.js';
     import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/machine/chips/msm6258.js';
@@ -1156,11 +1156,8 @@
     import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import/import-to-midi.js';
     import { VOL_UNITY, levelGain } from './src/ir/levels.js';
 import { pitchToMidi } from './src/ir/pitch.js';
-import { MACRO_TARGET_RANGE } from './src/ir/ranges.js';
-import { fmCarrierOpsForAlg } from './src/machine/chips/opn-regs.js';
 import { macroFrames } from './src/ir/timing.js';
     import { compileMMLisp } from './src/lang/mmlisp2ir.js';
-import { canonicalTarget } from './src/lang/compile/keywords.js';
 import { collectImports } from './src/lang/compile/imports.js';
     import { CorrelationTrigger } from './src/synth/scope-trigger.js';
     import { parse } from './src/lang/mmlisp-parser.js';
@@ -1178,7 +1175,6 @@ import { collectImports } from './src/lang/compile/imports.js';
     import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/app/ai-bridge.js';
     import { createCatalogList, setTextWithIcons } from './src/editor/catalog-list.js';
     import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from './src/lang/reference.js';
-    import { isReservedHead } from './src/lang/mmlisp-eval.js';
     import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText, uiText } from './src/app/i18n.js';
     import { parseStep, stepKey, textKeys, firstUndone, neighbor, stepState, statusText, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/app/lessons.js';
     import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/editor/completion-names.js';
@@ -1193,171 +1189,16 @@ import { collectImports } from './src/lang/compile/imports.js';
     // -----------------------------------------------------------------------
     // CodeMirror 6 — one vendored bundle (vendor/, built by scripts/vendor/)
     // -----------------------------------------------------------------------
-    const cm = await import('./vendor/codemirror.js');
-    const { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection } = cm;
-    const { EditorState, EditorSelection, StateField, StateEffect, Compartment, Transaction } = cm;
-    const { syntaxHighlighting, HighlightStyle, StreamLanguage, indentService, indentUnit, foldService, foldGutter, foldKeymap, codeFolding } = cm;
-    const { tags } = cm;
-    const { history, historyField, foldState, historyKeymap, isolateHistory, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo } = cm;
-    const { hoverTooltip, closeHoverTooltips, hasHoverTooltips, tooltips } = cm;
-    const { autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, pickedCompletion } = cm;
-    const { search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } = cm;
+    import { EditorView, Decoration, lineNumbers, keymap, layer, RectangleMarker, drawSelection, EditorState, EditorSelection, Compartment, Transaction, syntaxHighlighting, indentUnit, foldGutter, foldKeymap, codeFolding, history, historyField, foldState, historyKeymap, isolateHistory, standardKeymap, indentWithTab, insertNewlineAndIndent, simplifySelection, undo, redo, hoverTooltip, closeHoverTooltips, tooltips, autocompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, startCompletion, selectedCompletion, search, searchKeymap, highlightSelectionMatches, openSearchPanel, selectNextOccurrence, selectSelectionMatches } from './vendor/codemirror.js';
+    import { DEFAULT_THEME_ID, THEMES, contrastPole, colorsForState, THEME_FIELDS, parseHexRGB, toHex6 } from "./src/app/theme-colors.js";
+    import { addCursorAt, bracketField, closeOpenBrackets, addCursorVertically, bracketLayer } from "./src/editor/brackets.js";
+    import { AC_SNIPPETS, AC_FX_EXAMPLE, AC_DETAIL, scanDefNames, TRACK_KIND_OF_PART, AC_TRACK_SET, matchNames, nameCompletion, AC_WORDS, referenceCtxAt, defCompletion, AC_MUSIC_WORD, closeReferenceOnMove } from "./src/editor/completion-sources.js";
+    import { OP_PARAMS, OP_REG_PARAMS, isFmVoiceDefNode, TWO_OP, ALG_CARRIERS, ALG_LAYOUT, ALG_EDGES, defaultFmRegs, fmParamToDefKey, defCloseAt, velSensText, replaceOrInsertDefParam } from "./src/editor/fm-def.js";
+    import { whitespaceFormatChanges, editorTheme, mmlispHighlight, mmlispMode, summarizeFoldHead, mmlispIndent, mmlispParenFold } from "./src/editor/mmlisp-mode.js";
+    import { playheadField, resolvePlayhead, srcToRange, setPlayheadBase, setTrackLine, setSeq, playheadLayer } from "./src/editor/playhead.js";
+    import { findAtomAt, fieldsForAtom, NAME_DEF_HEADS, clampField, NOTE_TO_IDX, CHROMA, setBars, fieldAtOffset, fmtNum, barAtOffset, setHover, setLogicalMarks, logicalSharedMark, logicalMark, logicalField, hoverField, barField } from "./src/editor/value-fields.js";
 
     const abHistory = new Compartment();
-
-    // Resolve a 1-based source span { line, column, endLine, endColumn } to a
-    // [from, to) document offset range, clamped to the document.
-    function srcToRange(doc, src) {
-      const lineObj = doc.line(src.line);
-      const from = lineObj.from + (src.column - 1);
-      const endLineObj = (src.endLine ?? src.line) === src.line
-        ? lineObj
-        : doc.line(src.endLine);
-      const to = endLineObj.from + ((src.endColumn ?? src.column + 1) - 1);
-      return [
-        Math.max(0, Math.min(doc.length, from)),
-        Math.max(from + 1, Math.min(doc.length, to)),
-      ];
-    }
-
-    // Playhead highlights (token per track + active step sequences). IR events
-    // carry source positions in the document the active IR was BUILT from, but
-    // editing during playback does not recompile — so positions are resolved
-    // against that build-time document once, then MAPPED through later edits so
-    // the highlight follows the text. Re-anchored on play / build.
-    //   setTrackLine: { trackIdx, src } — trackIdx=-1 clears all; src null removes one
-    //   setSeq:       { show, src } or { clear: true }  (ref-counted per [...] literal)
-    //   setPlayheadBase: re-anchor to the current doc (the active IR was just (re)built)
-    const setTrackLine = StateEffect.define();
-    const setSeq = StateEffect.define();
-    const setPlayheadBase = StateEffect.define();
-
-    // Resolve a build-time src to current-document [from, to): resolve against the
-    // anchor doc, then map through edits accumulated since the anchor. Returns null
-    // if the source region was deleted or reflowed away (e.g. a full reformat),
-    // so the highlight is dropped instead of collapsing to a stray position.
-    function resolvePlayhead(src, builtDoc, changes, curDoc) {
-      let from, to;
-      try { [from, to] = srcToRange(builtDoc ?? curDoc, src); }
-      catch (_) { return null; }
-      if (changes) {
-        const f = changes.mapPos(from, 1), t = changes.mapPos(to, -1);
-        if (t <= f) return null;
-        from = f; to = t;
-      }
-      from = Math.max(0, Math.min(curDoc.length, from));
-      to = Math.max(0, Math.min(curDoc.length, to));
-      return to > from ? [from, to] : null;
-    }
-
-    const playheadField = StateField.define({
-      // toks: Map<trackIdx, {from,to,cls}>; seqs: Map<"line:col", {from,to,count,cls}>
-      // builtDoc: anchor Text; changes: ChangeSet since anchor (null == identity)
-      create: () => ({ toks: new Map(), seqs: new Map(), builtDoc: null, changes: null }),
-      update(v, tr) {
-        let { toks, seqs, builtDoc, changes } = v;
-        let dirty = false;
-        const own = () => { if (!dirty) { toks = new Map(toks); seqs = new Map(seqs); dirty = true; } };
-
-        // Follow edits: map existing ranges; drop any whose region collapsed
-        // (deleted or reflowed, e.g. by a whole-document reformat).
-        if (tr.docChanged) {
-          own();
-          const remap = (m) => {
-            for (const [k, r] of m) {
-              const from = tr.changes.mapPos(r.from, 1);
-              const to = tr.changes.mapPos(r.to, -1);
-              if (to > from) m.set(k, { ...r, from, to });
-              else m.delete(k);
-            }
-          };
-          remap(toks); remap(seqs);
-          changes = changes ? changes.compose(tr.changes) : tr.changes;
-        }
-
-        for (const e of tr.effects) {
-          if (e.is(setPlayheadBase)) {
-            // The document the build was compiled from, and the edits made
-            // while it compiled (null: the current document, none).
-            own(); toks.clear(); seqs.clear();
-            builtDoc = e.value?.doc ?? tr.state.doc; changes = e.value?.changes ?? null;
-          } else if (e.is(setTrackLine)) {
-            own();
-            const { trackIdx, src } = e.value;
-            if (trackIdx === -1) toks.clear();
-            else if (!src) toks.delete(trackIdx);
-            else {
-              const r = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
-              if (r) toks.set(trackIdx, { from: r[0], to: r[1], cls: `cm-playTok-${trackIdx % 4}` });
-              else toks.delete(trackIdx);
-            }
-          } else if (e.is(setSeq)) {
-            own();
-            if (e.value.clear) { seqs.clear(); continue; }
-            const { show, src } = e.value;
-            const key = `${src.line}:${src.column}`;
-            const cur = seqs.get(key);
-            const count = (cur?.count ?? 0) + (show ? 1 : -1);
-            if (count <= 0) seqs.delete(key);
-            else if (cur) seqs.set(key, { ...cur, count });
-            else {
-              const r = resolvePlayhead(src, builtDoc, changes, tr.state.doc);
-              if (r) seqs.set(key, { from: r[0], to: r[1], count, cls: 'cm-playSeq' });
-            }
-          }
-        }
-
-        return dirty ? { toks, seqs, builtDoc, changes } : v;
-      },
-    });
-
-    // Draw playhead highlights as a layer of rectangles over the text rather than
-    // Decoration.mark spans. Marks split the text into inline boxes, which under
-    // lineWrapping can shift the soft-wrap point as highlights come and go; a
-    // layer never touches the text DOM, so the layout is unaffected.
-    //
-    // A span's rectangles are kept while only the playhead moves: measuring
-    // them (RectangleMarker.forRange's coordsAtPos and posAtCoords) reads the
-    // layout, every frame of a playing song, for the same few spans over and
-    // over. Any other update — an edit, a scroll, a resize, a mark that may
-    // move a soft wrap — lets them go.
-    const _playheadRects = new Map();
-    const playheadOnly = (update) => !update.viewportChanged && !update.geometryChanged
-      && update.transactions.length > 0
-      && update.transactions.every((tr) => !tr.docChanged && !tr.selection
-        && tr.effects.every((e) => e.is(setTrackLine) || e.is(setSeq)));
-    const playheadLayer = layer({
-      above: true,
-      class: 'cm-playheadLayer',
-      update: (update) => {
-        if (!playheadOnly(update) || _playheadRects.size > 4096) _playheadRects.clear();
-        return update.docChanged ||
-          update.viewportChanged ||
-          update.geometryChanged ||
-          update.startState.field(playheadField) !== update.state.field(playheadField);
-      },
-      markers: (view) => {
-        const len = view.state.doc.length;
-        const v = view.state.field(playheadField);
-        const markers = [];
-        const add = (r) => {
-          const from = Math.max(0, Math.min(len, r.from));
-          const to = Math.max(0, Math.min(len, r.to));
-          if (from >= to) return;
-          const key = `${from}:${to}:${r.cls}`;
-          let rects = _playheadRects.get(key);
-          if (!rects) {
-            try { rects = RectangleMarker.forRange(view, r.cls, EditorSelection.range(from, to)); }
-            catch (_) { rects = []; }
-            _playheadRects.set(key, rects);
-          }
-          for (const m of rects) markers.push(m);
-        };
-        for (const r of v.seqs.values()) add(r);
-        for (const r of v.toks.values()) add(r);
-        return markers;
-      },
-    });
 
     // Follow Playback (MMLisp menu): while playing, keep the highlighted notes
     // in view without chasing every one. Nothing moves while the highlights sit
@@ -1506,160 +1347,6 @@ import { collectImports } from './src/lang/compile/imports.js';
     });
 
 
-    // ===================================================================
-    // Interactive value editing
-    // -------------------------------------------------------------------
-    // Every adjustable value written in the source — keyword numbers
-    // (:vel 12, :tl1 45, :pitch -40), any note-length form (8, 8., 16t,
-    // 16f, 3/4), note names (c, c+, c2, c4.), and v±/o± shifts — can be
-    // nudged in place. Three surfaces share ONE classifier: long-press
-    // popup (desktop + touch), Alt+drag scrub (desktop), and the
-    // Mod-Shift-. / Mod-Shift-, keyboard shortcuts. classifyToken() maps a
-    // document offset to the editable field(s) at that token; each Field
-    // owns its replace range and a writeBack() that regenerates the token
-    // text (preserving suffix / sign / fraction). The token is the unit of
-    // hover + popup; only Alt+drag resolves to a sub-field by pointer x.
-    // ===================================================================
-
-    // Length-token forms accepted by parseLengthToken (mmlisp2ir.js).
-    const LEN_TICK = /^(\d+)t$/, LEN_FRAME = /^(\d+)f$/, LEN_FRAC = /^(\d+)\/(\d+)$/,
-          LEN_DOT = /^(\d+)\.$/, LEN_PLAIN = /^\d+$/;
-    const NUM_LITERAL = /^[+-]?\d+(?:\.\d+)?$/;
-    // Curve range sugar `A..B` (parseRangeToken in mmlisp2ir.js) — one atom
-    // holding two editable endpoints.
-    const RANGE_TOKEN = /^(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)$/;
-    const NOTE_BARE = /^[a-g][+-]?$/;
-    const NOTE_LEN = /^([a-g][+-]?)(.+)$/;
-    const VEL_SHIFT = /^v([+-])(\d*)$/, OCT_SHIFT = /^o([+-])(\d*)$/;
-    // Chromatic spelling used when the piano / semitone-nudge rewrites a note.
-    const CHROMA = ['c', 'c+', 'd', 'd+', 'e', 'f', 'f+', 'g', 'g+', 'a', 'a+', 'b'];
-    const NOTE_TO_IDX = {
-      c: 0, 'c+': 1, 'd-': 1, d: 2, 'd+': 3, 'e-': 3, e: 4, f: 5, 'f+': 6,
-      'g-': 6, g: 7, 'g+': 8, 'a-': 8, a: 9, 'a+': 10, 'b-': 10, b: 11,
-    };
-
-    function isLengthForm(v) {
-      return LEN_PLAIN.test(v) || LEN_DOT.test(v) || LEN_TICK.test(v) ||
-             LEN_FRAME.test(v) || LEN_FRAC.test(v);
-    }
-    function rangeForTarget(target) {
-      if (!target) return null;
-      return MACRO_TARGET_RANGE[target] || MACRO_TARGET_RANGE[target.replace(/\d+$/, '')] || null;
-    }
-    function fmtNum(x, isFloat) {
-      return isFloat ? String(Math.round(x * 1000) / 1000) : String(Math.round(x));
-    }
-    function clampField(field, v) {
-      const lo = field.min ?? -Infinity, hi = field.max ?? Infinity;
-      return Math.max(lo, Math.min(hi, v));
-    }
-
-    // --- Field factories (each returns a Field descriptor) ---
-    function numberField(from, to, valueStr, keyword) {
-      const target = keyword ? canonicalTarget(keyword) : null;
-      const range = rangeForTarget(target);
-      const isFloat = valueStr.includes('.');
-      return {
-        kind: 'number', range: [from, to], value: Number(valueStr),
-        min: range?.min, max: range?.max, step: 1, isFloat, target,
-        label: keyword ? keyword.replace(/^:/, '') : 'value',
-        writeBack: (v) => fmtNum(v, isFloat),
-      };
-    }
-    function lengthField(from, to, valueStr) {
-      let m, suffix = '', frac = null, numStr = valueStr;
-      if ((m = LEN_TICK.exec(valueStr))) { numStr = m[1]; suffix = 't'; }
-      else if ((m = LEN_FRAME.exec(valueStr))) { numStr = m[1]; suffix = 'f'; }
-      else if ((m = LEN_DOT.exec(valueStr))) { numStr = m[1]; suffix = '.'; }
-      else if ((m = LEN_FRAC.exec(valueStr))) { numStr = m[1]; frac = m[2]; }
-      return {
-        kind: 'number', range: [from, to], value: parseInt(numStr, 10),
-        min: 0, max: undefined, step: 1, isFloat: false, label: 'len',
-        writeBack: (v) => {
-          const n = Math.max(0, Math.round(v));
-          if (frac != null) return `${n}/${frac}`;
-          return `${n}${suffix}`;
-        },
-      };
-    }
-    function shiftField(from, to, m, kind) {
-      const sign = m[1] === '-' ? -1 : 1;
-      const digits = m[2] === '' ? 1 : parseInt(m[2], 10);
-      return {
-        kind: 'number', range: [from, to], value: sign * digits,
-        min: kind === 'v' ? -15 : -9, max: kind === 'v' ? 15 : 9, step: 1,
-        isFloat: false, label: kind === 'v' ? 'vel±' : 'oct±',
-        writeBack: (v) => { const iv = Math.round(v); return `${kind}${iv < 0 ? '-' : '+'}${Math.abs(iv)}`; },
-      };
-    }
-    function pitchField(from, to, noteStr) {
-      return {
-        kind: 'pitch', range: [from, to], value: { note: noteStr.toLowerCase() },
-        label: 'note', writeBack: (name) => name,
-      };
-    }
-
-    function fieldsForAtom(v, from, to, keyword) {
-      let m;
-      if (NOTE_BARE.test(v)) return [pitchField(from, to, v)];
-      if ((m = NOTE_LEN.exec(v)) && isLengthForm(m[2])) {
-        const mid = from + m[1].length;
-        return [pitchField(from, mid, m[1]), lengthField(mid, to, m[2])];
-      }
-      if ((m = RANGE_TOKEN.exec(v))) {
-        // Two endpoints in one atom: `-40..40` → from-field | `..` | to-field.
-        const midFrom = from + m[1].length, midTo = to - m[2].length;
-        const a = numberField(from, midFrom, m[1], keyword);
-        const b = numberField(midTo, to, m[2], keyword);
-        a.label = 'from'; b.label = 'to';
-        return [a, b];
-      }
-      if ((m = VEL_SHIFT.exec(v))) return [shiftField(from, to, m, 'v')];
-      if ((m = OCT_SHIFT.exec(v))) return [shiftField(from, to, m, 'o')];
-      if (keyword && NUM_LITERAL.test(v)) return [numberField(from, to, v, keyword)];
-      if (isLengthForm(v)) return [lengthField(from, to, v)];
-      if (NUM_LITERAL.test(v)) return [numberField(from, to, v, null)];
-      return null;
-    }
-
-    function atomOffsets(doc, node) {
-      const lineObj = doc.line(node.line);
-      const from = lineObj.from + (node.column - 1);
-      return [from, from + String(node.value).length];
-    }
-    // Walk the AST for the atom whose span contains `offset`, tracking the
-    // preceding sibling as keyword context (:vel 12 → keyword ":vel"). Numbers
-    // inside a `[…]` step array inherit the keyword that precedes the array, so
-    // `(macro :vel [15 14 …])` classifies each entry as a VEL value, not a len.
-    function findAtomAt(items, doc, offset, inheritedKw) {
-      for (let i = 0; i < items.length; i++) {
-        const n = items[i];
-        if (n.kind === 'atom') {
-          const [f, t] = atomOffsets(doc, n);
-          if (offset >= f && offset <= t) {
-            const prev = items[i - 1];
-            const kw = prev && prev.kind === 'atom' && prev.value.startsWith(':') ? prev.value : inheritedKw;
-            return { node: n, from: f, to: t, keyword: kw, prev: prev?.kind === 'atom' ? String(prev.value) : null };
-          }
-        } else if (n.kind === 'list') {
-          const lf = doc.line(n.line).from + (n.column - 1);
-          const lt = doc.line(n.endLine).from + (n.endColumn - 1);
-          if (offset >= lf && offset <= lt) {
-            // `[…]` = step array: entries inherit the array's keyword.
-            // `(…)` = a sub-form (curve/call): its args carry their own keywords.
-            let childKw = null;
-            if (n.bracket === '[]') {
-              const prev = items[i - 1];
-              childKw = prev && prev.kind === 'atom' && prev.value.startsWith(':') ? prev.value : inheritedKw;
-            }
-            const r = findAtomAt(n.items, doc, offset, childKw);
-            if (r) return r;
-          }
-        }
-      }
-      return null;
-    }
-
     // Parse cache: hover reclassifies on pointer moves, but the document only
     // changes on edits. CM's doc is immutable, so key the parse on the doc
     // object and reuse it (null = last parse failed) until the next edit.
@@ -1686,10 +1373,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       return { tokenRange: [hit.from, hit.to], fields, keyword: hit.keyword };
     }
 
-    // A written voice or sample name is a token too: its long-press opens the
-    // completion list on it (openNamePicker), so the pick replaces it. Not the
-    // name a def is defining.
-    const NAME_DEF_HEADS = new Set(['def', 'def-fm', 'def-pcm', 'def-wave', 'def-val']);
     let _nameKindsFor = [], _nameKinds = null;
     function nameFields(state, hit) {
       if (hit.prev && NAME_DEF_HEADS.has(hit.prev)) return null;
@@ -1748,67 +1431,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       if (field.kind === 'pitch') { nudgePitch(field, dir); return true; }
       applyFieldEdit(field, field.value + dir * (field.step || 1) * (coarse ? 10 : 1));
       return true;
-    }
-    function fieldAtOffset(info, offset) {
-      return info.fields.find((f) => offset >= f.range[0] && offset <= f.range[1]) || info.fields[0];
-    }
-
-    // --- Hover affordance (whole-token underline; DOM hint + cursor) ---
-    // Modifier-key interactions are invisible, so hovering an adjustable value
-    // marks the WHOLE token (c2 / c4. / v+2 are never split) and shows a hint.
-    const setHover = StateEffect.define();
-    const hoverMark = Decoration.mark({ class: 'cm-valHover' });
-    const hoverField = StateField.define({
-      create: () => Decoration.none,
-      update(deco, tr) {
-        deco = deco.map(tr.changes);
-        for (const e of tr.effects) {
-          if (e.is(setHover)) deco = e.value ? Decoration.set([hoverMark.range(e.value[0], e.value[1])]) : Decoration.none;
-        }
-        return deco;
-      },
-      provide: (f) => EditorView.decorations.from(f),
-    });
-
-    // --- Logical Editor matches: marked while its panel is open. ---
-    const setLogicalMarks = StateEffect.define();
-    const logicalMark = Decoration.mark({ class: 'cm-logical-match' });
-    const logicalSharedMark = Decoration.mark({ class: 'cm-logical-match cm-logical-shared' });
-    const logicalField = StateField.define({
-      create: () => Decoration.none,
-      update(deco, tr) {
-        deco = tr.docChanged ? Decoration.none : deco.map(tr.changes);
-        for (const e of tr.effects) if (e.is(setLogicalMarks)) deco = e.value;
-        return deco;
-      },
-      provide: (f) => EditorView.decorations.from(f),
-    });
-
-    // --- Bar markers ( | ): follow edits like the playhead; info on tap. ---
-    // Positions are re-anchored on build and mapped through later edits; the
-    // tick count / ordinal are build-time values (marked stale after an edit).
-    const setBars = StateEffect.define();
-    const barField = StateField.define({
-      create: () => ({ list: [], stale: false }),
-      update(v, tr) {
-        let { list, stale } = v;
-        if (tr.docChanged && list.length) {
-          list = list
-            .map((b) => ({ ...b, from: tr.changes.mapPos(b.from, -1), to: tr.changes.mapPos(b.to, 1) }))
-            .filter((b) => b.to > b.from);
-          stale = true;
-        }
-        for (const e of tr.effects) if (e.is(setBars)) { list = e.value; stale = false; }
-        return list === v.list && stale === v.stale ? v : { list, stale };
-      },
-    });
-    // A bar `|` is a single character, so allow a small slop (its own width
-    // plus a char of surrounding whitespace) to make the marker easy to hit.
-    const BAR_HIT_SLOP = 1;
-    function barAtOffset(state, offset) {
-      const { list, stale } = state.field(barField, false) ?? { list: [], stale: false };
-      const b = list.find((x) => offset >= x.from - BAR_HIT_SLOP && offset <= x.to + BAR_HIT_SLOP);
-      return b ? { ...b, stale } : null;
     }
     // Re-anchor bar markers to the just-compiled document. Called from applyCompile.
     function refreshBarMarkers(base = null) {
@@ -2233,86 +1855,6 @@ import { collectImports } from './src/lang/compile/imports.js';
     };
 
 
-    // MMLisp StreamLanguage for syntax highlighting.
-    // Only two things get accent: the call name (first symbol after `(`) and
-    // `:params`. Everything else (notes, numbers, macro names, brackets,
-    // operators) stays the default foreground; comments are dimmed.
-    const mmlispMode = StreamLanguage.define({
-      // Auto-close only the brackets MMLisp actually has. The defaults would
-      // also close `{` (unused) and `'` (an ordinary atom character here).
-      // A "word" here is a whole MMLisp atom: the parser ends one only at
-      // whitespace, a bracket, `;` or `"`, so the punctuation an atom can carry
-      // (`:vel*`, `def-val`, `1/4`, `c4~`, `$slot`) counts as word characters.
-      // Double-click, Cmd/Ctrl+D and the selection-match highlight then all take
-      // the token you see rather than a fragment of it.
-      languageData: {
-        closeBrackets: { brackets: ['(', '[', '"'] },
-        wordChars: "-+*/%^~!?<>=:@#$&|'.",
-      },
-      startState: () => ({ head: false }), // head: next identifier is in call position
-      token(stream, state) {
-        if (stream.eatSpace()) return null; // keep `head` across whitespace
-        if (stream.peek() === ';') { stream.skipToEnd(); return 'comment'; }
-        if (stream.peek() === '"') {
-          stream.next();
-          while (!stream.eol()) { if (stream.next() === '"') break; }
-          state.head = false;
-          return null;
-        }
-        if (stream.eat('(')) { state.head = true; return null; }
-        if (stream.eat(')') || stream.eat('[') || stream.eat(']')) { state.head = false; return null; }
-        // Arithmetic and comparison eval heads (+ - * / = < > <= >=) in call
-        // position get the call accent, like an identifier head. Guarded by
-        // `head` and a delimiter lookahead so an operand `+`/`-` (or a signed
-        // number) and an octave `<`/`>` in the note stream are untouched.
-        if (state.head && stream.match(/^(?:[+\-*/=]|[<>]=?)(?=[\s()]|$)/)) { state.head = false; return 'keyword'; }
-        if (stream.eat(':')) {
-          stream.match(/^[a-zA-Z][a-zA-Z0-9#_-]*/);
-          state.head = false;
-          return 'atom'; // :param → accent
-        }
-        if (stream.match(/^[+-]?\d+(?:\/\d+)?/)) { state.head = false; return null; }
-        if (stream.match(/^[a-zA-Z][a-zA-Z0-9-]*/)) {
-          const op = state.head;
-          state.head = false;
-          return op ? 'keyword' : null; // call name → accent ; operand → foreground
-        }
-        stream.next();
-        state.head = false;
-        return null;
-      },
-    });
-
-    // Custom highlight: accent for call names / :params, sub for comments.
-    // Everything else falls through to the editor's default foreground.
-    const mmlispHighlight = HighlightStyle.define([
-      { tag: tags.comment, color: 'var(--sub)' },
-      { tag: tags.keyword, color: 'var(--accent)' },
-      { tag: tags.atom, color: 'var(--accent)' },
-    ]);
-
-    // -----------------------------------------------------------------------
-    // Autocomplete
-    // -----------------------------------------------------------------------
-    // Templates for the forms whose argument shape is fixed enough that filling
-    // it in beats typing it. Body only — the parens are already in the document
-    // (typing '(' auto-closes). `${n:text}` are tab stops whose placeholder is
-    // a usable default, so leaving the snippet early (Esc) still leaves valid
-    // source. Forms whose shape genuinely varies keep the plain name.
-    const AC_SNIPPETS = {
-      'def': 'def ${1:name} ${2}',
-      'def-val': 'def-val ${1:name} ${2:0} ${3:0..127}',
-      'def-se': 'def-se ${1:name} :prio ${2:5} (${3:fm1} ${4})',
-      'def-score': 'def-score :title "${1}"',
-      'def-mod': 'def-mod :ch ${1:fm1} :keyon off',
-      'import': 'import "${1:voices.mmlisp}"',
-      'x': 'x ${1:4} ${2}',
-      'go': 'go ${1:head}',
-      'macro': 'macro :${1:vel} ${2}',
-      'echo': 'echo ${1:3} :${2:vel+} ${3:-1}',
-      'delay': 'delay ${1:3} :${2:vel+} ${3:-4} :time ${4:1/8}',
-      'glide': 'glide ${1:1/8}',
-    };
     // Every curve head takes the same `A..B :len L` shape (§11), so generate
     // rather than list. `noise` is left out: as a head it is also a track name,
     // and the track is what `(noise` almost always means.
@@ -2320,14 +1862,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       if (!/^(linear|sin|triangle|square|saw|ramp|pink|perlin|brown|ease-)/.test(head)) continue;
       AC_SNIPPETS[head] = `${head} \${1:0}..\${2:100} :len \${3:8}`;
     }
-    // An :fx writes out EVERY parameter, each a tab stop holding its
-    // default, so the list need not be remembered — generated from the table
-    // the compiler checks against, so a new param shows up here by itself. A
-    // required param has no default; it gets a usable example. A param whose
-    // default is not writable (fade :at, "`:len` before the end") is left out
-    // and named in the completion's detail instead.
-    const AC_FX_EXAMPLE = { 'gain.db': '6', 'crush.bits': '4', 'fade.len': '100ms', 'reverb.tail': '250ms' };
-    const AC_DETAIL = {};
     for (const [name, fx] of Object.entries(SAMPLE_EFFECTS)) {
       const stops = [], unwritten = [];
       for (const [k, p] of Object.entries(fx.params)) {
@@ -2340,43 +1874,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       AC_DETAIL[name] = unwritten.length ? `effect — also ${unwritten.join(' ')}` : 'effect';
     }
 
-    // The names a score can use: its own defs and everything its imports
-    // bring in. A scan, not a parse — it runs on keystrokes — reading each
-    // top-level (def …) head for the name and what kind of thing it is, and
-    // the comment line just above it for the description (a preset set says
-    // what each voice is there: "GM 1 / MIDI 0: * GrandPiano"). Given
-    // `imports`, the same pass collects the (import "…") paths written — so
-    // an edit in progress (unbalanced parens) does not hide them.
-    const AC_DEF_RE = /^[ \t]*\((def-val|def-fm|def-pcm|def-wave|def)[ \t]+(\()?([^\s()]+)[ \t]*([^\s()]*)(\()?/;
-    function scanDefNames(text, from, imports = null) {
-      const out = [];
-      let comment = '';
-      for (const line of text.split('\n')) {
-        const m = AC_DEF_RE.exec(line);
-        if (m) {
-          const [, head, fnParen, name, next, listAfter] = m;
-          let kind;
-          if (head === 'def-val') kind = 'val';
-          else if (head === 'def-fm') kind = 'voice';
-          else if (head === 'def-pcm') kind = 'sample';
-          else if (head === 'def-wave') kind = 'wave';
-          else if (fnParen) kind = 'fn';
-          else if (next === '' && listAfter) kind = /^\s*\(def[ \t]+\S+[ \t]+\(macro\b/.test(line) ? 'macro' : 'def';
-          else kind = 'def';
-          // A kit names its samples after roles; the file says which sound.
-          const file = kind === 'sample' && /:file\s+"(?:[^"]*\/)?([^"/]+?)(?:\.\w+)?"/.exec(line);
-          const about = comment || (file ? file[1] : '');
-          out.push({ name, kind, about, from });
-          comment = '';
-          continue;
-        }
-        const imp = imports && /^\s*\(import\s+"([^"]+)"/.exec(line);
-        if (imp) imports.add(imp[1]);
-        const c = /^\s*;+\s?(.*)$/.exec(line);
-        comment = c ? c[1].replace(/\*\s*/, '') : '';
-      }
-      return out;
-    }
     const _acImportDefs = new WeakMap(); // an _importSources map -> its scanned defs
     function importedDefNames() {
       let defs = _acImportDefs.get(_importSources);
@@ -2388,11 +1885,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         _acImportDefs.set(_importSources, defs);
       }
       return defs;
-    }
-    const AC_DEF_TYPE = { voice: 'type', sample: 'constant', macro: 'function', fn: 'function', val: 'variable', def: 'variable' };
-    function defCompletion(d, label = d.name) {
-      const detail = d.kind + (d.from ? ` \u00b7 ${d.from}` : '');
-      return { label, type: AC_DEF_TYPE[d.kind], detail, info: d.about || undefined, boost: d.from && !d.builtin ? 0 : 1 };
     }
     // The `:target` the text names now: what a list of names goes by, a compile
     // being as far behind as the last Build. Read off the text, as a list is
@@ -2440,13 +1932,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       return _acPresetDefs ? fn() : loadPresetDefNames().then(fn);
     }
 
-    // What kind of name the track at `pos` takes, by its channel's part
-    // (targets/: the score's machine's, else the first that has the name): an
-    // FM channel plays voices, a sample channel samples, a PSG channel
-    // macros — an envelope is the voice it does not have. Outside a track — a
-    // def, the top level — everything.
-    const AC_TRACK_SET = new Set(AC_TRACKS);
-    const TRACK_KIND_OF_PART = { fm: 'voice', sample: 'sample', tone: 'psg', noise: 'psg', wave: 'wave', midi: 'midi' };
     function headPartKind(head) {
       const part = targetProfile(_lastGoodIR?.metadata?.target).partOf(head)
         ?? Object.values(TARGETS).find((t) => t.partOf(head))?.partOf(head);
@@ -2500,49 +1985,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       return own ? [...out.filter((d) => d.kind === own), ...out.filter((d) => d.kind !== own)] : out;
     }
 
-    // Substring on the name and on its description, so `piano` finds gm-piano
-    // and `ride` every kit's ride. Prefix matches first, then the rest of the
-    // names, then descriptions; within each, the order above. A mucom score's
-    // `@12` is found by `@12` as typed (`@` is also the trigger) and by `12`.
-    function matchNames(names, typed) {
-      const q = typed.toLowerCase();
-      const ranked = [];
-      for (const d of names) {
-        const name = d.name.toLowerCase();
-        let rank;
-        if (name.startsWith(q) || name.startsWith('@' + q)) rank = 0;
-        else if (name.includes(q)) rank = 1;
-        else if (d.about.toLowerCase().includes(q)) rank = 2;
-        else continue;
-        ranked.push([rank, d]);
-      }
-      return ranked.sort((a, b) => a[0] - b[0]).map(([, d]) => d);
-    }
-
-    function nameCompletion(d) {
-      const c = defCompletion(d);
-      c.pick = d; // what ↑ / ↓ auditions
-      if (d.importSet) {
-        c.detail += ' \u00b7 + import';
-        c.apply = (view, completion, from, to) => applyWithImport(view, completion, from, to, d.importSet);
-      }
-      return c;
-    }
-
-    // A name from a set the score does not import yet brings the set's
-    // (import …) to the top with it, in one transaction — one undo takes both.
-    function applyWithImport(view, completion, from, to, path) {
-      const line = `(import "${path}")`;
-      const add = view.state.doc.toString().includes(line) ? '' : line + '\n';
-      view.dispatch({
-        changes: [...(add ? [{ from: 0, insert: add }] : []), { from, to, insert: completion.label }],
-        selection: { anchor: from + add.length + completion.label.length },
-        annotations: pickedCompletion.of(completion),
-        userEvent: 'input.complete',
-        scrollIntoView: true,
-      });
-    }
-
     function nameResult(context, from, typed) {
       return withPresetNames(() => {
         const options = matchNames(pickableNames(context.state, from), typed).map(nameCompletion);
@@ -2573,10 +2015,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       });
     }
 
-    // A word that reads as a note, a rest or a v± / o± shift never opens the
-    // list on its own: `a-`, `e8.`, `v-2` are music, not a name being typed.
-    const AC_MUSIC_WORD = /^([a-gr][+-]?[\d.]*|[vo][+-]\d*)$/;
-
     // A word of the language explained, from its reference entry (reference.js):
     // the completion list's info for a form or a keyword, and the editor's
     // hover card over one.
@@ -2597,60 +2035,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       return e ? () => referenceCard(e) : undefined;
     }
 
-    // `noise` is two words of the language: the PSG channel at the head of a
-    // track, and a random curve where a value goes. reference.js keeps an
-    // entry for each and picks by `ctx`, so the hover and the completion say
-    // which one the text has at hand. A curve is the value of a keyword
-    // (`:pitch (noise …)`), or an operand of an eval head (`(+ root (noise
-    // …))`, `(macro …)`), or names its own ends — which a track form never
-    // does, so that is what tells the two apart under a `def`, which holds
-    // either. A form head anywhere else is the channel.
-    //
-    // The ends must be the form's OWN: a track's inline sweep puts a range in
-    // a nested form (`(noise :vol (linear 15..0 :len 8) c)`), so only the
-    // direct children count, and they are read across lines.
-    function curveNamesItsEnds(text, open) {
-      let depth = 0;
-      for (let i = open; i < text.length; i++) {
-        const ch = text[i];
-        if (ch === '"') { for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++; continue; }
-        if (ch === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
-        if (ch === '(' || ch === '[') { depth++; continue; }
-        if (ch === ')' || ch === ']') { if (--depth === 0) return false; continue; }
-        if (depth !== 1 || /\s/.test(ch)) continue;
-        const token = /^[^\s()[\]";]*/.exec(text.slice(i))[0];
-        i += token.length - 1;
-        if (token === ':from' || token === ':to' || /^-?[\d.]+\.\.-?[\d.]+$/.test(token)) return true;
-      }
-      return false;
-    }
-    function referenceCtxAt(state, wordFrom) {
-      let before = state.sliceDoc(0, wordFrom);
-      if (before.endsWith('(')) before = before.slice(0, -1); // the word's own '(' encloses nothing
-      const open = [];
-      for (let i = 0; i < before.length; i++) {
-        const ch = before[i];
-        if (ch === '"') { for (i++; i < before.length && before[i] !== '"'; i++) if (before[i] === '\\') i++; }
-        else if (ch === ';') { while (i < before.length && before[i] !== '\n') i++; }
-        else if (ch === '(' || ch === '[') open.push(i);
-        else if (ch === ')' || ch === ']') open.pop();
-      }
-      if (open.length === 0) return 'track';                      // the top level: a track form
-      if (/:[a-zA-Z0-9#_-]+\s*$/.test(before)) return 'value';    // right after a keyword
-      const at = open[open.length - 1];
-      if (before[at] === '[') return 'value';                     // inside a step vector
-      const head = /^[^\s()[\]";]*/.exec(before.slice(at + 1, at + 32))[0];
-      if (isReservedHead(head) || head === 'macro' || head === 'wait') return 'value';
-      // Under a `def`, which holds a track form or a curve: its own ends say.
-      return curveNamesItsEnds(state.sliceDoc(0, state.doc.length), wordFrom - 1) ? 'value' : 'track';
-    }
-
-    // Hover: a keyword (`:vel`, `:tl1+`) anywhere, a form head or a channel
-    // name right after `(`. Only the words the completion offers — a def's
-    // own name, a note or a number is not the reference's to explain.
-    // On a touch screen a tap is the hover and nothing ever leaves it, so the
-    // card also goes on a tap on it, on typing, and when the cursor moves.
-    const AC_WORDS = new Set([...AC_FORMS, ...AC_TRACKS, ...AC_PARAMS]);
     const referenceHover = hoverTooltip((view, pos) => {
       const line = view.state.doc.lineAt(pos);
       const text = line.text;
@@ -2674,11 +2058,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         },
       };
     }, { hoverTime: 500, hideOnChange: true });
-    const closeReferenceOnMove = EditorView.updateListener.of((u) => {
-      if (!u.selectionSet || u.docChanged || !hasHoverTooltips(u.state)) return;
-      queueMicrotask(() => u.view.dispatch({ effects: closeHoverTooltips })); // not inside this update
-    });
-
     function mmlispCompletions(context) {
       if (_acReplace) {
         const r = _acReplace;
@@ -2777,213 +2156,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       _acAuditionTimer = setTimeout(() => auditionName(c.pick), AC_AUDITION_MS);
     }
 
-    // MMLisp auto-indent service (Lisp-style: align to char after opening paren,
-    // or indent +2 if nothing follows the paren on that line)
-    const mmlispIndent = indentService.of((context, pos) => {
-      const doc = context.state.doc;
-      const src = doc.sliceString(0, pos);
-
-      // Scan src tracking unmatched opening parens, skipping strings/comments.
-      const openStack = [];
-      let inStr = false;
-      for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        if (inStr) {
-          if (ch === '\\') { i++; } // escape
-          else if (ch === '"') { inStr = false; }
-        } else if (ch === '"') {
-          inStr = true;
-        } else if (ch === ';') {
-          // skip to end of line
-          while (i < src.length && src[i] !== '\n') i++;
-        } else if (ch === '(') {
-          openStack.push(i);
-        } else if (ch === ')') {
-          if (openStack.length > 0) openStack.pop();
-        }
-      }
-
-      if (openStack.length === 0) return 0;
-      const lastOpenPos = openStack[openStack.length - 1];
-
-      const openLine = doc.lineAt(lastOpenPos);
-      const openCol = lastOpenPos - openLine.from;
-
-      // Always indent +2 from ( — matches the formatter's childIndent rule
-      return openCol + 2;
-    });
-
-    const mmlispParenFold = foldService.of((state, lineStart) => {
-      const doc = state.doc;
-      const line = doc.lineAt(lineStart);
-      const text = line.text;
-      const firstNonSpace = text.search(/\S/);
-      if (firstNonSpace < 0) return null;
-
-      const openPos = line.from + firstNonSpace;
-      if (doc.sliceString(openPos, openPos + 1) !== '(') return null;
-
-      let depth = 1;
-      let inString = false;
-      for (let pos = openPos + 1; pos < doc.length; pos++) {
-        const ch = doc.sliceString(pos, pos + 1);
-
-        if (inString) {
-          if (ch === '\\') {
-            pos++;
-            continue;
-          }
-          if (ch === '"') inString = false;
-          continue;
-        }
-
-        if (ch === '"') {
-          inString = true;
-          continue;
-        }
-
-        if (ch === ';') {
-          const commentLine = doc.lineAt(pos);
-          pos = commentLine.to;
-          continue;
-        }
-
-        if (ch === '(') {
-          depth++;
-          continue;
-        }
-
-        if (ch === ')') {
-          depth--;
-          if (depth === 0) {
-            const closeLine = doc.lineAt(pos);
-            if (closeLine.number === line.number) return null;
-            return { from: openPos + 1, to: pos };
-          }
-        }
-      }
-
-      return null;
-    });
-
-    // -----------------------------------------------------------------------
-    // Bracket structure: enclosing-form highlight + unmatched-bracket marks
-    // -----------------------------------------------------------------------
-
-    // One pass over the document, skipping strings and `;` comments, feeding
-    // both the enclosing-form highlight and the unmatched-bracket marks.
-    // Returns { pairs, bad }: `pairs` are matched brackets ({from, to} are the
-    // two bracket offsets), `bad` are offsets of unclosed openers and stray or
-    // mismatched closers. A mismatched closer does not pop the stack — that
-    // matches the parser, which reports the still-open bracket as unclosed.
-    // It runs on every keystroke, over the whole score: char codes, not
-    // one-character strings.
-    function scanBrackets(src) {
-      const pairs = [];
-      const bad = [];
-      const stack = [];
-      const QUOTE = 34, BACKSLASH = 92, SEMI = 59, NL = 10;
-      const OPEN_P = 40, CLOSE_P = 41, OPEN_B = 91, CLOSE_B = 93;
-      for (let i = 0; i < src.length; i++) {
-        const ch = src.charCodeAt(i);
-        if (ch === QUOTE) {
-          i++;
-          while (i < src.length && src.charCodeAt(i) !== QUOTE) { if (src.charCodeAt(i) === BACKSLASH) i++; i++; }
-          continue; // the loop's i++ steps past the closing quote
-        }
-        if (ch === SEMI) {
-          while (i < src.length && src.charCodeAt(i) !== NL) i++;
-          continue;
-        }
-        if (ch === OPEN_P || ch === OPEN_B) { stack.push(i); continue; }
-        if (ch === CLOSE_P || ch === CLOSE_B) {
-          const open = stack.length ? stack[stack.length - 1] : -1;
-          if (open >= 0 && src.charCodeAt(open) === (ch === CLOSE_P ? OPEN_P : OPEN_B)) {
-            stack.pop();
-            pairs.push({ from: open, to: i });
-          } else {
-            bad.push(i);
-          }
-        }
-      }
-      for (const open of stack) bad.push(open);
-      bad.sort((a, b) => a - b);
-      return { pairs, bad };
-    }
-
-    // The pair to highlight for a cursor at `pos`: a bracket the cursor is
-    // directly touching from the outside wins (classic match-at-cursor), then
-    // the innermost pair containing it. Returns a member of `pairs`, so the
-    // state field can compare by identity.
-    function enclosingForm(pairs, pos) {
-      let afterClose = null, beforeOpen = null, inner = null;
-      for (const p of pairs) {
-        if (p.to === pos - 1) afterClose = p;
-        if (p.from === pos) beforeOpen = p;
-        if (p.from < pos && pos <= p.to && (!inner || p.from > inner.from)) inner = p;
-      }
-      return afterClose || beforeOpen || inner;
-    }
-
-    function computeBrackets(state) {
-      const { pairs, bad } = scanBrackets(state.doc.toString());
-      return { pairs, bad, form: enclosingForm(pairs, state.selection.main.head) };
-    }
-
-    // Rescans only when the document changes; a bare cursor move re-picks the
-    // form from the existing pairs. Playback dispatches playhead effects at
-    // event rate, and those transactions touch neither, so they cost nothing.
-    const bracketField = StateField.define({
-      create: (state) => computeBrackets(state),
-      update(v, tr) {
-        if (tr.docChanged) return computeBrackets(tr.state);
-        if (!tr.selection) return v;
-        const form = enclosingForm(v.pairs, tr.state.selection.main.head);
-        return form === v.form ? v : { ...v, form };
-      },
-    });
-
-    // Drawn as a layer of rectangles for the same reason as the playhead: mark
-    // decorations split the text into inline boxes, which under lineWrapping
-    // can move the soft-wrap point as the highlight comes and goes.
-    const bracketLayer = layer({
-      above: false, // behind the glyphs — this is a fill, not an outline
-      class: 'cm-bracketLayer',
-      update: (update) =>
-        update.docChanged ||
-        update.viewportChanged ||
-        update.geometryChanged ||
-        update.startState.field(bracketField) !== update.state.field(bracketField),
-      markers: (view) => {
-        const state = view.state;
-        const doc = state.doc;
-        const v = state.field(bracketField);
-        const markers = [];
-        const add = (from, to, cls) => {
-          if (from >= to) return;
-          try {
-            for (const m of RectangleMarker.forRange(view, cls, EditorSelection.range(from, to))) {
-              markers.push(m);
-            }
-          } catch (_) {}
-        };
-        if (v.form) {
-          const { from, to } = v.form;
-          // Fill the span only for a form that lives on one document line —
-          // where the pair alone reads poorly because the line may soft-wrap.
-          // Filling a whole track or `def` block would dominate the editor, so
-          // those get the bracket marks only.
-          if (doc.lineAt(from).number === doc.lineAt(to).number) {
-            add(from, to + 1, 'cm-bracketForm');
-          }
-          add(from, from + 1, 'cm-bracketMatch');
-          add(to, to + 1, 'cm-bracketMatch');
-        }
-        for (const pos of v.bad) add(pos, pos + 1, 'cm-bracketBad');
-        return markers;
-      },
-    });
-
     // Compact readout of unmatched brackets, top-right of the editor. Click
     // jumps to the first one. Insertion is never automatic: where a missing
     // bracket belongs is a guess, and in a music source a wrong guess silently
@@ -3007,27 +2179,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         scrollIntoView: true,
       });
       editorView.focus();
-    }
-
-    // Insert the closers for every form still open at the cursor, innermost
-    // first. Only brackets the scan reports as unclosed are closed, so this
-    // never touches a form that is already complete further down the file.
-    function closeOpenBrackets(view) {
-      const state = view.state;
-      const pos = state.selection.main.head;
-      const opens = state.field(bracketField).bad
-        .filter(p => p < pos && /[([]/.test(state.doc.sliceString(p, p + 1)));
-      if (!opens.length) return false;
-      const insert = opens.reverse()
-        .map(p => state.doc.sliceString(p, p + 1) === '(' ? ')' : ']')
-        .join('');
-      view.dispatch({
-        changes: { from: pos, insert },
-        selection: { anchor: pos + insert.length },
-        scrollIntoView: true,
-        userEvent: 'input.complete',
-      });
-      return true;
     }
 
     // Expand the selection outward through the bracket structure: the contents
@@ -3069,94 +2220,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       _expandLast = prev;
       view.dispatch({ selection: EditorSelection.single(prev.from, prev.to), scrollIntoView: true });
       return true;
-    }
-
-    // Put a cursor at an arbitrary offset, following CodeMirror's own rule for
-    // a modifier-click: landing on an existing cursor or selection removes it
-    // (unless it is the last one), so overshooting is undone by clicking again.
-    function addCursorAt(view, pos) {
-      const ranges = view.state.selection.ranges;
-      const hit = ranges.findIndex(r => r.from <= pos && r.to >= pos);
-      if (hit >= 0 && ranges.length === 1) return;
-      const next = hit >= 0
-        ? EditorSelection.create(ranges.filter((_, i) => i !== hit), 0)
-        : EditorSelection.create([...ranges, EditorSelection.cursor(pos)], ranges.length);
-      view.dispatch({ selection: next, userEvent: 'select' });
-    }
-
-    // Add a cursor one line above / below the outermost existing one, the way
-    // VS Code's Cmd/Ctrl+Alt+Arrow does. moveVertically works in visual lines,
-    // so on this wrapped editor the new cursor lands where ArrowUp/Down would
-    // put the caret, and its goal column survives a short line in between.
-    function addCursorVertically(view, forward) {
-      const ranges = view.state.selection.ranges;
-      const edge = ranges.reduce((a, b) => ((b.head > a.head) === forward ? b : a));
-      const moved = view.moveVertically(edge, forward);
-      if (moved.head === edge.head) return true;  // already at the first/last line
-      const added = moved.empty ? moved : EditorSelection.cursor(moved.head);
-      view.dispatch({
-        selection: EditorSelection.create([...ranges, added], ranges.length),
-        scrollIntoView: true,
-        userEvent: 'select',
-      });
-      return true;
-    }
-
-    function summarizeFoldHead(state, range) {
-      const openPos = Math.max(0, range.from - 1);
-      const line = state.doc.lineAt(openPos);
-      const raw = state.doc.sliceString(openPos, line.to);
-      const compact = raw.replace(/\s+/g, ' ').trim();
-      if (!compact.startsWith('(')) return '...';
-
-      const headText = compact.slice(1).trimStart();
-      if (!headText) return '...';
-
-      // Keep folded labels short so they don't dominate the editor line.
-      const maxLen = 36;
-      const head = headText.length > maxLen ? headText.slice(0, maxLen - 1) + '…' : headText;
-      return `${head} ...`;
-    }
-
-    // Split a string into tokens and the whitespace gaps around them, where each
-    // bracket char is its own token and other tokens are maximal non-whitespace,
-    // non-bracket runs: s === gaps[0] + words[0] + ... + words[n-1] + gaps[n].
-    // Treating brackets separately makes paren attach/detach (e.g. `] )` → `])`)
-    // a pure gap change rather than a token change.
-    function splitWordsAndGaps(s) {
-      const words = [], gaps = [];
-      const isWs = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v';
-      const isBracket = (c) => c === '(' || c === ')' || c === '[' || c === ']';
-      let i = 0, gapStart = 0;
-      while (i < s.length) {
-        if (isWs(s[i])) { i++; continue; }
-        gaps.push(s.slice(gapStart, i));
-        if (isBracket(s[i])) { words.push(s[i]); i++; }
-        else { let j = i; while (j < s.length && !isWs(s[j]) && !isBracket(s[j])) j++; words.push(s.slice(i, j)); i = j; }
-        gapStart = i;
-      }
-      gaps.push(s.slice(gapStart));
-      return { words, gaps };
-    }
-
-    // Formatting only rewrites whitespace (indentation, spacing, line breaks),
-    // leaving the non-whitespace tokens unchanged and in order. When that holds,
-    // produce minimal changes that touch only the differing gaps, so every token
-    // keeps its identity — playhead highlights and the cursor map through the
-    // format without a rebuild. Returns null if tokens changed (caller replaces
-    // the whole document instead).
-    function whitespaceFormatChanges(oldStr, newStr) {
-      const a = splitWordsAndGaps(oldStr), b = splitWordsAndGaps(newStr);
-      if (a.words.length !== b.words.length) return null;
-      for (let i = 0; i < a.words.length; i++) if (a.words[i] !== b.words[i]) return null;
-      const changes = [];
-      let pos = 0;
-      for (let i = 0; i <= a.words.length; i++) {
-        const oldGap = a.gaps[i], to = pos + oldGap.length;
-        if (oldGap !== b.gaps[i]) changes.push({ from: pos, to, insert: b.gaps[i] });
-        pos = to + (i < a.words.length ? a.words[i].length : 0);
-      }
-      return changes;
     }
 
     function formatDocument() {
@@ -5327,20 +4390,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         if (el) el.textContent = formatShortcutLabel(key);
       }
     }
-
-    const editorTheme = EditorView.theme({
-      '&': { color: 'var(--foreground)', backgroundColor: 'var(--background)' },
-      '.cm-content': { caretColor: 'var(--foreground)' },
-      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--foreground)' },
-      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
-        { backgroundColor: 'color-mix(in srgb, var(--foreground) var(--sel), var(--background))' },
-      '.cm-gutters': { backgroundColor: 'var(--background)', color: 'var(--sub)', border: 'none' },
-      '.cm-foldPlaceholder': { backgroundColor: 'transparent', color: 'var(--sub)', border: 'none' },
-      // The hover card and the completion list, drawn as the panels are.
-      '.cm-tooltip': { backgroundColor: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--mid)' },
-      '.cm-tooltip-autocomplete ul li[aria-selected]':
-        { backgroundColor: 'color-mix(in srgb, var(--foreground) var(--sel), var(--background))', color: 'var(--foreground)' },
-    }, { dark: true });
 
     const editorExtensions = [
       editorTheme,
@@ -9985,51 +9034,10 @@ import { collectImports } from './src/lang/compile/imports.js';
     window.toggleSubmenu = toggleSubmenu;
     window.closeMenus  = closeMenus;
 
-    // -----------------------------------------------------------------------
-    // ---- theme ----
-    // A theme is the four base colors; --mid/--high/--contrast derive from
-    // them (see :root). applyColors() writes the bases onto :root inline and
-    // picks --contrast from background luminance so emphasis works on both
-    // dark and light backgrounds. Selection is persisted to localStorage.
-    // -----------------------------------------------------------------------
-    const THEME_FIELDS = [
-      ['background', 'Background'],
-      ['foreground', 'Foreground'],
-      ['accent', 'Accent'],
-      ['error', 'Error'],
-    ];
-    const THEMES = {
-      default:  { name: 'Default',  background: '#000', foreground: '#7df', accent: '#6c9', error: '#f33' },
-      blue:   { name: 'Blue',   background: '#00c', foreground: '#eee', accent: '#0f0', error: '#f33' },
-      light: { name: 'Light', background: '#fff', foreground: '#00f', accent: '#f00', error: '#f00' },
-    };
     const THEME_STORE_KEY = 'mmlisp.theme';
-    const DEFAULT_THEME_ID = 'default';
     let _themeState = { id: DEFAULT_THEME_ID, custom: { ...THEMES.default } };
     let _themeReady = false; // true once init finished, so applyColors can repaint canvases
 
-    function parseHexRGB(hex) {
-      let h = String(hex).trim().replace(/^#/, '');
-      if (h.length === 3) h = h.split('').map(c => c + c).join('');
-      if (h.length !== 6) return null;
-      const n = parseInt(h, 16);
-      if (Number.isNaN(n)) return null;
-      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-    }
-    function toHex6(hex) {
-      const c = parseHexRGB(hex);
-      return c ? '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('') : '#000000';
-    }
-    // WCAG relative luminance → emphasis pole (white on dark, black on light).
-    function contrastPole(bg) {
-      const c = parseHexRGB(bg) || { r: 0, g: 0, b: 0 };
-      const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-      const lum = 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
-      return lum > 0.4 ? '#000' : '#fff';
-    }
-    function colorsForState(st) {
-      return st.id === 'custom' ? st.custom : (THEMES[st.id] || THEMES[DEFAULT_THEME_ID]);
-    }
     function applyColors(colors) {
       const root = document.documentElement.style;
       root.setProperty('--background', colors.background);
@@ -11856,27 +10864,6 @@ import { collectImports } from './src/lang/compile/imports.js';
     window.exportMmb    = exportMmb;
     window.exportWav    = exportWav;
 
-    // -----------------------------------------------------------------------
-    // Parameter UI
-    // -----------------------------------------------------------------------
-
-    // Algorithm descriptions (what's a carrier, what's a modulator)
-    // Carrier operators (1-indexed) per algorithm
-    const ALG_CARRIERS = [
-      [4],             // ALG 0: 1→2→3→4
-      [4],             // ALG 1: (1+2)→3→4
-      [4],             // ALG 2: (1+(2→3))→4
-      [4],             // ALG 3: ((1→2)+3)→4
-      [2, 4],          // ALG 4: (1→2)+(3→4)
-      [2, 3, 4],       // ALG 5: 1→(2+3+4)
-      [2, 3, 4],       // ALG 6: (1→2)+3+4
-      [1, 2, 3, 4],    // ALG 7: 1+2+3+4
-      [2],             // the OPLL's two operators: 1→2 (TWO_OP)
-    ];
-    // The diagram's and the roles' algorithm on a 2-op FM (the OPLL's), which
-    // has none of its own: op1 into op2. Set from the score's target
-    // (applyTargetUi): a target with FM and no :alg.
-    const TWO_OP = 8;
     let _fmTwoOp = false;
     const shownAlg = (alg) => (_fmTwoOp ? TWO_OP : alg);
 
@@ -11892,32 +10879,6 @@ import { collectImports } from './src/lang/compile/imports.js';
       }
       drawAlgDiagram(alg);
     }
-
-    // Operator modulation edges [from→to] and grid positions [col,row] per algorithm.
-    const ALG_EDGES = [
-      [[1,2],[2,3],[3,4]],   // 0
-      [[1,3],[2,3],[3,4]],   // 1
-      [[2,3],[3,4],[1,4]],   // 2
-      [[1,2],[2,4],[3,4]],   // 3
-      [[1,2],[3,4]],         // 4
-      [[1,2],[1,3],[1,4]],   // 5
-      [[1,2]],               // 6
-      [],                    // 7
-      [[1,2]],               // TWO_OP
-    ];
-    // Operator grid positions [col,row]: modulators left → carriers right (carriers
-    // sit in the rightmost column so they collect into the output bus on the right).
-    const ALG_LAYOUT = [
-      { 1:[0,0], 2:[1,0], 3:[2,0], 4:[3,0] },  // 0: 1→2→3→4
-      { 1:[0,0], 2:[0,1], 3:[1,0], 4:[2,0] },  // 1: (1+2)→3→4
-      { 2:[0,0], 3:[1,0], 1:[1,1], 4:[2,0] },  // 2: (1+(2→3))→4
-      { 1:[0,0], 2:[1,0], 3:[1,1], 4:[2,0] },  // 3: ((1→2)+3)→4
-      { 1:[0,0], 2:[1,0], 3:[0,1], 4:[1,1] },  // 4: (1→2)+(3→4)
-      { 1:[0,1], 2:[1,0], 3:[1,1], 4:[1,2] },  // 5: 1→(2+3+4)
-      { 1:[0,0], 2:[1,0], 3:[1,1], 4:[1,2] },  // 6: (1→2)+3+4
-      { 1:[0,0], 2:[1,1], 3:[2,2], 4:[3,3] },  // 7: 1+2+3+4 (staggered so it isn't cramped)
-      { 1:[0,0], 2:[1,0] },                     // TWO_OP: 1→2
-    ];
 
     function drawAlgDiagram(alg) {
       if (alg == null) alg = parseInt(document.getElementById('sl-alg')?.value ?? '0', 10) || 0;
@@ -12004,44 +10965,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         ctx.strokeRect(x, y, box, box);
         ctx.fillText(String(op), ox, oy + 0.5);
       }
-    }
-
-    // The operator rows, one per IR word: the panel's sliders, a def-fm's
-    // keys (fmParamToDefKey) and the regs field (`key`) each one reads. A row
-    // shows when the score's target has its word (applyTargetUi): SSG-EG is
-    // the OPN's, DT2 the OPM's, WS / EG / KSL / VIB the OPLL's, and the OPLL
-    // has two operators, op1's TL alone.
-    // In the panel's order (the envelope's first), each row the FM family's
-    // word (src/ir/fm-words.js): its range, label and regs field. VEL's
-    // slider runs 0–1 in sixteenths (language.md §6), not its -1 "the role's own".
-    const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG',
-      'FM_WS', 'FM_EG', 'FM_KSL', 'FM_VIB', 'FM_VEL']
-      .map((word) => fmOpWord(word))
-      .map((w) => {
-        const vel = w.word === 'FM_VEL';
-        return { key: vel ? 'vel' : w.field, label: w.label, min: vel ? 0 : w.min, max: w.max, param: (op) => `${w.word}${op}` };
-      });
-    // The rows that are a register value, read and written alike (VEL is a
-    // sensitivity, kept as velK with its role's default).
-    const OP_REG_PARAMS = OP_PARAMS.filter((pp) => pp.key !== 'vel');
-
-    function defaultFmRegs() {
-      return {
-        algorithm: 0,
-        feedback: 0,
-        lfoRate: 0,
-        ams: 0,
-        fms: 0,
-        ops: Array.from({ length: 4 }, () => ({
-          ...Object.fromEntries(OP_REG_PARAMS.map((pp) => [pp.key, 0])),
-          amen: 0,
-        })),
-      };
-    }
-
-
-    function isFmVoiceDefNode(node) {
-      return node?.kind === 'list' && node.items?.[0]?.value === 'def-fm';
     }
 
     // `lookup(name)` finds the def-fm a voice extends, so a derived voice gets
@@ -12253,12 +11176,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         closeAt: defCloseAt(state.doc, best),
         regs: parseFmDefRegs(best, lookup),
       };
-    }
-
-    // Where a new `:key value` goes in a def: just inside its `)` (endColumn is
-    // one past it, 1-based).
-    function defCloseAt(doc, node) {
-      return doc.line(node.endLine).from + node.endColumn - 2;
     }
 
     // ---- the vector editor (src/editor/vector-editor.js) ----
@@ -14293,48 +13210,6 @@ import { collectImports } from './src/lang/compile/imports.js';
         savePref('midiCc', _midiCcMap);
         refreshMidiBadges();
       }
-    }
-
-    function fmParamToDefKey(paramName) {
-      if (paramName === 'FM_ALG') return ':alg';
-      if (paramName === 'FM_FB') return ':fb';
-      if (paramName === 'FM_AMS') return ':ams';
-      if (paramName === 'FM_FMS') return ':fms';
-      const m = paramName.match(/^FM_(TL|AR|DR|SL|SR|RR|ML|DT2_|DT|KSL|KS|SSG|AMEN|VEL|WS|EG|VIB)([1-4])$/);
-      if (!m) return null;
-      if (m[1] === 'AMEN') return `:am${m[2]}`;
-      if (m[1] === 'DT2_') return `:dt2-${m[2]}`;
-      return `:${m[1].toLowerCase()}${m[2]}`;
-    }
-
-    // `closePos`: the def-fm's `)` within defText — a key the voice does not
-    // write yet goes after the last pair of its operator (`:vel3` after op3's
-    // `:dt3 0`, so the row stays one row and the formatter aligns it), else
-    // just inside the `)`.
-    function replaceOrInsertDefParam(defText, defKey, valueText, closePos) {
-      const esc = defKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`(${esc}\\s+)([^\\s\\)\\]]+)`);
-      if (re.test(defText)) {
-        return defText.replace(re, `$1${valueText}`);
-      }
-      const op = /^:[a-z]+([1-4])$/.exec(defKey)?.[1];
-      if (op) {
-        const rowRe = new RegExp(`:[a-z]+${op}\\s+[^\\s\\)\\]]+`, 'g');
-        let last = null;
-        for (const m of defText.matchAll(rowRe)) last = m;
-        if (last) {
-          const at = last.index + last[0].length;
-          return `${defText.slice(0, at)} ${defKey} ${valueText}${defText.slice(at)}`;
-        }
-      }
-      if (!(closePos >= 0)) return defText;
-      return `${defText.slice(0, closePos)}\n  ${defKey} ${valueText}${defText.slice(closePos)}`;
-    }
-
-    // A velocity sensitivity's sixteenths as the ratio the score writes
-    // (`:vel1 0.5`); every sixteenth is an exact short decimal.
-    function velSensText(k16) {
-      return String(k16 / 16);
     }
 
     function setCursorDefParam(paramName, value) {

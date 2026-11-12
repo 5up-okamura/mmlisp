@@ -7,7 +7,9 @@
 //     static markup's and those the menus, strips and panels write at run time
 //     (each menu and panel tab is opened first);
 //   - one score per machine loads, builds with no error in the log, and plays:
-//     the worklet gets chip writes within a second and a half.
+//     the worklet gets chip writes (the GM output's events for :target midi);
+//   - the editor's parts work on a score: highlight, folds, the bracket marks
+//     at the cursor, a value's hover, the completion, the playhead.
 //
 // It serves the repo root itself (as `npm run serve` does) and drives the
 // installed Google Chrome through playwright-core (live/node_modules).
@@ -127,6 +129,83 @@ try {
     await page.evaluate(() => window.onStop?.());
     console.log(`${writes > 0 ? "ok  " : "FAIL"} ${path.padEnd(40)} ${writes} write messages`);
     if (!writes) problems.push(`${path}: no chip writes while playing`);
+  }
+  // The editor's own parts, on the first score: highlight, folds, the bracket
+  // structure at the cursor, a value's hover, the completion, the playhead.
+  {
+    const src = await readFile(join(root, SCORES[0]), "utf8");
+    await page.evaluate(() => window.onStop?.());
+    await closeDialogs();
+    await page.click(".cm-content");
+    await page.keyboard.press("Meta+A");
+    await page.keyboard.insertText(src);
+    await page.evaluate(() => window.buildAction());
+    await page.waitForTimeout(300);
+    const look = await page.evaluate(() => ({
+      tokens: document.querySelectorAll(".cm-line span[class]").length,
+      folds: document.querySelectorAll(".cm-foldGutter").length,
+    }));
+    if (look.tokens < 20) problems.push(`editor: ${look.tokens} highlighted tokens`);
+    if (!look.folds) problems.push("editor: no fold gutter");
+    // The score's top in view (the paste left it scrolled to its end).
+    await page.keyboard.press("Meta+Home");
+    await page.waitForTimeout(150);
+    // The cursor just inside the first "(": the form and its brackets marked.
+    const at = await page.evaluate(() => {
+      for (const line of document.querySelectorAll(".cm-line")) {
+        if (!line.textContent.trimStart().startsWith("(")) continue; // not a comment's
+        const i = line.textContent.indexOf("(");
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let n, seen = 0;
+        while ((n = walker.nextNode())) {
+          if (seen + n.length > i + 1) {
+            const r = document.createRange(); r.setStart(n, i + 1 - seen); r.setEnd(n, i + 2 - seen);
+            const b = r.getBoundingClientRect(); return { x: b.left + 1, y: b.top + b.height / 2 };
+          }
+          seen += n.length;
+        }
+      }
+      return null;
+    });
+    if (at) {
+      await page.mouse.click(at.x, at.y);
+      await page.waitForTimeout(150);
+      const marks = await page.evaluate(() => document.querySelectorAll(".cm-bracketLayer > *").length);
+      if (!marks) problems.push("editor: no bracket marks with the cursor in a form");
+    } else problems.push("editor: no form to put the cursor in");
+    // A number's hover.
+    const num = await page.evaluate(() => {
+      for (const line of document.querySelectorAll(".cm-line")) {
+        if (line.textContent.trimStart().startsWith(";")) continue; // a comment's digits are text
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        let n;
+        while ((n = walker.nextNode())) {
+          const m = /(?<![\w-])\d+(?![\w])/.exec(n.data);
+          if (m) { const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + 1); const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }
+        }
+      }
+      return null;
+    });
+    if (num) {
+      await page.mouse.move(num.x, num.y);
+      await page.waitForTimeout(300);
+      if (!(await page.locator(".cm-valHover").count())) problems.push("editor: no hover mark over a number");
+    }
+    // The completion, at the end of the score.
+    await page.click(".cm-content");
+    await page.keyboard.press("Meta+End");
+    await page.keyboard.insertText("\n(fm1 :vo");
+    await page.waitForSelector(".cm-tooltip-autocomplete li", { timeout: 3000 }).catch(() => problems.push("editor: no completion for ':vo'"));
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+z");
+    // The playhead while it plays.
+    await page.evaluate(() => window.buildAction());
+    await page.click("#btnPlay");
+    await page.waitForTimeout(1200);
+    const heads = await page.evaluate(() => document.querySelectorAll(".cm-playheadLayer > *").length);
+    await page.evaluate(() => window.onStop?.());
+    if (!heads) problems.push("editor: no playhead marks while playing");
+    console.log(`${problems.length ? "    " : "ok  "} editor: ${look.tokens} tokens, brackets, hover, completion, ${heads} playhead marks`);
   }
 } finally {
   await browser.close();
