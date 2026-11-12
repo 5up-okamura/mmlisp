@@ -1126,7 +1126,7 @@
     import { abCompare, formatAbReport } from './src/driver/ab-compare.js';
     import { renderVgm, configurePcmRate } from './src/export/export-vgm.js';
     import { exportMidi } from './src/export/export-midi.js';
-    import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/machine/targets.js';
+    import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith, PORT_TARGETS } from './src/machine/targets.js';
     import { fmOpWord, fmInitVoice } from './src/machine/chips/fm-words.js';
     import { opllRomVoices } from './src/machine/chips/ym2413.js';
     import { bakeAdpcmB } from './src/machine/chips/adpcm-b.js';
@@ -1144,7 +1144,7 @@
     import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import/import-timing.js';
     import { RATE, PPQN } from './src/import/import-song.js';
     import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import/import-mdx.js';
-    import { portRows, portScore, scoreTargetOf, PORT_TARGETS } from './src/port/score-port.js';
+    import { portRows, portScore, scoreTargetOf } from './src/port/score-port.js';
     import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import/import-mgs.js';
     import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import/import-nsf.js';
     import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import/import-sf2.js';

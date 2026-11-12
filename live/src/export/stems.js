@@ -19,7 +19,8 @@
 // ---------------------------------------------------------------------------
 
 import { targetProfile } from "../machine/targets.js";
-import { renderWavSamples, encodeWav } from "./export-wav.js";
+import { renderWavSamples } from "./export-wav.js";
+import { encodeWav } from "../audio/wav-encode.js";
 
 /**
  * The mixer's strips for `ir`: { head, trackIndex, voice?, rhythm? }, a

@@ -78,20 +78,19 @@
 
 import { emitSong, emitStructured, qstr, barEnds, RATE, PPQN,
   assignBends, PITCH_NONE, destsFor, onBoard, standInsLoud, standInOn, standInsImported, loudDefs } from "./import-song.js";
-import { TARGETS, targetProfile } from "../machine/targets.js";
-import { PORT_TARGETS } from "../port/score-port.js";
+import { TARGETS, targetProfile, PORT_TARGETS } from "../machine/targets.js";
 import { envCycle } from "../machine/chips/ssg.js";
 import { DUTIES, NOISE_PERIODS, NOISE_NOTE_BASE, DMC_PERIODS, DMC_RATES } from "../machine/chips/rp2a03.js";
 import { noiseHz as gbNoiseHz, noiseNoteOfHz as gbNoiseNote } from "../machine/chips/lr35902.js";
 import { Apu as GbApu } from "../synth/synth-gb.js";
 import { rhythmRom } from "../machine/chips/rhythm-rom.js";
 import { PCM8_OVER_CARRIER } from "../machine/chips/msm6258.js";
-import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./import-mucom.js";
+import { RHYTHM_SOUNDS, RHYTHM_KIT, ringGate } from "./rhythm-kit.js";
 import { assignEnvelopes, shapeOf } from "./import-shapes.js";
 import { beatClock, shuffleTokens, timingLine } from "./import-timing.js";
 import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";
-import { encodeWav } from "../export/export-wav.js";
-import { decodeAdpcmB } from "./mucom-pcm.js";
+import { encodeWav } from "../audio/wav-encode.js";
+import { decodeAdpcmB } from "../audio/mucom-pcm.js";
 import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op, romVoicesAs4op } from "../machine/chips/ym2413.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
 import { engineImage } from "../driver/engine-images.js";

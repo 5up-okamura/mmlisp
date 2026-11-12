@@ -42,7 +42,7 @@ import { PPQN, RATE, barEnds, emitSong, emitStructured, withPre, dropIdleNones, 
   assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
 import { DEFAULT_TARGET, targetProfile } from "../machine/targets.js";
 import { assignEnvelopes } from "./import-shapes.js";
-import { RHYTHM_KIT } from "./import-mucom.js";
+import { RHYTHM_KIT } from "./rhythm-kit.js";
 import { GM_PROGRAMS, GM_KIT_ROLES } from "../midi/gm-names.js";
 
 // presets/gm, in program order (README.md), the MIDI export's table. The

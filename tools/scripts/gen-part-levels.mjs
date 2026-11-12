@@ -17,8 +17,7 @@ import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples, loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 import { renderWavSamples } from "../../live/src/export/export-wav.js";
-import { TARGETS } from "../../live/src/machine/targets.js";
-import { PORT_TARGETS } from "../../live/src/port/score-port.js";
+import { TARGETS, PORT_TARGETS } from "../../live/src/machine/targets.js";
 import { bakeSampleBank, sampleBankKind } from "../../live/src/audio/sample-bank.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

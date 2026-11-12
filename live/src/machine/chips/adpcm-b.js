@@ -2,7 +2,7 @@
 // time by Delta-N, repeating its whole range when it loops.
 import { words } from "./parts.js";
 import { applySampleEffects } from "../../audio/sample-fx.js";
-import { encodeAdpcmB } from "../../import/mucom-pcm.js";
+import { encodeAdpcmB } from "../../audio/mucom-pcm.js";
 import { resample } from "../../audio/wav-decode.js";
 
 export const adpcmB = {

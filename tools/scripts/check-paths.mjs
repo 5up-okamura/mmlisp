@@ -29,6 +29,45 @@ const RELATIVE = [
 const PAGE = /\b(?:src|href)="(\.?\.?\/?[^":#?]+\.(?:js|css|png|svg|webmanifest|json))"/g;
 const SPELLED = /["'`]((?:\.\.\/)*live\/src\/[A-Za-z0-9_/.-]+\.js)["'`]/g;
 
+const NAMED = /\bimport\s*\{([^}]*)\}\s*from\s*["'](\.\.?\/[^"']+)["']/g;
+const exportCache = new Map();
+// A module's export names; null when it re-exports a whole module (`export *`).
+function exportsOf(p) {
+  if (exportCache.has(p)) return exportCache.get(p);
+  const t = readFileSync(p, "utf8");
+  let names = new Set();
+  if (/^\s*export\s*\*/m.test(t)) names = null;
+  else {
+    for (const m of t.matchAll(/^\s*export\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+    // `export const A = …, B = …;`: each declarator at the statement's top level.
+    for (const m of t.matchAll(/^\s*export\s+(?:const|let|var)\s+(?=[A-Za-z_$])/gm)) {
+      let depth = 0, at = m.index + m[0].length, start = at, q = null;
+      for (; at < t.length; at++) {
+        const c = t[at];
+        if (q) { if (c === "\\") at++; else if (c === q) q = null; continue; }
+        if (c === '"' || c === "'" || c === "`") q = c;
+        else if ("([{".includes(c)) depth++;
+        else if (")]}".includes(c)) depth--;
+        else if (depth === 0 && (c === "," || c === ";" || c === "\n" && /^\s*(export|const|let|function|import|\/\/)/.test(t.slice(at + 1)))) {
+          const id = t.slice(start, at).match(/^\s*([A-Za-z_$][\w$]*)\s*=/);
+          if (id) names.add(id[1]);
+          if (c !== ",") break;
+          start = at + 1;
+        }
+      }
+      const id = t.slice(start, at).match(/^\s*([A-Za-z_$][\w$]*)\s*=/);
+      if (id) names.add(id[1]);
+    }
+    for (const m of t.matchAll(/^\s*export\s+(?:const|let|var)\s*\{([^}]*)\}/gm))
+      for (const n of m[1].split(",")) names.add(n.trim().split(/\s*:\s*/).pop());
+    for (const m of t.matchAll(/^\s*export\s*\{([^}]*)\}/gm))
+      for (const n of m[1].split(",")) { const s = n.trim().split(/\s+as\s+/); if (s[0]) names.add(s.pop()); }
+    if (/^\s*export\s+default\b/m.test(t)) names.add("default");
+  }
+  exportCache.set(p, names);
+  return names;
+}
+
 const bad = [];
 for (const f of files) {
   const text = readFileSync(join(repo, f), "utf8");
@@ -44,9 +83,21 @@ for (const f of files) {
     // Relative to the file when it climbs, else to the repo root.
     check(m[1], m[1].startsWith("../") ? dir : repo, lineOf(m.index));
   }
+  // A named import the module does not export (a page's or a worker's fails
+  // only in the browser, at load).
+  for (const m of text.matchAll(NAMED)) {
+    const p = resolve(dir, m[2]);
+    if (!existsSync(p) || !/\.m?js$/.test(p) || /\/vendor\//.test(p)) continue; // vendored bundles are minified
+    const ex = exportsOf(p);
+    if (!ex) continue;
+    for (const raw of m[1].split(",")) {
+      const name = raw.trim().split(/\s+as\s+/)[0];
+      if (name && !ex.has(name)) bad.push(`${f}:${lineOf(m.index)}: ${name} is not exported by ${m[2]}`);
+    }
+  }
 }
 if (bad.length) {
-  console.error(`check:paths: ${bad.length} path(s) that name no file:\n  ${bad.join("\n  ")}`);
+  console.error(`check:paths: ${bad.length} path(s) or name(s) that name nothing:\n  ${bad.join("\n  ")}`);
   process.exit(1);
 }
 console.log(`check:paths ok (${files.length} files)`);

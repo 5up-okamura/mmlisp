@@ -28,11 +28,8 @@ Rules for every phase:
    By hand: tools/mcp's `load("x.js")`, check-mmlisp-strict's and
    emit-images' `path.join`, check-font-sizes' scan (top level only — it
    would check nothing). CLAUDE.md's table becomes one row a directory.
-2. **Layering** — `encodeWav` out of export-wav.js (five importers take it)
-   beside wav-decode; `RHYTHM_KIT` / `RHYTHM_SOUNDS` / `ringGate` out of
-   import-mucom.js, `PORT_TARGETS` out of score-port.js, `nesChips` /
-   `decodeOki` out of import-vgm.js, the GB `Apu` import-vgm takes from
-   synth-gb.js; ir-utils.js (58 exports, 36 importers) by subject.
+2. **Layering** — done; what is left of it goes with phase 3: `nesChips`
+   and `decodeOki` leave import-vgm.js with its chip readers and decoders.
 3. **Big files at their seams** — mmlisp2ir.js (7.5k lines, 174
    functions, no section banners) into `lang/compile/`; import-vgm.js by
    chip reader. drv-player.js only toward the shape of drv/68k (it is the
@@ -55,4 +52,16 @@ Rules for every phase:
   `enc_b4` (-Werror); dropped in f9c880a7.
 - Phase 1: done — the move script is the commit's own record (see its
   message); CLAUDE.md's map is one row a directory.
-- Next: phase 2.
+- Phase 2: done — ir-utils.js into ir/ (pitch, levels, curves, ranges,
+  timing) and machine/chips/opn-regs.js; encodeWav → audio/wav-encode.js;
+  mucom-pcm.js → audio/; the RX5 stand-in kit → import/rhythm-kit.js
+  (score-port's copy of RHYTHM_KIT gone); PORT_TARGETS → machine/targets.js.
+  `check:paths` also holds every named import to an export of its module
+  (a page's miss fails only in the browser).
+- Next: phase 3. mmlisp2ir.js has three top-level `let`s
+  (`compileFrameHz`, `drawStreams`, `freshNameCounter`): their writers stay
+  with them, or the state becomes an object.
+- The splits were done by a scratch tool (acorn: each top-level declaration
+  verbatim with its comments, its file's imports computed, every importer
+  rewritten, a line-multiset check that nothing was lost or doubled); it is
+  not in the repo — rewrite it from this description if a session needs it.

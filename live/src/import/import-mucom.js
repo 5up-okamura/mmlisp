@@ -11,15 +11,17 @@
 // supported subset is skipped and reported in `warnings`.
 // ---------------------------------------------------------------------------
 
-import { decodeMucomPcmBank } from "./mucom-pcm.js";
-import { encodeWav } from "../export/export-wav.js";
+import { decodeMucomPcmBank } from "../audio/mucom-pcm.js";
+import { encodeWav } from "../audio/wav-encode.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
 import { fmCarrierOpsForAlg } from "../machine/chips/opn-regs.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
 import { lineItems } from "./import-shapes.js";
 import { ym2608 } from "../machine/chips/ym2608.js";
 import { envCycle } from "../machine/chips/ssg.js";
-import { pruneUnnamedDefs, PORT_TARGETS } from "../port/score-port.js";
+import { pruneUnnamedDefs } from "../port/score-port.js";
+import { PORT_TARGETS } from "../machine/targets.js";
+import { RHYTHM_SOUNDS, RHYTHM_KIT } from "./rhythm-kit.js";
 
 const WHOLE_TICKS = PPQN * 4; // 384 MMLisp ticks per whole note
 const DEFAULT_WHOLE_CLOCKS = 128; // mucom C-resolution default (clocks/whole note)
@@ -85,22 +87,6 @@ const SSG_PRESETS = [
 // G is the OPNA's built-in rhythm generator: six sounds in the chip's ROM, each
 // a voice of its own: a track per sound, rhythm1-rhythm6 in key-on bit order.
 const RHYTHM_PART = "G";
-// The six, in the order of the key-on bits (`@` is a mask) and of `v`'s
-// levels: the sample, its priority (lower wins, as :prio) and how long it
-// rings — the time the RX5 sample stays within 6 dB of its peak, during which
-// a lower-priority hit is dropped rather than cutting it.
-// `ms` is the sample's whole length, for the bank-fit bake.
-export const RHYTHM_SOUNDS = [
-  { name: "kick", prio: 4, ringMs: 40, ms: 160 }, // BD
-  { name: "snare", prio: 1, ringMs: 60, ms: 220 }, // SD
-  { name: "ride", prio: 3, ringMs: 350, ms: 600 }, // TOP (the OPNA's top cymbal is a ride)
-  { name: "hat", prio: 6, ringMs: 40, ms: 120 }, // HH
-  { name: "tom4", prio: 2, ringMs: 65, ms: 400 }, // TOM
-  { name: "rim", prio: 5, ringMs: 15, ms: 80 }, // RIM
-];
-export const RHYTHM_KIT = "presets/rx5/set.mmlisp";
-// A sound's ring time as the :gate its layer's hits hold the line for.
-export const ringGate = (s, bpm) => `:gate ${Math.max(1, Math.round((s.ringMs / 1000) * ((bpm ?? 120) / 60) * PPQN))}t`;
 const RHYTHM_KIT_RATE = 22050;
 const RHYTHM_DB_PER_STEP = 0.75; // the total level (0-63) and each sound's (0-31)
 

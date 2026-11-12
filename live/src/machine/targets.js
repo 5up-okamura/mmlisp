@@ -98,6 +98,8 @@ function profile(def) {
 const DEFS = { md, pc88, x68k, msx, pce, fc, gb, midi };
 export const TARGETS = Object.fromEntries(Object.entries(DEFS).map(([k, d]) => [k, profile(d)]));
 export const DEFAULT_TARGET = "md";
+/** The machines a score can be converted between: every one of chips (General MIDI's is its own road). */
+export const PORT_TARGETS = Object.keys(TARGETS).filter((t) => TARGETS[t].sound === "chips");
 
 /**
  * `name`'s machine as a conversion fills it: its channels less those of the

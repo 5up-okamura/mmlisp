@@ -31,30 +31,23 @@
 // ---------------------------------------------------------------------------
 
 import { parse } from "../lang/mmlisp-parser.js";
-import { TARGETS, partsWithWord, configuredTarget } from "../machine/targets.js";
-import { canonicalTarget } from "../lang/mmlisp2ir.js";
+import { TARGETS, partsWithWord, configuredTarget, PORT_TARGETS } from "../machine/targets.js";
+import { RHYTHM_KIT } from "../import/rhythm-kit.js";
+import { canonicalTarget, compileMMLisp } from "../lang/mmlisp2ir.js";
 import { loudDefs } from "../import/import-song.js";
 import { OPN_LFO_HZ, lfoHz } from "../machine/chips/ym2151.js";
-import { opllRomVoices, romVoicesAs4op } from "../machine/chips/ym2413.js";
+import { opllRomVoices, romVoicesAs4op, opllWordsAs4op } from "../machine/chips/ym2413.js";
 import * as fcApu from "../machine/chips/rp2a03.js";
 import * as gbApu from "../machine/chips/lr35902.js";
 import * as pcePsg from "../machine/chips/huc6280.js";
-import { compileMMLisp } from "../lang/mmlisp2ir.js";
 import { PART_LEVELS } from "../machine/part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "../ir/pitch.js";
 import { expandLoops } from "../ir/timing.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
-import { waveformOf, carrierOctave, carrierMultiple, soundOf, FM_ROLE_SOUND, opnAs2op, ROLES, ROM_OF_WAVE } from "./voice-port.js";
-import { opllWordsAs4op } from "../machine/chips/ym2413.js";
-import { voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
-
-/** The machines a score can be converted between. */
-/** The machines a score can be converted between: every one of chips (General MIDI's is its own road). */
-export const PORT_TARGETS = Object.keys(TARGETS).filter((t) => TARGETS[t].sound === "chips");
+import { waveformOf, carrierOctave, carrierMultiple, soundOf, FM_ROLE_SOUND, opnAs2op, ROLES, ROM_OF_WAVE, voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
 const WAVEFORMS = "presets/waveforms/set.mmlisp";
-const RHYTHM_KIT = "presets/rx5/set.mmlisp"; // the ROM rhythm's roles, as the mucom88 import plays them
 const SONG_WORDS = new Set(["LFO_RATE", "LFO_FREQ", "LFO_PMD", "LFO_AMD", "LFO_WAVE", "NOISE_RATE", "ENV_RATE"]);
 // Lists whose items are a body's: walked for words, voices and notes. Any
 // other list (a curve, an expression, a glide) is a value and kept whole.

@@ -19,7 +19,7 @@
  * and 24-bit samples' low byte (sm24).
  */
 
-import { encodeWav } from "../export/export-wav.js";
+import { encodeWav } from "../audio/wav-encode.js";
 import { GM_KIT_ROLES } from "../midi/gm-names.js";
 
 const KIT_RATE = 22050;

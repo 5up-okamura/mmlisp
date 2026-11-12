@@ -16,21 +16,20 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { compileMMLisp, canonicalTarget } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { pitchToMidi } from "../../live/src/ir/pitch.js";
 import { midiPlan } from "../../live/src/export/export-midi.js";
-import { TARGETS } from "../../live/src/machine/targets.js";
+import { TARGETS, PORT_TARGETS } from "../../live/src/machine/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
 import { importMucom, MUCOM_TARGETS } from "../../live/src/import/import-mucom.js";
 import { IRPlayer } from "../../live/src/player/ir-player.js";
 import { renderVgm } from "../../live/src/export/export-vgm.js";
 import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import/import-vgm.js";
-import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/port/score-port.js";
+import { portScore, portRows, scoreTargetOf } from "../../live/src/port/score-port.js";
 import { WAVEFORM_WORDS, waveformOf, carrierOctave, opnAs2op } from "../../live/src/port/voice-port.js";
 import { shapeOf, envelopeOf } from "../../live/src/port/wave-port.js";
 import { parse } from "../../live/src/lang/mmlisp-parser.js";
-import { canonicalTarget } from "../../live/src/lang/mmlisp2ir.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const compile = (src, file) => {
