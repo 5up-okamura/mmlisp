@@ -16,6 +16,14 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
   stay English; ja / es stay machine-written from the glossary, fixed via
   `i18n-sync.mjs --apply`, never by hand.
 - Playback in the worklet: not now. The scope's cost while playing: left.
+- **The player reads the score's tempo changes ahead** (`_tempoChangesAhead`,
+  for a gate's end and a tick-clocked macro's steps in seconds): kept
+  (2026-11-12). It reads what the score wrote, not state to come; counting
+  ticks instead would rebuild the player for no symptom. Reopen only on a
+  note across a tempo change that parts from the driver.
+- **The PC Engine's PCM default level is not raised**: the DDA and a wave
+  peak alike (−18.1 dBFS measured); the difference is the samples' energy,
+  the machine's own balance.
 - **Archives:** ZIP and LZH only.
 - No Import > Song… (Open takes a song).
 - **Share links:** files as a ZIP beside the short link, not base64 in the
@@ -150,20 +158,18 @@ gate before each push (drv `verify:all`, `node tools/ab-gate.mjs`,
 `check:word-rule`, `check:words`, `check:loops`, `check:panel`,
 `check:stems`, `check:gm-output`, `check:midi-out` …).
 
-- Tempo look-ahead: `_timeAfterTicks` reads tempo changes not yet
-  dispatched (`_tempoChangesAhead`) for a gate's end and a tick-clocked
-  macro's steps; `_nextNote` looks ahead for the sample editor. Against
-  "state is now only" — the alternative is counting ticks (a big change).
-- Live's keys: an FM key writes through preview writes, a PSG key
-  through the player's own state (`keyTone` → `_psgSetPitch`) — so the
-  song and the key can overwrite each other on a lane the song plays.
-  The fix is in index.html (no tests): only playback verifies it.
-- The PC Engine's PCM sounds quieter than its waves: measured, the DDA
-  and a wave channel peak alike (−18.1 dBFS); a sample carries ~13 dB
-  less energy than a full-scale saw. It is a mix default, not a bug;
-  the score can lower its waves now (`(def-mod :ch [...] :vel* 0.7)`
-  or `(def-wave … (saw -64..63))`). A different default is a design
-  change.
+- Live's keys on a tone lane the song plays: the song's notes move a held
+  key's pitch, and its wave / duty writes its timbre (the level is the
+  key's, `_lv().key`). FM's hold is not there to extend: it is the
+  worklet's per-chip FM bus (`hold-ch`, `opnHoldBus` …), dropping the
+  song's writes as they apply and replaying its registers at its next
+  key-on; a tone chip has no key register, shares registers between lanes
+  (the AY's mixer, the HuC6280's select) or takes bytes (the SN76489).
+  Options put to the user (2026-11-12): leave it; a gate in the player
+  (`_lane`: the song's writes to a lane a key holds are not encoded, its
+  words written back at the key's release) — one mechanism for every
+  machine, but writes already sent (≤ the lookahead) still land; a hold
+  bus per tone chip (~10 chips).
 - Not yet heard on a device (the user checks on their phone):
   :target midi playback, mute / solo switching, the DMC's :keyon, the
   GM note-off fix (cce183d); a stop on an external MIDI port (each key

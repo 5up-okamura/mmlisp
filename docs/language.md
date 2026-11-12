@@ -3084,7 +3084,10 @@ points and `:mode shot | loop | gate`; its level is the channel's 5-bit
 volume as a wave's is, with `:vel`, `:vol` and their macros, and `:pan`
 the channel's. A note writes its samples to its end — the sample's, the
 next note's on any of the channel's names, a gate's — and the channel goes
-quiet.
+quiet. A sample at full level peaks where a wave does but carries far less
+energy than a full-scale wave (a drum sits some 13 dB under a saw), as on
+the machine: a score is balanced by lowering its waves (`:vel`, `:vol`), not
+by a louder PCM.
 
 **One channel, three names.** `waveN`, `noiseN` (5 and 6) and `pcmN` are
 one channel, and a score may write any of them: where their notes meet, the
