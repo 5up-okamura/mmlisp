@@ -779,6 +779,12 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-pcm-macro-twin.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-se-pcm-macro.mmlisp": {
     "ok": true,
     "mismatches": 0,

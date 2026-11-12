@@ -1,10 +1,11 @@
 ; A DISPLACED PART PLAYS ON, unheard (driver.md §2.5): the effect takes fm1
-; and sqr1 for 30 frames at f40, and what comes after it must be the song as
-; if the effect had never fired — p3-se-ghost-twin, the same notes with no
-; effect. fm1's whole note is under a :vol sweep (in frames, so the PAL bake
-; is the same sweep) that keeps moving while the effect plays, and its next
-; note lands on the song's beat, not 30 frames late. sqr1's note ends under
-; the effect, so the effect's end does not key it again.
+; and sqr1 for 30 frames at f40, and from each part's next note after it the
+; stream must be the song as if the effect had never fired — p3-se-ghost-twin,
+; the same notes with no effect. fm1's whole note is under a :vol sweep (in
+; frames, so the PAL bake is the same sweep) that keeps moving while the
+; effect plays; the effect's end puts fm1's state back but not its sound, and
+; its next note (f120) lands on the song's beat, at the level the sweep
+; reached. sqr1's note ends under the effect.
 (def-fm v :alg 7 :fb 0 :ar1 31 :tl1 20 :ml1 1 :ar2 31 :tl2 20 :ml2 1 :ar3 31 :tl3 20 :ml3 1 :ar4 31 :tl4 8 :ml4 1)
 (def-fm w :alg 7 :fb 0 :ar1 31 :tl1 4 :ml1 5 :ar2 31 :tl2 4 :ml2 5 :ar3 31 :tl3 4 :ml3 5 :ar4 31 :tl4 2 :ml4 5)
 (fm1 :tempo 120 v :oct 4 :vel 12 :vol (linear 31..8 :len 120f) c1 :vol 31 :len 4 d e f g)   ; track 0

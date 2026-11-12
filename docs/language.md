@@ -1242,8 +1242,10 @@ A game's sound effects are written once, as defs, and every song carries them.
   **takes from the song** — `fm1` above is the song's lead's channel. When the
   effect plays, the song's part there is suspended — it plays on, unheard —
   and when the effect ends it comes back where the song is (driver.md §2.5):
-  patch, levels, pan, a sweep still moving and, on `noise`, its mode, with a
-  note it still holds re-keyed. One part a channel (`E_SE_PART`). An FM effect on a
+  patch, levels, pan, a sweep still moving and, on `noise`, its mode — and it
+  sounds again from its **next note**: a note it held under the effect is not
+  attacked anew (keep a long hold from under an effect). On `pcm1`–`pcm3` the
+  same. One part a channel (`E_SE_PART`). An FM effect on a
   channel the song leaves free starts sooner: the first effect there has its
   voice loaded with the score (driver.md §4.1).
 - **Not `:master`, `:lfo-rate` or a `def-val`.** Those are the song's — the

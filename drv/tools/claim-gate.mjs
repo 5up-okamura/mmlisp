@@ -73,8 +73,13 @@ const CASES = [
   },
   {
     score: "p3-se-ghost",
-    from: 71, to: 140,  // from the NTSC restore on, the later of the two
-    what: "a displaced part plays on unheard: after the effect, the song as if it never fired",
+    from: 121, to: 140, // from fm1's first note after the effect (f120) on
+    what: "a displaced part plays on unheard: from its next note after the effect, the song as if it never fired",
+  },
+  {
+    score: "p3-se-pcm-macro",
+    from: 101, to: 140, // after the part's first note past the effect (f60 NTSC, f100 PAL)
+    what: "a PCM effect hands its voice back as any channel: from the part's next note, the song as if it never fired",
   },
 ];
 const MAX_FRAMES = 140;
@@ -165,6 +170,11 @@ function checkInvariant(stem) {
 //     composed), $B0/$B4 — which no voice number could rebuild: a partial
 //     def-fm, then a mid-song :tl1 and :pan.
 //   p3-se-noise: the noise mode, one register the effect sets its own.
+//   p3-se-ghost: fm1's held note, keyed before the effect, is not keyed again
+//     at its end (an FM envelope would only attack anew) but at the part's
+//     next note (f120 NTSC, f100 PAL).
+//   p3-se-pcm-macro: pcm1's levels the song's again at the effect's end, and
+//     the loop it cut not started again — the part sounds at its next note.
 //   p3-se-pcm-pan: the DAC's pan, fm6's L / R ($B6): the song's, the
 //     effect's from its start (centre, then its own :pan right), the song's
 //     again at its end — as the song left it under the effect (centred,
@@ -182,6 +192,12 @@ const STATE_CASES = [
     what: "the effect's end puts the channel's patch back" },
   { score: "p3-se-noise", before: 39, after: 119, read: (d) => `mode ${d._noiseMode}`,
     what: "the effect's end puts the noise mode back" },
+  { score: "p3-se-ghost", read: (d) => `fm1 ${d._fm[0].keyed ? "keyed" : "off"}`,
+    want: { 39: "fm1 keyed", 75: "fm1 off", 95: "fm1 off", 125: "fm1 keyed" }, // (true on both clocks)
+    what: "the effect's end gives fm1's held note no new attack: it sounds again at its next note" },
+  { score: "p3-se-pcm-macro", read: (d) => `pcm1 ${d._pcmVoices[0].looping ? "loop" : "shot"} vol ${d._pcmVoices[0].vol}`,
+    want: { 39: "pcm1 loop vol 31", 45: "pcm1 shot vol 12", 57: "pcm1 shot vol 31", 105: "pcm1 loop vol 31" }, // (both clocks)
+    what: "the effect's end puts pcm1's levels back, and does not start the cut loop again" },
   { score: "p3-se-pcm-pan", read: (d) => `b6 ${d._shadow[1].get(0xb6)?.toString(16)}`,
     want: { 39: "b6 80", 45: "b6 c0", 85: "b6 40", 105: "b6 c0", 130: "b6 40" }, // (frames true on both clocks)
     what: "a PCM effect's pan is the DAC's while it plays, the song's before and after" },

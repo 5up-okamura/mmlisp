@@ -220,7 +220,6 @@ typedef struct {
   uint8_t looping;    /* the running note loops */
   uint8_t keyed;      /* a note is on, up to its note-off: a macro's release waits for it */
   uint8_t retrig;     /* a :keyon step restarts the blob once the frame's levels are in */
-  uint8_t sample_id;  /* the running note's sample: what an SE-end restarts */
   uint8_t muted;
   uint16_t bank;      /* absolute ROM bank, banked PCM only */
   uint16_t src;       /* the note's blob, as a window address */
@@ -256,14 +255,17 @@ typedef struct {
  * left it. The ghost and the live channel trade places (ghost_swap) only
  * around what the part does to its channel, and while they are traded every
  * write addressed to the channel is dropped; in between, the live state is
- * the effect's. The effect's end puts the ghost on the chip. One per register
- * channel 0-9 but CH3, where an effect never plays — a channel has one
- * displaced part. Mirrors drv-player _ghost[ch]. */
+ * the effect's. The effect's end puts the ghost's state back (ghost_restore):
+ * the part's notes sound again from its next one. One per channel a track
+ * owns — the register channels 0-9 but CH3, where an effect never plays, and
+ * the PCM voices (ghost_ix) — a channel has one displaced part. Mirrors
+ * drv-player _ghost[ch]. */
 typedef struct {
   uint8_t live;
   union {
     MMLFmCh fm;
     MMLPsgCh psg;
+    MMLPcmVoice pcm;
   } c;
   MMLSweep sweeps[2];
   MMLMacroBind binds[MML_MACRO_BINDS];
@@ -293,13 +295,6 @@ typedef struct {
   uint8_t is_se, se_prio;
   uint8_t se_index; /* the effect this part plays for (SE_TABLE number), 0xFF = none */
   uint8_t displaced;
-  /* A PCM SE: soft-mix voices have no owner track, so what is kept is the
-   * looping BGM note the SE's PCM_NOTE_ON overwrote, restarted at SE-end, and
-   * the voice's macro binds, which the SE's claim wiped and its end puts back.
-   * pcm_se marks an SE that took voice pcm_vi at all. */
-  uint8_t pcm_snap, pcm_snap_sample, pcm_snap_loop, pcm_vi;
-  uint8_t pcm_se, pcm_bind_count;
-  MMLMacroBind pcm_binds[MML_MACRO_BINDS];
   uint8_t track_id, channel_id, flags;
   uint16_t event_offset; /* stream start, for a restart */
   uint16_t pc;
@@ -378,7 +373,7 @@ typedef struct {
   uint8_t fm3_op_sound; /* CSM: the operators sounding (0x10..0x80) — from the note to its
                          * gate or, with a level macro's release, to the release's end (§9) */
   uint8_t csm_hold;    /* a rate rest stopped Timer A: LOAD A low, CSM on (§9) */
-  MMLGhost ghost[10];  /* a displaced part's channel, per register channel */
+  MMLGhost ghost[13];  /* a displaced part's channel: 0-9, then pcm1-pcm3 (ghost_ix) */
   /* The ghost traded in now, as its channel + 1 (0 = none): a write addressed
    * to that channel is dropped. psg_latch is the channel + 1 the last PSG
    * latch byte named, which a data byte belongs to. */

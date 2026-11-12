@@ -183,19 +183,23 @@ no macros: its binds are kept, and the restore re-instantiates them. So a
 part's loop, its tempo changes and its `$slot` reads land when the song has
 them, and after the effect it is in time with the rest of the song.
 
-**Restore re-keys.** When the SE ends — its own END_OF_TRACK, or
-`MMLisp_stopTrack` for a held or looping SE — the ghost goes onto the chip:
-the patch (change-only against the structured shadow, as VOICE_SET applies a
-voice, then `$B4`), carrier level, then — when the part is holding a note —
-pitch and key-on, in that order. A note that is still held re-attacks
-mid-sustain rather than waiting for the next note-on, which would drop audio;
-an FM envelope cannot resume mid-way, so the re-attack is the design. A note
-that ended under the effect stays ended. The ghost's sweeps go on from where
-they are; its binds come back and, on a re-attack, are re-instantiated as the
-note-on it is (§13.1). A part that ended under the effect leaves the channel
-as the effect left it. Gates: `p3-se-patch` (claim-gate compares the patch
-before and after) and `p3-se-ghost` (after the effect, the stream is the
-song's as if the effect had never fired).
+**Restore puts the state back, not the sound.** When the SE ends — its own
+END_OF_TRACK, or `MMLisp_stopTrack` for a held or looping SE — the ghost's
+state goes back on the channel: on FM the patch (change-only against the
+structured shadow, as VOICE_SET applies a voice, then `$B4`) and the carrier
+level, the levels, pitch and gate; on the PSG the levels, pitch and, on
+noise, the mode; on a PCM voice its levels and the track's own points; on
+every channel the sweeps, from where they went on to, and the macro binds.
+Nothing is keyed: a note the part still holds stays silent, and the part
+sounds again from its next note, which starts its macros as any note-on does
+(§13.1). An FM envelope cannot resume mid-way, a PSG `:vel` envelope or a
+sample's head would start over, so a re-attack would only be a new attack the
+music never wrote — the composer keeps a held note from under an effect. (A
+`:len 0` hold stays silent until its key-off and the part's next note.) A part
+that ended under the effect leaves the channel as the effect left it. Gates:
+`p3-se-patch` (claim-gate compares the patch before and after) and
+`p3-se-ghost` (from the part's next note on, the stream is the song's as if
+the effect had never fired; its held note is not keyed at the restore).
 
 **Priority.** Against an SE already on the channel, a lower-priority SE is
 **dropped, without touching the one playing**; an equal or higher one
@@ -203,20 +207,19 @@ preempts it and inherits its restore duty, so the BGM returns only after the
 **last** SE ends. Priorities are 0-255: the def-se's, or the host's. Each part
 of a multi-channel effect is arbitrated on its own channel.
 
-**PCM.** Soft-mix voices have no channel owner, so a PCM SE overwrites the
-voice. It takes the voice's macro binds as any claim does and keeps them on
-the SE track; SE-end puts them back, and if a looping BGM note was live there,
-starts it again from the sample's head — deliberately not time-synced — with
-them re-instantiated, as a note-on. Gate: `p3-se-pcm-macro`. The DAC's
-pan is the effect's while it plays and the song's at its end (§14).
+**PCM.** A PCM voice is a channel a track owns like any other (`owned_ch`):
+a PCM SE suspends the song's part there into the voice's ghost, the part's
+PCM commands are dropped while it plays (`pcm_emit`, as `ym` drops a
+register write), and the restore is the one above. Gate: `p3-se-pcm-macro`
+(claim-gate: from the part's next note the song as if the effect never
+fired; its levels back, the loop it cut not started again). The DAC's pan is
+the effect's while it plays and the song's at its end (§14).
 
 **Modulators change hands with the channel.** The SE's claim wipes the
 channel's macro binds and sweeps like any claim (§2.2), so the displaced part's
 vibrato does not play the SE; the ghost carries them, and the restore puts
-them back — a re-attack re-instantiates the binds, which makes it exactly a
-note-on (§13.1) rather than a macro resumed mid-step under an envelope that
-just re-attacked. The SE's own binds and sweeps go the same way at the
-restore.
+them back, unstarted: the part's next note-on starts them (§13.1). The SE's
+own binds and sweeps go the same way at the restore.
 
 **Not on CH3.** Channel 2 and its operator and CSM tracks (`fm3-1..4`,
 `fm3-csm`, `fm3-csm-rate`) share one mode register, Timer A and the channel's
@@ -1144,9 +1147,9 @@ including under an effect.
   eligible bundles automatically expand to multiple banks.
 - **SE** (§2.5): an effect's parts are tracks of the score it plays over, so
   every song carries the game's effects (a bundle compiles each song with the
-  `"se"` file; the control data is small, the samples are shared). A PCM SE
-  restarts the BGM loop from the sample's head, not from where it was. No
-  effect plays on CH3.
+  `"se"` file; the control data is small, the samples are shared). A part an
+  effect displaced sounds again from its next note, not mid-note. No effect
+  plays on CH3.
 - **PAL:** supported by baking a second score (§3.3); one MMB, and its sample
   bank, plays correctly on one standard.
 - **Hardware.** The SGDK example and a three-voice multi-bank score play on
@@ -1202,9 +1205,9 @@ So each case is a score and a **twin**, the same score with its modulators
 removed, and over the window where those modulators must not be heard the two
 slot streams must be byte-identical. Three cases: a plain eviction, a sound
 effect's claim, and its restore. A fourth twin is the run where the effect
-never fired (`p3-se-ghost`): from the restore on, a displaced part's stream is
-the song's — in time, its sweep moved on, a note that ended under the effect
-not re-keyed. The windows are cut so one fits both video standards.
+never fired (`p3-se-ghost`, `p3-se-pcm-macro`): from the part's next note after
+the effect, a displaced part's stream is the song's — in time, its sweep moved
+on. The windows are cut so one fits both video standards.
 It also checks, every frame of every schedule with an effect, that a part is
 suspended exactly while one running effect holds it, and that what an effect
 set comes back: the channel's patch (`p3-se-patch`, a patch no voice number

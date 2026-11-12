@@ -293,6 +293,9 @@ MML_HOT void psg_byte(MMLSeq *s, uint8_t byte) {
  * deferred PCM_START would mean a note that simply did not play.
  */
 static void pcm_emit(MMLSeq *s, const uint8_t *bytes, uint16_t n) {
+  /* A displaced part's voice is its ghost (ghost_swap): its commands are
+   * dropped, as its channel's register writes are (ghost_muted). */
+  if (s->ghost_on > CH_PCM1 && bytes[0] != PCM_MASTER && bytes[1] == s->ghost_on - 1 - CH_PCM1) return;
   if (s->pcm_len + n > MML_SLOT_SIZE) return; /* cannot happen: 3 voices max */
   for (uint16_t i = 0; i < n; i++) s->pcm_buf[s->pcm_len++] = bytes[i];
   s->pcm_count++;
@@ -360,7 +363,7 @@ MML_HOT uint8_t enc_b4(const MMLFmCh *c) { return enc_b4_pan(c, c->pan); }
  * effect's pan, the song's again at its end (driver.md §14). */
 static int se_pan_live(const MMLSeq *s) {
   for (uint8_t i = 0; i < s->track_count; i++)
-    if (s->trk[i].pcm_se) return 1;
+    if (s->trk[i].is_se && s->trk[i].channel_id >= CH_PCM1 && s->trk[i].channel_id <= CH_PCM3) return 1;
   return 0;
 }
 static uint8_t b4_of(const MMLSeq *s, int ch) {
@@ -1824,7 +1827,6 @@ static void pcm_note_on(MMLSeq *s, int channel_id, int sample_id, int loop) {
   uint32_t abs = s->sample_rom_base + s->sample_blob_base + rd32(e, 4);
   v->started = 1;
   v->looping = (uint8_t)(loop != 0);
-  v->sample_id = (uint8_t)sample_id;
   v->bank = (uint16_t)(abs >> 15);
   v->src = (uint16_t)(MML_PCM_WINDOW + (abs & 0x7fff));
   v->len = (uint16_t)len;
@@ -2102,6 +2104,14 @@ static MMLDur read_dur(const uint8_t *b, uint32_t o) {
 
 static void reclaim_se(MMLSeq *s, MMLTrack *se);
 /* A displaced part's channel (§2.5), defined with the SE code below. */
+/* CH3 — the shared channel 2 and the operator ids 16-19 — is one channel its
+ * tracks share, so the ownership rule leaves it alone; an effect never plays
+ * there (the compiler refuses it, E_SE_PART). */
+static int ch3_group(int ch) { return ch == 2 || (ch >= 16 && ch <= 19); }
+/* The channels a track owns, which an effect displaces it from into a ghost
+ * (driver.md §2.5): the register channels but CH3, and the PCM voices. */
+static int owned_ch(int ch) { return (ch < 10 && !ch3_group(ch)) || (ch >= CH_PCM1 && ch <= CH_PCM3); }
+static int ghost_ix(int ch) { return ch < 10 ? ch : 10 + ch - CH_PCM1; }
 static void ghost_swap(MMLSeq *s, int ch);
 static int ghost_in(MMLSeq *s, const MMLTrack *t);
 static void ghost_out(MMLSeq *s, int ch);
@@ -2111,7 +2121,7 @@ static void ghost_out(MMLSeq *s, int ch);
  * effect's is its own, the DAC's while it plays (se_pan). */
 static int param_ch(const MMLTrack *t, int target) {
   int ch = t->channel_id;
-  return target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3 && !t->pcm_se ? 5 : ch;
+  return target == T_PAN && ch >= CH_PCM1 && ch <= CH_PCM3 && !t->is_se ? 5 : ch;
 }
 static void dispatch(MMLSeq *s, MMLTrack *t) {
   const uint8_t *st = s->stream;
@@ -2793,8 +2803,9 @@ static void run_frame(MMLSeq *s) {
           s->sweep_live &= ~(1u << bank);
       }
       /* A ghost's sweeps move on with it, unheard, after the live ones. */
-      for (int ch = 0; ch < 10; ch++) {
-        const MMLGhost *gh = &s->ghost[ch];
+      for (int k = 0; k < 13; k++) {
+        const int ch = k < 10 ? k : CH_PCM1 + k - 10; /* (ghost_ix) */
+        const MMLGhost *gh = &s->ghost[k];
         if (!gh->live || !(gh->sweeps[0].active || gh->sweeps[1].active)) continue;
         ghost_swap(s, ch);
         MMLSweep *sl = s->sweeps[sweep_bank(ch)];
@@ -3186,10 +3197,11 @@ static void restore_patch(MMLSeq *s, int ch, const MMLFmCh *gc) {
  * (ghost_in / ghost_out), so in between the effect's own state is the live
  * one. drv-player _ghostCapture / _ghostSwap / _ghostIn / _ghostOut. */
 static void ghost_capture(MMLSeq *s, int ch) {
-  MMLGhost *g = &s->ghost[ch];
+  MMLGhost *g = &s->ghost[ghost_ix(ch)];
   int bank = sweep_bank(ch), mc = macro_ch(ch);
   if (ch < 6) g->c.fm = s->fm[ch];
-  else g->c.psg = s->psg[ch - 6];
+  else if (ch < 10) g->c.psg = s->psg[ch - 6];
+  else g->c.pcm = s->pcm[ch - CH_PCM1];
   g->sweeps[0] = s->sweeps[bank][0];
   g->sweeps[1] = s->sweeps[bank][1];
   g->bind_count = s->bind_count[mc];
@@ -3212,14 +3224,17 @@ static void swap_words(void *a, void *b, unsigned bytes) {
   }
 }
 typedef char mml_ghost_blocks_even[(sizeof(MMLFmCh) % 2 == 0 && sizeof(MMLPsgCh) % 2 == 0 &&
+                                    sizeof(MMLPcmVoice) % 2 == 0 &&
                                     sizeof(MMLSweep) % 2 == 0 && sizeof(MMLMacroBind) % 2 == 0)
                                        ? 1 : -1];
 /* Trade the live channel and its ghost; the same call trades them back. */
 static void ghost_swap(MMLSeq *s, int ch) {
-  MMLGhost *g = &s->ghost[ch];
+  MMLGhost *g = &s->ghost[ghost_ix(ch)];
   int bank = sweep_bank(ch), mc = macro_ch(ch);
   if (ch < 6) {
     swap_words(&s->fm[ch], &g->c.fm, sizeof(MMLFmCh));
+  } else if (ch >= CH_PCM1) {
+    swap_words(&s->pcm[ch - CH_PCM1], &g->c.pcm, sizeof(MMLPcmVoice));
   } else {
     swap_words(&s->psg[ch - 6], &g->c.psg, sizeof(MMLPsgCh));
     if (ch == 9) {
@@ -3249,7 +3264,7 @@ static void ghost_swap(MMLSeq *s, int ch) {
  * ghost. Returns the channel traded in, or -1, for ghost_out. */
 static int ghost_in(MMLSeq *s, const MMLTrack *t) {
   int ch = t->channel_id;
-  if (!t->suspended || ch >= 10 || !s->ghost[ch].live) return -1;
+  if (!t->suspended || !owned_ch(ch) || !s->ghost[ghost_ix(ch)].live) return -1;
   ghost_swap(s, ch);
   return ch;
 }
@@ -3257,20 +3272,19 @@ static void ghost_out(MMLSeq *s, int ch) {
   if (ch >= 0) ghost_swap(s, ch);
 }
 
-/* SE-end: the ghost onto the chip. A note the part is still holding
- * re-attacks — an FM envelope cannot resume mid-way, so the re-attack is the
- * design; one that ended under the effect stays ended. The ghost's sweeps go
- * on from where they are; its binds come back, re-instantiated with the
- * re-attack as the note-on it is (§13.1) rather than resumed mid-step under an
- * envelope that did not. drv-player _restoreGhost. */
+/* SE-end: the ghost's state back on the channel — the part's patch, levels,
+ * pitch, pan, noise mode, a PCM voice's points, its sweeps (which went on
+ * from where they were) and its macro binds — but not its sound: a note it
+ * held under the effect stays silent, and the part sounds again from its next
+ * note, which starts its macros as any note-on does (driver.md §2.5). An FM
+ * envelope, a PSG :vel macro or a sample's head would only be a new attack. */
 static void ghost_restore(MMLSeq *s, int ch) {
-  MMLGhost *g = &s->ghost[ch];
+  MMLGhost *g = &s->ghost[ghost_ix(ch)];
   if (!g->live) return;
   g->live = 0;
   /* Whatever the SE left bound or sweeping goes first — the channel is
    * changing hands again, and the rule is the claim's. */
   clear_channel_modulators(s, ch);
-  int keyed;
   if (ch < 6) {
     MMLFmCh *c = &s->fm[ch];
     const MMLFmCh *gc = &g->c.fm;
@@ -3286,16 +3300,8 @@ static void ghost_restore(MMLSeq *s, int ch) {
     c->lfo_sync = gc->lfo_sync; /* the part's, which the claim left behind */
     /* Carrier level as note_on composes it, so a vel/vol below unity lands. */
     recompose_carriers(s, ch);
-    keyed = gc->keyed;
-    if (keyed) {
-      write_fm_pitch(s, ch, gc->current_note, gc->pitch_cents);
-      key_off(s, ch);
-      key_on(s, ch);
-    }
-  } else {
-    /* The PSG re-attack is a note_on's period + attenuation, in that order. */
-    int pc = ch - 6;
-    MMLPsgCh *p = &s->psg[pc];
+  } else if (ch < 10) {
+    MMLPsgCh *p = &s->psg[ch - 6];
     const MMLPsgCh *gp = &g->c.psg;
     p->vel_base = gp->vel_base;
     p->vel = gp->vel;
@@ -3305,14 +3311,24 @@ static void ghost_restore(MMLSeq *s, int ch) {
     p->pitch_cents = gp->pitch_cents;
     p->current_note = gp->current_note;
     p->snap = gp->snap;
-    p->keyed = gp->keyed;
-    keyed = gp->keyed;
-    if (pc == 3) s->noise_mode = g->noise_mode; /* the effect set its own */
-    if (keyed) {
-      if (pc == 3) write_noise_cfg(s);
-      else write_psg_pitch(s, pc, gp->current_note, gp->pitch_cents);
-      write_psg_att(s, pc, psg_att(s, p->vel, p->vol));
-    }
+    if (ch == 9) s->noise_mode = g->noise_mode; /* the effect set its own */
+  } else {
+    /* A PCM voice's levels and the track's own points; what the engine plays
+     * (the effect's tail, if any) is left to it. */
+    MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
+    const MMLPcmVoice *gv = &g->c.pcm;
+    v->vel_base = gv->vel_base;
+    v->vel = gv->vel;
+    v->vol_base = gv->vol_base;
+    v->vol = gv->vol;
+    v->o_has_rs = gv->o_has_rs;
+    v->o_r_kind = gv->o_r_kind;
+    v->o_has_ls = gv->o_has_ls;
+    v->o_l_kind = gv->o_l_kind;
+    v->o_rs = gv->o_rs;
+    v->o_r_bound = gv->o_r_bound;
+    v->o_ls = gv->o_ls;
+    v->o_l_bound = gv->o_l_bound;
   }
   int bank = sweep_bank(ch), mc = macro_ch(ch);
   s->sweeps[bank][0] = g->sweeps[0];
@@ -3321,7 +3337,6 @@ static void ghost_restore(MMLSeq *s, int ch) {
   for (int i = 0; i < g->bind_count; i++) s->binds[mc][i] = g->binds[i];
   s->bind_count[mc] = g->bind_count;
   s->off_acc[mc] = g->off_acc;
-  if (keyed && g->bind_count) macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
 }
 
 /* A suspended track's only way back is the reclaim of the effect that
@@ -3334,55 +3349,30 @@ static void release_suspended(MMLSeq *s, MMLTrack *t) {
   t->suspended = 0;
   t->running = 0; /* its ghost is all it had of the channel */
   t->fading = 0;
-  s->ghost[t->channel_id].live = 0;
+  s->ghost[ghost_ix(t->channel_id)].live = 0;
   uint8_t idx = (uint8_t)(t - s->trk);
   for (uint8_t i = 0; i < s->track_count; i++)
     if (s->trk[i].is_se && s->trk[i].displaced == idx) s->trk[i].displaced = 0xff;
 }
 
-/* CH3 — the shared channel 2 and the operator ids 16-19 — is one channel its
- * tracks share, so the ownership rule leaves it alone; an effect never plays
- * there (the compiler refuses it, E_SE_PART). */
-static int ch3_group(int ch) { return ch == 2 || (ch >= 16 && ch <= 19); }
 
 /* SE-end: give back what the SE stole. Hooked at the SE track's END_OF_TRACK,
  * at mml_stop_track and at a fade's terminal stop (a held or looping SE ends
  * on one of the latter two). */
 static void reclaim_se(MMLSeq *s, MMLTrack *se) {
   if (!se->is_se) return;
-  if (se->pcm_se) {
-    /* PCM: the voice's macro binds come back, and the looping BGM note the SE
-     * overwrote starts again with them, as a note-on. The engine keeps no
-     * position the host can read back, so it restarts from the sample's head
-     * — not time-synced, by decision (driver.md §2.5). */
-    int ch = CH_PCM1 + se->pcm_vi, mc = macro_ch(ch);
-    se->pcm_se = 0;
-    se->is_se = 0;
-    /* The DAC's pan the song's again (another effect's while one plays). */
-    ym(s, 1, 0xb6, b4_of(s, 5));
-    for (int i = 0; i < se->pcm_bind_count; i++) s->binds[mc][i] = se->pcm_binds[i];
-    s->bind_count[mc] = se->pcm_bind_count;
-    s->macro_slot_count[mc] = 0; /* the effect's own envelopes end with it */
-    if (se->pcm_snap) {
-      se->pcm_snap = 0;
-      pcm_note_on(s, ch, se->pcm_snap_sample, se->pcm_snap_loop);
-      macro_trigger(s, ch, 0, 0); /* a tick clock starts on the tick */
-    }
-    return;
-  }
-  if (se->displaced >= s->track_count) { /* 0xFF, or a track that is gone */
-    se->is_se = 0;
-    se->displaced = 0xff;
-    return;
-  }
-  MMLTrack *owner = &s->trk[se->displaced];
+  const uint8_t d = se->displaced;
   se->is_se = 0;
   se->displaced = 0xff;
+  /* The DAC's pan the song's again (another effect's while one plays). */
+  if (se->channel_id >= CH_PCM1 && se->channel_id <= CH_PCM3) ym(s, 1, 0xb6, b4_of(s, 5));
+  if (d >= s->track_count) return; /* 0xFF, or a track that is gone */
+  MMLTrack *owner = &s->trk[d];
   if (!owner->suspended) return;
   owner->suspended = 0;
   /* A part that ended under the effect leaves the channel as the effect did. */
   if (owner->running) ghost_restore(s, owner->channel_id);
-  else s->ghost[owner->channel_id].live = 0;
+  else s->ghost[ghost_ix(owner->channel_id)].live = 0;
 }
 
 /* ── Track lifecycle (driver.md §6.5, §2.2, §2.5) ──────────────────────────
@@ -3398,12 +3388,9 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
    * branch — an effect on a free channel, or a plain start — cannot inherit a
    * stale one and hand a channel back to a part that no longer owns it. */
   t->displaced = 0xff;
-  t->pcm_snap = 0;
-  t->pcm_se = 0;
   if (!as_se) t->se_index = 0xff;
-  /* Channel ownership, on the register channels but CH3 (ch3_group). PCM
-   * voices have no channel block, so no owner to displace. */
-  if (ch < 10 && !ch3_group(ch)) {
+  /* Channel ownership, on every channel a track owns (owned_ch). */
+  if (owned_ch(ch)) {
     /* The channel's current owner: running and not suspended. For an SE it is
      * either the BGM (a fresh steal) or an SE already playing (preempt). */
     MMLTrack *owner = 0;
@@ -3451,12 +3438,18 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
       s->fm[ch].vol = VOL_UNITY;
       s->fm[ch].vol_base = VOL_UNITY;
       s->fm[ch].gate = 8;
-    } else {
+    } else if (ch < 10) {
       s->psg[ch - 6].vel_base = VEL_MAX;
       s->psg[ch - 6].vel = VEL_MAX;
       s->psg[ch - 6].vol = VOL_UNITY;
       s->psg[ch - 6].vol_base = VOL_UNITY;
       s->psg[ch - 6].gate = 8;
+    } else {
+      /* A PCM voice's: its levels, and no points of the track's own. */
+      MMLPcmVoice *v = &s->pcm[ch - CH_PCM1];
+      v->vel_base = v->vel = VEL_MAX;
+      v->vol_base = v->vol = VOL_UNITY;
+      v->o_has_rs = v->o_r_kind = v->o_has_ls = v->o_l_kind = 0;
     }
     /* …and its modulators, for the same reason: they belong to the part that
      * just lost the channel. An SE put the owner's in its ghost a few lines
@@ -3473,29 +3466,7 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
     }
     /* A plain start owns the channel outright; a part it restarts that was
      * displaced plays from the top, not out of its ghost. */
-    if (!as_se) s->ghost[ch].live = 0;
-  } else if (as_se && ch >= CH_PCM1 && ch <= CH_PCM3) {
-    /* A PCM SE. Soft-mix voices have no owner track, so nothing is suspended:
-     * the SE's PCM_NOTE_ON overwrites the voice. If a BGM loop is live there,
-     * keep its note now so SE-end can start it again. */
-    int vi = ch - CH_PCM1, mc = macro_ch(ch);
-    const MMLPcmVoice *v = &s->pcm[vi];
-    /* The effect takes the voice's modulators — a BGM's `:pcm-start` glide
-     * would go on retargeting the effect's sample, its :keyon on re-starting
-     * it — and keeps the BGM's binds to hand back at its end. */
-    t->pcm_se = 1;
-    t->pcm_vi = (uint8_t)vi;
-    /* The DAC's pan is the effect's from here, as it starts (centre). */
-    s->se_pan = 0;
-    ym(s, 1, 0xb6, b4_of(s, 5));
-    t->pcm_bind_count = s->bind_count[mc];
-    for (int i = 0; i < s->bind_count[mc]; i++) t->pcm_binds[i] = s->binds[mc][i];
-    clear_channel_modulators(s, ch);
-    if (v->started && v->looping) {
-      t->pcm_snap = 1;
-      t->pcm_snap_sample = v->sample_id;
-      t->pcm_snap_loop = v->looping;
-    }
+    if (!as_se) s->ghost[ghost_ix(ch)].live = 0;
   }
 
   t->pc = t->event_offset;
@@ -3513,6 +3484,11 @@ static void start_track_ex(MMLSeq *s, MMLTrack *t, int as_se, uint8_t prio) {
   t->fresh = 1; /* the leading setup runs at the next frame's head (§4.2) */
   t->suspended = 0;
   t->is_se = (uint8_t)as_se;
+  /* A PCM effect: the DAC's pan is its own from here, at centre. */
+  if (as_se && ch >= CH_PCM1 && ch <= CH_PCM3) {
+    s->se_pan = 0;
+    ym(s, 1, 0xb6, b4_of(s, 5));
+  }
 }
 
 static MMLTrack *track_by_id(MMLSeq *s, uint8_t track_id) {

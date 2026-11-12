@@ -1,8 +1,12 @@
-; P3 gate: a PCM SE takes the voice's macros and gives them back. A BGM pcm1
-; part rolls (:keyon) under a :vel swell; an SE on the same voice brings its
-; own :vel envelope. At the SE's end the BGM's binds come back — its next
-; note rolls again — and the loop the SE overwrote starts again with them.
-; Both starts are host-driven (p3-se-pcm-macro.cmds.json, auto-start off).
+; P3 gate: a PCM SE takes the voice as an FM or PSG effect takes its channel
+; (driver.md §2.5). A BGM pcm1 part rolls (:keyon) under a :vel swell; an SE
+; on the same voice at f40 brings its own :vel envelope and :vol. The song's
+; part plays on unheard into the voice's ghost; at the effect's end (f55) the
+; voice's state is the song's again — its levels, its binds — but not its
+; sound: the loop the effect cut is not started again, and the part sounds
+; from its next note (f60; on PAL f100, its f50 note fell under the effect),
+; rolling under its swell, as if the effect had never fired
+; (p3-se-pcm-macro-twin). Host-driven (auto-start off).
 (def-score :pcm-voices 2)
 (def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
 (def-pcm blip :file "blip.wav")
@@ -12,5 +16,5 @@
   (macro :step 1/16 :keyon [1 1 1 1 1 1 1 1]) (macro :vel (linear 8..15 :len 4f))
   c c c c)
 
-; the effect (track 1): a blip on pcm1 with its own decaying :vel, no roll.
-(def-se hit (pcm1 blip :oct 5 :len 8 (macro :vel [15 12 9 6 3]) c))
+; the effect (track 1): a blip on pcm1 with its own decaying :vel and :vol, no roll.
+(def-se hit (pcm1 blip :oct 5 :len 8 :vol 12 (macro :vel [15 12 9 6 3]) c))

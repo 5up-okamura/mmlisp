@@ -226,6 +226,7 @@ import {
   SLOT_SUBS,
   PCM_START,
   PCM_START_BANKED,
+  PCM_MASTER,
 } from "./slot-builder.js";
 import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR, parsePcmBank } from "./pcm-model.js";
 import { PcmVoices } from "./pcm-voices.js";
@@ -237,6 +238,10 @@ import { snSqr } from "./chips/sn76489.js";
 // step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
 // §3.2's zero-drift-over-loops property is untouched — the frame still advances
 // the same number of ticks it always did, only in K instalments.
+// The channels a ghost may hold, in the order their sweeps step (mmlispseq.c
+// ghost_ix): the register channels, then the PCM voices.
+const GHOST_CHS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 20, 21, 22];
+
 function subIncrement(inc, sub, subs) {
   return Math.floor(((sub + 1) * inc) / subs) - Math.floor((sub * inc) / subs);
 }
@@ -510,7 +515,7 @@ export class DrvPlayer {
     this._mcSe = new Array(MACRO_CHANNELS).fill(0);
     // A displaced part's channel, per channel 0-9 (_ghostCapture), and the one
     // swapped in now (-1 = none): its writes are dropped (_ghostMuted).
-    this._ghost = new Array(10).fill(null);
+    this._ghost = []; // by channel id: 0-9, pcm1-pcm3 (20-22)
     this._ghostCh = -1;
     this._psgLatchCh = -1;
     // Dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
@@ -592,8 +597,6 @@ export class DrvPlayer {
       isSe: false,
       displaced: null, // owner track index this SE displaced (null = none)
       seIndex: null, // the effect this part plays for (SE_TABLE number)
-      pcmSnap: null, // PCM SE: the soft-mix voice it took, to restore
-      pcmSe: null, // PCM SE: {vi, binds} — the voice it took, and the BGM binds to hand back
       sePrio: 0, // register-SE priority (for same-channel preempt/drop)
     }));
     this._emitInitWrites();
@@ -1688,13 +1691,13 @@ export class DrvPlayer {
   // param_ch.
   _paramCh(trk, target) {
     const ch = trk.channelId;
-    return target === TARGET_ID.PAN && ch >= 20 && ch <= 22 && !trk.pcmSe ? 5 : ch;
+    return target === TARGET_ID.PAN && ch >= 20 && ch <= 22 && !trk.isSe ? 5 : ch;
   }
 
   // The DAC comes out on fm6's L / R: while a PCM SE plays they are the
   // effect's pan, the song's again at its end (driver.md §14). b4_of.
   _sePanLive() {
-    return this._trk.some((t) => t.pcmSe);
+    return this._trk.some((t) => t.isSe && t.channelId >= 20 && t.channelId <= 22);
   }
   _b4Of(ch) {
     const r = this._fm[ch];
@@ -2584,6 +2587,12 @@ export class DrvPlayer {
   _ch3Group(ch) {
     return ch === 2 || (ch >= 16 && ch <= 19);
   }
+  // The channels a track owns, which an effect displaces it from into a
+  // ghost (driver.md §2.5): the register channels but CH3, and the PCM
+  // voices. mmlispseq.c owned_ch.
+  _ownedCh(ch) {
+    return (ch < 10 && !this._ch3Group(ch)) || (ch >= 20 && ch <= 22);
+  }
   // The host's KEY_OFF (driver.md §6.5) on every channel a hold keys — a
   // `:len 0` note, whose track then resumes, or a `:gate 0` one — for the live
   // app's Tools > Release holds. Nothing here that the mailbox does not.
@@ -2647,12 +2656,9 @@ export class DrvPlayer {
     // inherit a stale one and hand a channel back to a part that no longer
     // owns it.
     trk.displaced = null;
-    trk.pcmSnap = null;
-    trk.pcmSe = null;
     if (!asSe) trk.seIndex = null;
-    // Channel ownership, on the register channels but CH3 (_ch3Group). PCM
-    // voices have no channel block, so no owner to displace.
-    if (ch < 10 && !this._ch3Group(ch)) {
+    // Channel ownership, on every channel a track owns (_ownedCh).
+    if (this._ownedCh(ch)) {
       // The channel's current owner (running, not suspended). For a register SE
       // it is either the BGM (fresh steal) or an already-playing SE (preempt).
       const owner = this._trk.find(
@@ -2700,13 +2706,20 @@ export class DrvPlayer {
         r.volBase = VOL_UNITY;
         r.vol = VOL_UNITY;
         r.gate = 8;
-      } else {
+      } else if (ch < 10) {
         const p = this._psg[ch - 6];
         p.velBase = VEL_FINE_MAX;
         p.vel = VEL_FINE_MAX;
         p.volBase = VOL_UNITY;
         p.vol = VOL_UNITY;
         p.gate = 8;
+      } else {
+        // A PCM voice's: its levels, and no points of the track's own.
+        const v = this._pcmVoices[ch - 20];
+        v.velBase = v.vel = VEL_FINE_MAX;
+        v.volBase = v.vol = VOL_UNITY;
+        v.oHasRs = v.oHasLs = false;
+        v.oRKind = v.oLKind = null;
       }
       // …and its modulators, for the same reason: they belong to the part that
       // just lost the channel. An SE put the owner's in its ghost a few lines
@@ -2724,28 +2737,6 @@ export class DrvPlayer {
       // A plain start owns the channel outright; a part it restarts that was
       // displaced plays from the top, not out of its ghost.
       if (!asSe) this._ghost[ch] = null;
-    } else if (asSe && ch >= 20 && ch <= 22) {
-      // PCM SE (driver.md §2.5): soft-mix voices have no channel ownership,
-      // so nothing is suspended — the SE's PCM_NOTE_ON overwrites the voice slot.
-      // If a BGM loop is live there, keep its NOTE now, at PLAY_SE and before
-      // this frame's mixer pass, so SE-end can start it again.
-      // The engine keeps no position the host can read back, so what SE-end
-      // restores is the NOTE: a BGM loop starts again from its sample's head.
-      const vi = ch - 20;
-      const v = this._pcmVoices[vi];
-      // The effect takes the voice's modulators — a BGM's `:pcm-start` glide
-      // would go on retargeting the effect's sample, its :keyon on re-starting
-      // it — and keeps the BGM's binds to hand back at its end.
-      trk.pcmSe = { vi, binds: new Map(this._macroActive[this._macroCh(ch)]) };
-      // The DAC's pan is the effect's from here, as it starts (centre).
-      this._sePan = 0;
-      this._ym(1, 0xb6, this._b4Of(5));
-      this._clearChannelModulators(ch);
-      if (v.started && v.looping) {
-        // The note, not the voice: the sample id and that it loops are all the
-        // restart needs, and they are what the C keeps too.
-        trk.pcmSnap = { sampleId: v.sampleId, looping: v.looping };
-      }
     }
     // Re-init the track's dispatch state.
     trk.pc = trk.eventOffset;
@@ -2763,6 +2754,11 @@ export class DrvPlayer {
     trk.fresh = true; // the leading setup runs at the next frame's head (§4.2)
     trk.suspended = false;
     trk.isSe = asSe;
+    // A PCM effect: the DAC's pan is its own from here, at centre.
+    if (asSe && ch >= 20 && ch <= 22) {
+      this._sePan = 0;
+      this._ym(1, 0xb6, this._b4Of(5));
+    }
   }
 
   // STOP_TRACK (mailbox cmd 2): stop the track; if it is an SE that displaced a
@@ -2815,13 +2811,15 @@ export class DrvPlayer {
     if (ch < 6) {
       const r = this._fm[ch];
       g.fm = { ...r, ops: r.ops.map((o) => ({ ...o })) };
-    } else g.psg = { ...this._psg[ch - 6] };
+    } else if (ch < 10) g.psg = { ...this._psg[ch - 6] };
+    else g.pcm = { ...this._pcmVoices[ch - 20] };
     this._ghost[ch] = g;
   }
   // Trade the live channel and its ghost; the same call trades them back.
   _ghostSwap(ch) {
     const g = this._ghost[ch];
     if (ch < 6) [this._fm[ch], g.fm] = [g.fm, this._fm[ch]];
+    else if (ch >= 20) [this._pcmVoices[ch - 20], g.pcm] = [g.pcm, this._pcmVoices[ch - 20]];
     else {
       [this._psg[ch - 6], g.psg] = [g.psg, this._psg[ch - 6]];
       if (ch === 9) [this._noiseMode, g.noiseMode] = [g.noiseMode, this._noiseMode];
@@ -2845,12 +2843,13 @@ export class DrvPlayer {
     if (ch >= 0) this._ghostSwap(ch);
   }
 
-  // SE-end: the ghost onto the chip. The write order — the patch, carrier
-  // level, pitch, re-key — is normative (mmlispseq.c ghost_restore). A note
-  // the part is still holding re-attacks: an FM envelope cannot resume
-  // mid-way. One that ended under the effect stays ended. The ghost's sweeps
-  // go on from where they are; its binds come back, re-instantiated with the
-  // re-attack as the note-on it is (driver.md §13.1).
+  // SE-end: the ghost's state back on the channel — the part's patch,
+  // levels, pitch, pan, noise mode, a PCM voice's points, its sweeps (which
+  // went on from where they were) and its macro binds — but not its sound: a
+  // note it held under the effect stays silent, and the part sounds again from
+  // its next note, which starts its macros as any note-on does (driver.md
+  // §2.5). An FM envelope, a PSG :vel macro or a sample's head would only be a
+  // new attack. mmlispseq.c ghost_restore.
   _restoreGhost(ch) {
     const g = this._ghost[ch];
     this._ghost[ch] = null;
@@ -2858,7 +2857,6 @@ export class DrvPlayer {
     // Whatever the SE left bound or sweeping goes first — the channel is
     // changing hands again, and the rule is the claim's.
     this._clearChannelModulators(ch);
-    let keyed;
     if (ch < 6) {
       const r = this._fm[ch], gr = g.fm;
       this._restorePatch(ch, gr);
@@ -2873,16 +2871,8 @@ export class DrvPlayer {
       r.lfoSync = gr.lfoSync; // the part's, which the claim left behind
       // Carrier level as a note-on composes it, so a vel/vol below unity lands.
       this._recomposeCarriers(ch);
-      keyed = gr.keyed;
-      if (keyed) {
-        this._writeFmPitch(ch, gr.currentNote, gr.pitchCents);
-        this._applyKeyon(ch);
-      }
-    } else {
-      // PSG re-attack = period + attenuation (the PSG "key"), as a NOTE_ON's
-      // PSG branch writes them.
-      const psgCh = ch - 6;
-      const st = this._psg[psgCh], gs = g.psg;
+    } else if (ch < 10) {
+      const st = this._psg[ch - 6], gs = g.psg;
       st.velBase = gs.velBase;
       st.vel = gs.vel;
       st.volBase = gs.volBase;
@@ -2891,28 +2881,17 @@ export class DrvPlayer {
       st.pitchCents = gs.pitchCents;
       st.currentNote = gs.currentNote;
       st.snap = gs.snap;
-      st.keyed = keyed = gs.keyed;
-      if (psgCh === 3) this._noiseMode = g.noiseMode; // the effect set its own
-      if (keyed) {
-        if (psgCh === 3) this._writeNoiseCfg();
-        else this._writePsgPitch(psgCh, gs.currentNote, gs.pitchCents);
-        this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
-      }
+      if (ch === 9) this._noiseMode = g.noiseMode; // the effect set its own
+    } else {
+      // A PCM voice's levels and the track's own points; what the engine
+      // plays (the effect's tail, if any) is left to it.
+      const v = this._pcmVoices[ch - 20], gv = g.pcm;
+      for (const k of ["velBase", "vel", "volBase", "vol", "oHasRs", "oRs", "oRKind", "oRBound", "oHasLs", "oLs", "oLKind", "oLBound"]) v[k] = gv[k];
     }
     const mc = this._macroCh(ch);
     this._sweeps[this._sweepBank(ch)] = g.sweeps;
     for (const [target, macroId] of g.binds) this._macroActive[mc].set(target, macroId);
     this._offAcc[mc] = g.offAcc;
-    if (keyed && g.binds.size) this._macroTrigger(ch, 0); // a tick clock starts on the tick
-  }
-
-  // Re-attack a channel (apply_keyon): FM re-keys the EG ($28 off→on); PSG has
-  // no hardware EG so this is a no-op there (macro restart is added with PSG).
-  _applyKeyon(ch) {
-    if (ch < 6) {
-      this._keyOff(ch);
-      this._keyOn(ch);
-    }
   }
 
   // A suspended track's only way back is the reclaim of the effect that
@@ -2933,33 +2912,12 @@ export class DrvPlayer {
   // track's END_OF_TRACK, at STOP_TRACK and at a fade's terminal stop.
   _reclaimSe(seTrk) {
     if (!seTrk.isSe) return;
-    // PCM: the BGM loop the SE stole is started again. No owner track.
-    // The voice's macro binds come back, and the looping BGM note starts
-    // again with them, as a note-on.
-    if (seTrk.pcmSe != null) {
-      const { vi, binds } = seTrk.pcmSe;
-      const ch = 20 + vi, mc = this._macroCh(ch);
-      const snap = seTrk.pcmSnap;
-      seTrk.pcmSe = null;
-      seTrk.pcmSnap = null;
-      seTrk.isSe = false;
-      // The DAC's pan the song's again (another effect's while one plays).
-      this._ym(1, 0xb6, this._b4Of(5));
-      this._macroActive[mc] = new Map(binds);
-      this._macroSlots[mc] = []; // the effect's own envelopes end with it
-      if (snap != null && snap.sampleId != null) {
-        this._pcmNoteOn(ch, snap.sampleId, snap.looping ? 0x80 | 60 : 60);
-        this._macroTrigger(ch, 0); // a tick clock starts on the tick
-      }
-      return;
-    }
-    if (seTrk.displaced == null) {
-      seTrk.isSe = false;
-      return;
-    }
-    const owner = this._trk[seTrk.displaced];
+    const d = seTrk.displaced;
     seTrk.isSe = false;
     seTrk.displaced = null;
+    // The DAC's pan the song's again (another effect's while one plays).
+    if (seTrk.channelId >= 20 && seTrk.channelId <= 22) this._ym(1, 0xb6, this._b4Of(5));
+    const owner = d == null ? null : this._trk[d];
     if (!owner || !owner.suspended) return;
     owner.suspended = false;
     // A part that ended under the effect leaves the channel as the effect did.
@@ -3011,6 +2969,9 @@ export class DrvPlayer {
   // Every field is resolved HERE, on the sequencer side: the host turns a
   // command into state-store pairs and the engine does no per-note arithmetic.
   _pcmCmd(bytes) {
+    // A displaced part's voice is its ghost (_ghostSwap): its commands are
+    // dropped, as its channel's register writes are (_ghostMuted).
+    if (this._ghostCh >= 20 && bytes[0] !== PCM_MASTER && bytes[1] === this._ghostCh - 20) return;
     if (this._song?.pcmBanked && bytes[0] === PCM_START) {
       const v = this._pcmVoices[bytes[1]], sample = this._song.samples[v.sampleId];
       const bank = this._sampleBankBase + Math.floor((sample?.base ?? 0) / 0x8000);
@@ -3167,7 +3128,7 @@ export class DrvPlayer {
           }
         }
         // A ghost's sweeps move on with it, unheard, after the live ones.
-        for (let ch = 0; ch < 10; ch++) {
+        for (const ch of GHOST_CHS) {
           const g = this._ghost[ch];
           if (!g || !g.sweeps.some(Boolean)) continue;
           this._ghostSwap(ch);

@@ -91,6 +91,14 @@ Superseded engines: tags `archive/all-z80`, `archive/ring-engine`,
   several parts per effect, a default priority the host may override.
 - The displaced part plays on as a ghost (catching up at SE-end rejected).
   Open: a `:master` written by a ghost's stream.
+- **SE-end restores the state, not the sound** (2026-11): no re-key on any
+  channel; the part sounds from its next note. Re-attacking (FM's EG, a PSG
+  `:vel` envelope, a sample's head) was rejected as an attack the music never
+  wrote; SMPS and Echo do the same (state back, no key-on). A `:len 0` hold
+  under an effect stays silent — the composer's to arrange (user's choice A).
+- **PCM voices are owned channels with ghosts** like FM / PSG (`owned_ch`,
+  `ghost_ix`); the PCM-only snapshot (loop restart, saved binds) is gone. The
+  DAC's one pan is the exception: a PCM SE's `se_pan` over fm6's L / R.
 - No effect on CH3; song-wide state (`:master`, `:lfo-rate`) refused in
   def-se.
 - FM effects belong on free channels (priming); LEAD 1, an SE lane two

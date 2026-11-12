@@ -2017,7 +2017,7 @@
  },
  "drv/tests/p3-se-ghost.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "26b13676b804d68f",
+  "ir": "fa60bdc5443378e8",
   "regs": "283b9f01dad4f977",
   "mmb": "3e19977c007e27b0",
   "vgm": "45d06f8b42630787",
@@ -2025,7 +2025,7 @@
  },
  "drv/tests/p3-se-ghost.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
-  "ir": "a6a59a8d541f65a7",
+  "ir": "c7574b88f0d0e9ec",
   "regs": "283b9f01dad4f977",
   "mmb": "f4cf073e1c0330b1",
   "vgm": "45d06f8b42630787",
@@ -2079,19 +2079,35 @@
   "vgm": "560a9f68392c81d9",
   "mid": "3e7ea1252a75bb5d"
  },
+ "drv/tests/p3-se-pcm-macro-twin.mmlisp": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "1e285ff0a31503e4",
+  "regs": "eb89d775960db93d",
+  "mmb": "92881cd990eb6e4b",
+  "vgm": "2440a0af5b2d3b94",
+  "mid": "e1cf0a654e8a0a29"
+ },
+ "drv/tests/p3-se-pcm-macro-twin.mmlisp @pal": {
+  "diagnostics": "ab77988e1a526bf3",
+  "ir": "57f5fa419231ddb8",
+  "regs": "eb89d775960db93d",
+  "mmb": "d0d2b0d016833689",
+  "vgm": "1dcd0e5094de8858",
+  "mid": "b1a6b952a7fe6f86"
+ },
  "drv/tests/p3-se-pcm-macro.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
-  "ir": "547f4f57631cfa27",
+  "ir": "0cff08a61cfba6db",
   "regs": "eb89d775960db93d",
-  "mmb": "27c3ac94f2340551",
+  "mmb": "aed69a16fdfb15a4",
   "vgm": "12fff08947263c62",
   "mid": "ada71ed9c0ac772a"
  },
  "drv/tests/p3-se-pcm-macro.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
-  "ir": "a03e9694e99844bc",
+  "ir": "35ad27d4ccbffa2f",
   "regs": "eb89d775960db93d",
-  "mmb": "5d95703c7cf47de8",
+  "mmb": "f852f6c4446543d1",
   "vgm": "8bb3c1b3abe3c32d",
   "mid": "56db5b89f49b4dd8"
  },
