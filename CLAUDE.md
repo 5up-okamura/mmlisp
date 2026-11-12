@@ -119,6 +119,13 @@ cd live && npm run serve        # dev server on :5173 (serve:https for HTTPS)
 cd live && npm run serve:worker # the app at / on :8787 with its Worker and a local KV (short share links)
 ```
 
+`cd tools && npm run check:all` runs every gate below in one go (each
+`check:*`, then drv's `verify:all`); `check:paths` holds every literal path
+the code names (imports, workers, worklets, the page's references) to a
+file; `cd live && npm run smoke` boots the page headless and fails on a page
+error, an inline handler `window` does not define, or a machine's score that
+does not build and play.
+
 The driver has gates — `cd drv && npm run verify:all` must be green — and
 `cd tools && npm run check:mmlisp-strict` (with `check:cheatsheet`,
 `check:reference` and `check:sample-fx`) checks the compiler.
@@ -148,7 +155,7 @@ check a score as an AI, use the `mmlisp` MCP server (`/.mcp.json`,
 `tools/mcp/README.md`): it compiles with diagnostics, renders WAV, serves the
 docs and snippets, and — with Tools > Connect to AI on — edits and plays the
 score open in the user's MMLisp Live. **The live app and the language have no automated
-suite:** verify those by playing them back
+suite** beyond the boot smoke: verify those by playing them back
 in the live environment, and call it out when a change is hard to verify that
 way.
 

@@ -51,7 +51,9 @@
     "snapshot:imports": "node scripts/import-snapshot.mjs",
     "check:archive": "node scripts/check-archive.mjs",
     "check:share": "node scripts/check-share.mjs",
-    "check:lessons": "node scripts/check-lessons.mjs"
+    "check:lessons": "node scripts/check-lessons.mjs",
+    "check:all": "node scripts/check-all.mjs",
+    "check:paths": "node scripts/check-paths.mjs"
   },
   "engines": {
     "node": ">=18"

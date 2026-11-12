@@ -37,3 +37,5 @@ Rules:
 - [live-app.md](live-app.md) — the live app: decided against, and lessons; how the players are built and what is open; the note path's design; how to work here; what is still to be heard on a device.
 - [targets.md](targets.md) — machines beyond the Mega Drive, `:target midi`
   and the machine conversion: rulings, traps, what is open.
+- [restructure.md](restructure.md) — the 2026-11 restructuring's plan and
+  where it stands (delete when it lands).
