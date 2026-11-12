@@ -3097,7 +3097,7 @@ line under the list shows the highlighted entry's syntax, what it does, its
 example and the section of `docs/language.md` that has the rest; a search
 finds an entry by its other spellings too (`:vel+` finds `:vel`), and
 **Fits track** keeps the entries the track at the cursor can use. The entries
-live in `live/src/reference.js`; `cd tools && npm run check:reference`
+live in `live/src/lang/reference.js`; `cd tools && npm run check:reference`
 compiles every example.
 
 The audition is one note: enough to tell a sound, and a drum has only the one.

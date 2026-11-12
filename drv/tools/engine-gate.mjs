@@ -8,7 +8,7 @@
 // VSync-only SGDK host will. Five things are graded:
 //
 //   TIME     every DAC interval is its slot's length, the rate is exact, no hole
-//   VALUE    every DAC byte equals live/src/pcm-model.js driven by the pairs the
+//   VALUE    every DAC byte equals live/src/driver/pcm-model.js driven by the pairs the
 //            expander ACTUALLY consumed, in the slots it consumed them — so the
 //            pieces, the mix and the tables are graded, not the host
 //   INTENT   what the model's edge applied (source, END, WRAP) is what the host
@@ -26,7 +26,7 @@ import { Machine, traceMeta } from "./machine.mjs";
 import { analyzeTime, analyzeWrites } from "../engine/analyze.mjs";
 import { buildRungs, buildClamp, rung, sourceValue, bias } from "../engine/lut.mjs";
 import { PcmEngineModel, pcmOp, pcmLoopPoints, pcmShotPoints, pcmPageOfShift, pcmRung,
-  PCM_SILENCE_ADDR, PCM_SILENCE_BYTE, PCM_WINDOW } from "../../live/src/pcm-model.js";
+  PCM_SILENCE_ADDR, PCM_SILENCE_BYTE, PCM_WINDOW } from "../../live/src/driver/pcm-model.js";
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : d; };

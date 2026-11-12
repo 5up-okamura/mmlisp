@@ -16,10 +16,10 @@
 // PCM .bin are read beside it by the names it gives.
 import fs from "node:fs";
 import path from "node:path";
-import { importMucom } from "../../live/src/import-mucom.js";
-import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderVgm } from "../../live/src/export-vgm.js";
+import { importMucom } from "../../live/src/import/import-mucom.js";
+import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderVgm } from "../../live/src/export/export-vgm.js";
 
 const args = process.argv.slice(2);
 const flat = args.includes("--flat") && !!args.splice(args.indexOf("--flat"), 1);

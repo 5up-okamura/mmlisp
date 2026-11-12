@@ -11,10 +11,10 @@
 // With a channel (psg:0, scc:2, fm:4 …) it lists that channel's changes on
 // both sides instead.
 import fs from "node:fs";
-import { parseMgs, mgsToMmlisp } from "../../live/src/import-mgs.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderVgm } from "../../live/src/export-vgm.js";
+import { parseMgs, mgsToMmlisp } from "../../live/src/import/import-mgs.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderVgm } from "../../live/src/export/export-vgm.js";
 
 const [file, seconds = "40", only] = process.argv.slice(2);
 if (!file) { console.error("usage: node scripts/ab-mgsdrv.mjs song.mgs [seconds] [channel]"); process.exit(1); }

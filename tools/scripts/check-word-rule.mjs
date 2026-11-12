@@ -1,4 +1,4 @@
-// A word is one rule on every machine (live/src/ir-player-words.js _word),
+// A word is one rule on every machine (live/src/player/ir-player-words.js _word),
 // as check:note-path holds a note's path: on every machine's channels —
 // its melodic ones, and its sample ones on a sample — each word the channel takes is written a value, swept with no
 // :from, moved by `+` and `*`, and read off a `$slot` — and the writes the
@@ -15,13 +15,13 @@
 //   node scripts/check-word-rule.mjs --only noise-rate   # one word
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { TARGETS, targetProfile } from "../../live/src/targets.js";
-import { newScoreSource } from "../../live/src/new-score.js";
-import { CORE_OF_KIND } from "../../live/src/ir-player-shared.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { TARGETS, targetProfile } from "../../live/src/machine/targets.js";
+import { newScoreSource } from "../../live/src/app/new-score.js";
+import { CORE_OF_KIND } from "../../live/src/player/ir-player-shared.js";
 
 // keyword → [a value (an integer: a slot $s holds it too), a sweep's :to, a
 // `+`'s delta]: each inside every machine's range for it, so no write is

@@ -3,7 +3,7 @@
 
 /**
  * MMLisp formatter CLI.
- * Formatting logic lives in live/src/mmlisp-formatter.js (shared with browser).
+ * Formatting logic lives in live/src/lang/mmlisp-formatter.js (shared with browser).
  */
 
 const fs = require("node:fs");
@@ -36,8 +36,8 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const { parse } = await import("../../live/src/mmlisp-parser.js");
-  const { formatMMLisp } = await import("../../live/src/mmlisp-formatter.js");
+  const { parse } = await import("../../live/src/lang/mmlisp-parser.js");
+  const { formatMMLisp } = await import("../../live/src/lang/mmlisp-formatter.js");
   const { files, check, stdout } = parseArgs(process.argv.slice(2));
   let changed = false;
 

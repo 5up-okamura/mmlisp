@@ -11,7 +11,7 @@ const live = join(dirname(fileURLToPath(import.meta.url)), "../../live");
 const files = [
   "style.css",
   "index.html",
-  ...readdirSync(join(live, "src"))
+  ...readdirSync(join(live, "src"), { recursive: true })
     .filter((f) => f.endsWith(".js"))
     .map((f) => `src/${f}`),
 ];

@@ -86,7 +86,7 @@ AI subscription; the page never talks to a model.
    `live_play`.
 
 What the connection can do is exactly the page's five ops — status, read,
-write, play, stop (`live/src/ai-bridge.js`, wired in `live/index.html`). Every
+write, play, stop (`live/src/app/ai-bridge.js`, wired in `live/index.html`). Every
 AI edit is logged in the app and is one step of the editor's Undo. Audio starts
 only after the user has clicked the page once; before that `live_play` puts up
 a Play button instead. One tab holds the connection: a newer tab takes it over,

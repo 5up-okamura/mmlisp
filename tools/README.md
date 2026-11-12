@@ -2,7 +2,7 @@
 
 Local CLI tooling for the compile/verify workflow.
 
-MMB encoding lives in the browser toolchain (`live/src/export-mmb.js`, File >
+MMB encoding lives in the browser toolchain (`live/src/driver/export-mmb.js`, File >
 Export > MMB…), not here. Driver A/B verification is `cd drv && npm run
 verify:ab` (the gate) or `window.__abCompare()` in the live app — see
 docs/driver.md §12.
@@ -124,9 +124,9 @@ Run from tools directory:
     step compiles clean, its exercise is not done before the learner starts,
     and its answer does it; the walk (Next runs on through the lessons, never
     into or out of a machine's tour; Start Lesson resumes at the first step
-    not done) and a Try's states, as `live/src/lessons.js` gives them
+    not done) and a Try's states, as `live/src/app/lessons.js` gives them
 35. `npm run check:share` — share links with files (`live/worker/`,
-    `live/src/share-files.js`) against an in-memory KV: a score alone keeps its
+    `live/src/app/share-files.js`) against an in-memory KV: a score alone keeps its
     id, files are stored and served, the same files get the same id however
     they were packed, a bundle the app would not write is refused, and a wav
     travels mono, 16-bit, at most 22.05 kHz unless a def counts its frames
@@ -140,11 +140,11 @@ Run from tools directory:
 The Live app shows the reference's summaries and the snippets' descriptions
 in the user's language (MMLisp ▸ Language), and so do the lessons and the
 dialogs that ask; the rest of the app stays in English. The English is the
-source, read from `live/src/reference.js`, the snippets' leading comments, the
+source, read from `live/src/lang/reference.js`, the snippets' leading comments, the
 tutorial (`tutorial/lessons.json`'s titles, its steps' leading comments) and
-`live/src/ui-texts.js` (a dialog's `{name}` marks, which a translation keeps
+`live/src/app/ui-texts.js` (a dialog's `{name}` marks, which a translation keeps
 — the check says when one is lost); each language
-is one generated pack, `live/src/i18n/<lang>.js`, that pairs every text with a
+is one generated pack, `live/src/app/i18n/<lang>.js`, that pairs every text with a
 hash of the English it translates. Nobody edits a pack:
 
 2. `node scripts/i18n-sync.mjs --todo ja > /tmp/ja.json` — the texts the pack
@@ -157,7 +157,7 @@ hash of the English it translates. Nobody edits a pack:
 
 `npm run check:i18n` fails on anything missing, stale or orphaned, so a
 changed summary or a new snippet is translated before it lands. A new language
-is a pack `--apply` creates, plus its import and name in `live/src/i18n.js`.
+is a pack `--apply` creates, plus its import and name in `live/src/app/i18n.js`.
 
 ## Notes
 

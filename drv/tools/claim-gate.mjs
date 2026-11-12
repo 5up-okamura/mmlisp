@@ -34,8 +34,8 @@
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { SlotBuilder } from "../../live/src/slot-builder.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { SlotBuilder } from "../../live/src/driver/slot-builder.js";
 import { existsSync, readFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));

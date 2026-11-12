@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The archive reader (live/src/archive.js) and the folder an archive opens as
-// (live/src/source-folder.js), on ZIP and LZH archives written here — no
+// The archive reader (live/src/app/archive.js) and the folder an archive opens as
+// (live/src/app/source-folder.js), on ZIP and LZH archives written here — no
 // third-party files. ZIP: stored and deflate, UTF-8 and Shift_JIS names, the
 // Unicode Path field, a Mac's junk, one root folder, a climbing name, an
 // encrypted entry, a damaged one. LZH: header levels 0, 1 and 2 with -lh0-
@@ -15,8 +15,8 @@ import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 import { openAsBlob, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { readArchive } from "../../live/src/archive.js";
-import { folderFromArchive } from "../../live/src/source-folder.js";
+import { readArchive } from "../../live/src/app/archive.js";
+import { folderFromArchive } from "../../live/src/app/source-folder.js";
 
 const enc = new TextEncoder();
 const sjis = (s) => {

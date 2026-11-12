@@ -1,10 +1,10 @@
-// The FM3 resynthesis (live/src/import-resynth.js) on a voice it can be checked
+// The FM3 resynthesis (live/src/import/import-resynth.js) on a voice it can be checked
 // against: a synthesized vowel — a pulse train through three resonators — and
 // a hiss. The formants it finds must sit on the resonators, the hiss must land
 // on the noise track, and both scores it writes must compile with every track
 // the same length. No recording is kept in the repository.
-import { analyzeSound, resynthToMmlisp } from "../../live/src/import-resynth.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { analyzeSound, resynthToMmlisp } from "../../live/src/import/import-resynth.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 
 const RATE = 16000;
 const F = [700, 1200, 2500], BW = 80, PITCH = 120;

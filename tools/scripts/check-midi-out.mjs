@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MMLisp > MIDI > Output (live/src/midi-output.js): the MIDI export's plan
+// MMLisp > MIDI > Output (live/src/midi/midi-output.js): the MIDI export's plan
 // (export-midi.js midiPlan) sent ahead on the preview's clock.
 //
 //   the player's clock  an IRPlayer run on a stand-in AudioContext, stepped
@@ -25,10 +25,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { midiPlan } from "../../live/src/export-midi.js";
-import { MidiOutRun, channelOpening } from "../../live/src/midi-output.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { midiPlan } from "../../live/src/export/export-midi.js";
+import { MidiOutRun, channelOpening } from "../../live/src/midi/midi-output.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const imports = new Map([["presets/gm/set.mmlisp", readFileSync("live/presets/gm/set.mmlisp", "utf8")]]);

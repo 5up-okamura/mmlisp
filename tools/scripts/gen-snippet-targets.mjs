@@ -3,10 +3,10 @@
 // error. Writes snippets/targets.json, which the Library marks by; --check
 // holds the file to what the snippets and the compiler say now.
 import { readFileSync, writeFileSync } from "node:fs";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { TARGETS } from "../../live/src/targets.js";
-import { portSnippet, portMode, fmVoiceNames } from "../../live/src/snippet-port.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
+import { portSnippet, portMode, fmVoiceNames } from "../../live/src/port/snippet-port.js";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
 const OUT = `${ROOT}snippets/targets.json`;

@@ -1120,69 +1120,69 @@
   </script>
 
 <script type="module">
-    import { IRPlayer, songOrEffectIr } from './src/ir-player.js';
-    import { DrvPlayer } from './src/drv-player.js';
-    import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/export-mmb.js';
-    import { abCompare, formatAbReport } from './src/ab-compare.js';
-    import { renderVgm, configurePcmRate } from './src/export-vgm.js';
-    import { exportMidi } from './src/export-midi.js';
-    import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/targets.js';
-    import { fmOpWord, fmInitVoice } from './src/chips/fm-words.js';
-    import { opllRomVoices } from './src/chips/ym2413.js';
-    import { bakeAdpcmB } from './src/chips/adpcm-b.js';
-    import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/chips/msm6258.js';
-    import { bakeSampleBank, hasSampleBank, sampleBankKind } from './src/sample-bank.js';
-    import { bakeRhythmStandIn } from './src/chips/rhythm-rom.js';
-    import { Mp4Muxer } from './src/mp4-mux.js';
-    import { renderWav } from './src/export-wav.js';
-    import { mixerStrips, renderStems, stemName, soloStrip, muteStrip } from './src/stems.js';
-    import { newScoreSource, machineSummary } from './src/new-score.js';
-    import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import-mucom.js';
-    import { parseDmf } from './src/import-dmf.js';
-    import { parseFur } from './src/import-fur.js';
-    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from './src/import-vgm.js';
-    import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import-timing.js';
-    import { RATE, PPQN } from './src/import-song.js';
-    import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import-mdx.js';
-    import { portRows, portScore, scoreTargetOf, PORT_TARGETS } from './src/score-port.js';
-    import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import-mgs.js';
-    import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import-nsf.js';
-    import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import-sf2.js';
-    import { analyzeSound, defaultResynthOptions, formantVoice, resynthFits, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import-resynth.js';
-    import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/voice-estimate.js';
-    import { renderModel, RATE as FM_MODEL_RATE } from './src/fm-model.js';
-    import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import-tracker.js';
-    import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import-midi.js';
-    import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import-to-midi.js';
-    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/ir-utils.js';
-    import { compileMMLisp, canonicalTarget, collectImports } from './src/mmlisp2ir.js';
-    import { CorrelationTrigger } from './src/scope-trigger.js';
-    import { parse } from './src/mmlisp-parser.js';
-    import { SAMPLE_EFFECTS, applySampleEffects } from './src/sample-fx.js';
-    import { decodeWav } from './src/wav-decode.js';
-    import { ARCHIVE_EXT, readArchive, writeZip, zipWriter } from './src/archive.js';
-    import { shareBundle, carriedWav, wavBytes } from './src/share-files.js';
-    import { folderFromHandle, folderFromArchive, folderOfFile } from './src/source-folder.js';
-    import { formatMMLisp } from './src/mmlisp-formatter.js';
-    import { portSnippet, portMode, fmVoiceNames } from './src/snippet-port.js';
-    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from './src/edit-tools.js';
-    import { VectorEditor } from './src/vector-editor.js';
-    import { PcmEditor } from './src/pcm-editor.js';
-    import { ABSnapshots } from './src/ab-snapshots.js';
-    import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/ai-bridge.js';
-    import { createCatalogList, setTextWithIcons } from './src/catalog-list.js';
-    import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from './src/reference.js';
-    import { isReservedHead } from './src/mmlisp-eval.js';
-    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText, uiText } from './src/i18n.js';
-    import { parseStep, stepKey, textKeys, firstUndone, neighbor, stepState, statusText, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/lessons.js';
-    import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/completion-names.js';
-    import { defTemplates, fmDefText } from './src/def-templates.js';
-    import { precacheApp } from './src/offline-cache.js';
-    import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi-input.js';
-    import { openMidiOutputs, MidiOutRun, midiPlanOf, midiOutSupported } from './src/midi-output.js';
-    import { GmOutput, GM_BANK_URL } from './src/gm-output.js';
-    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom, loadDraftFiles, saveDraftFiles } from './src/recent-files.js';
-    import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey, opmBankToMmlisp } from './src/import-fm-voices.js';
+    import { IRPlayer, songOrEffectIr } from './src/player/ir-player.js';
+    import { DrvPlayer } from './src/driver/drv-player.js';
+    import { encodeMmb, collectPcmUsage, bakeAuditionBank, bakeAuditionBlob } from './src/driver/export-mmb.js';
+    import { abCompare, formatAbReport } from './src/driver/ab-compare.js';
+    import { renderVgm, configurePcmRate } from './src/export/export-vgm.js';
+    import { exportMidi } from './src/export/export-midi.js';
+    import { TARGETS, DEFAULT_TARGET, TONE_LANES, ALL_CHANNEL_NAMES, toneLaneOf, targetProfile, notYet, builtinNames, assetMark, targetsWith } from './src/machine/targets.js';
+    import { fmOpWord, fmInitVoice } from './src/machine/chips/fm-words.js';
+    import { opllRomVoices } from './src/machine/chips/ym2413.js';
+    import { bakeAdpcmB } from './src/machine/chips/adpcm-b.js';
+    import { bakePcm8, PCM8_RATE, PCM8_VOICES } from './src/machine/chips/msm6258.js';
+    import { bakeSampleBank, hasSampleBank, sampleBankKind } from './src/audio/sample-bank.js';
+    import { bakeRhythmStandIn } from './src/machine/chips/rhythm-rom.js';
+    import { Mp4Muxer } from './src/export/mp4-mux.js';
+    import { renderWav } from './src/export/export-wav.js';
+    import { mixerStrips, renderStems, stemName, soloStrip, muteStrip } from './src/export/stems.js';
+    import { newScoreSource, machineSummary } from './src/app/new-score.js';
+    import { importMucom, MUCOM_TARGETS, voiceBankToMmlisp, pcmBankToMmlisp } from './src/import/import-mucom.js';
+    import { parseDmf } from './src/import/import-dmf.js';
+    import { parseFur } from './src/import/import-fur.js';
+    import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp, vgmRows, vgmOnsets, vgmOnsetLists } from './src/import/import-vgm.js';
+    import { tapBeat, fitBeat, shuffleOf, beatClock, warpOf, shuffleText, shuffleOfText, timingLine, timingOfLine } from './src/import/import-timing.js';
+    import { RATE, PPQN } from './src/import/import-song.js';
+    import { parseMdx, analyzeMdx, mdxToMmlisp } from './src/import/import-mdx.js';
+    import { portRows, portScore, scoreTargetOf, PORT_TARGETS } from './src/port/score-port.js';
+    import { parseMgs, analyzeMgs, mgsToMmlisp } from './src/import/import-mgs.js';
+    import { parseNsf, runNsf, nsfSongOrder, nsfSongName, MAX_SECONDS as NSF_MAX_SECONDS } from './src/import/import-nsf.js';
+    import { parseSf2, sf2Kits, sf2KitToMmlisp } from './src/import/import-sf2.js';
+    import { analyzeSound, defaultResynthOptions, formantVoice, resynthFits, resynthToMmlisp, RESYNTH_MODES, RESYNTH_WIDTHS } from './src/import/import-resynth.js';
+    import { patchToRegs, patchToDef, searchTasks, refineTasks, rankCandidates } from './src/import/voice-estimate.js';
+    import { renderModel, RATE as FM_MODEL_RATE } from './src/import/fm-model.js';
+    import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import/import-tracker.js';
+    import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import/import-midi.js';
+    import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import/import-to-midi.js';
+    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/lang/ir-utils.js';
+    import { compileMMLisp, canonicalTarget, collectImports } from './src/lang/mmlisp2ir.js';
+    import { CorrelationTrigger } from './src/synth/scope-trigger.js';
+    import { parse } from './src/lang/mmlisp-parser.js';
+    import { SAMPLE_EFFECTS, applySampleEffects } from './src/audio/sample-fx.js';
+    import { decodeWav } from './src/audio/wav-decode.js';
+    import { ARCHIVE_EXT, readArchive, writeZip, zipWriter } from './src/app/archive.js';
+    import { shareBundle, carriedWav, wavBytes } from './src/app/share-files.js';
+    import { folderFromHandle, folderFromArchive, folderOfFile } from './src/app/source-folder.js';
+    import { formatMMLisp } from './src/lang/mmlisp-formatter.js';
+    import { portSnippet, portMode, fmVoiceNames } from './src/port/snippet-port.js';
+    import { loopSelection, loopLengths, channelForms, layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, lengthTicks, vectorAt, vectorOfWave, writeVector, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from './src/editor/edit-tools.js';
+    import { VectorEditor } from './src/editor/vector-editor.js';
+    import { PcmEditor } from './src/editor/pcm-editor.js';
+    import { ABSnapshots } from './src/app/ab-snapshots.js';
+    import { createAiBridge, AI_BRIDGE_DEFAULT_PORT } from './src/app/ai-bridge.js';
+    import { createCatalogList, setTextWithIcons } from './src/editor/catalog-list.js';
+    import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from './src/lang/reference.js';
+    import { isReservedHead } from './src/lang/mmlisp-eval.js';
+    import { LANGUAGES, language, setLanguage, refSummary, refCategoryLabel, snippetAbout, lessonText, uiText } from './src/app/i18n.js';
+    import { parseStep, stepKey, textKeys, firstUndone, neighbor, stepState, statusText, loadProgress as loadLessonProgress, saveProgress as saveLessonProgress } from './src/app/lessons.js';
+    import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from './src/editor/completion-names.js';
+    import { defTemplates, fmDefText } from './src/editor/def-templates.js';
+    import { precacheApp } from './src/app/offline-cache.js';
+    import { midiSupported, createMidiInput, midiVelToVel, ccToSliderValue } from './src/midi/midi-input.js';
+    import { openMidiOutputs, MidiOutRun, midiPlanOf, midiOutSupported } from './src/midi/midi-output.js';
+    import { GmOutput, GM_BANK_URL } from './src/midi/gm-output.js';
+    import { recentSupported, loadRecent, addRecent, removeRecent, clearRecent, ensureReadAccess, loadRom, saveRom, loadDraftFiles, saveDraftFiles } from './src/app/recent-files.js';
+    import { FM_IMPORT_FORMATS, buildMmlispVoiceFromDmp, slotToDisplayOps, makeVoiceNameFromFile, slugFromFileName, detectFmImportFormatKey, opmBankToMmlisp } from './src/import/import-fm-voices.js';
 
     // -----------------------------------------------------------------------
     // CodeMirror 6 — one vendored bundle (vendor/, built by scripts/vendor/)
@@ -3520,7 +3520,7 @@
       }, a);
     }
 
-    // A chip song read onto `:target midi` (src/import-to-midi.js): the
+    // A chip song read onto `:target midi` (src/import/import-to-midi.js): the
     // Target select's last choice on every song import. The file is read as
     // its own machine's score — the rows, the loop and the pitch as that
     // machine's — which is compiled, given GM programs and kit roles, and
@@ -3760,7 +3760,7 @@
     }
 
     // NSF: a song is run — the file's own driver on a 6502 — and its writes
-    // read as a VGM's (src/import-nsf.js), so the dialog is the VGM one. Its
+    // read as a VGM's (src/import/import-nsf.js), so the dialog is the VGM one. Its
     // songs are files of their own under Files in Folder (`song`, from there).
     const NSF_CHIPS = [['vrc6', 'VRC6'], ['vrc7', 'VRC7'], ['fds', 'FDS'], ['mmc5', 'MMC5'], ['n163', 'N163'], ['s5b', '5B']];
     async function importNsfBytes(bytes, fileName, { song = null } = {}) {
@@ -3955,7 +3955,7 @@
 
     function fmVoicePool() {
       const n = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
-      const workers = Array.from({ length: n }, () => new Worker('./src/voice-estimate-worker.js', { type: 'module' }));
+      const workers = Array.from({ length: n }, () => new Worker('./src/import/voice-estimate-worker.js', { type: 'module' }));
       let seq = 0, turn = 0;
       const run = (op, args) => new Promise((resolve, reject) => {
         const w = workers[turn++ % n], id = ++seq;
@@ -4344,7 +4344,7 @@
     // the last imported song with the bank so external @"name"/@n voices
     // resolve; otherwise insert the bank as (def-fm @name …) voice definitions.
     // A VOPM / MiOPMdrv voice bank (.opm): its named voices as def-fm, DT2 as
-    // :dt2-N — the X68000's, which an x68k score plays (src/import-fm-voices.js).
+    // :dt2-N — the X68000's, which an x68k score plays (src/import/import-fm-voices.js).
     async function importOpmBankFromFile(file) {
       const { source, warnings, count } = opmBankToMmlisp(await file.text(), file.name);
       insertImportedInstruments(source, warnings, `Imported voice bank ${file.name} (OPM) — ${count} voice${count === 1 ? '' : 's'}`, { tag: 'opm' });
@@ -5005,7 +5005,7 @@
       title.setAttribute('aria-expanded', String(!logicalTool.classList.contains('collapsed')));
     });
 
-    // ---- Edit > Tap Tempo (src/import-timing.js) ----
+    // ---- Edit > Tap Tempo (src/import/import-timing.js) ----
     // A VGM's or NSF's score is written from its file again on the beat tapped
     // here, the song held in memory as long as the score it was imported into
     // is the one open. Each change is one edit of the whole score.
@@ -5779,7 +5779,7 @@
     const mmlispName = (name) => (name || 'untitled').replace(/\.[^.]*$/, '') + '.mmlisp';
     // Source folder (File > Open Folder…, or an archive opened): the base a
     // score's relative `:file` sample paths resolve against — a folder from
-    // src/source-folder.js. Deliberately session-scoped — a reload
+    // src/app/source-folder.js. Deliberately session-scoped — a reload
     // starts clean rather than silently resolving samples against a folder from
     // some earlier sitting; File > Open Recent brings one back on request.
     let _sourceDir = null;
@@ -6095,7 +6095,7 @@
       }
       for (const w of baked.warnings) log(w, 'warn');
       const { bake } = baked;
-      // The X68000's PCM8: the samples the worklet mixes (src/chips/msm6258.js).
+      // The X68000's PCM8: the samples the worklet mixes (src/machine/chips/msm6258.js).
       if (kind === 'pcm8') {
         target?.setFrameBank?.(bake);
         workletNode.port.postMessage({ type: 'pcm8-bank', bank: bake });
@@ -6351,7 +6351,7 @@
       return handle && _sourceDir && (await _sourceDir.pathOf(handle)) ? _sourceDir : null;
     }
 
-    // An archive opens as the folder it holds (src/source-folder.js), read in
+    // An archive opens as the folder it holds (src/app/source-folder.js), read in
     // memory — so on every browser, a phone's too. `handle`, when there is one,
     // is what File > Open Recent brings it back by.
     async function openArchive(file, handle = null) {
@@ -6466,7 +6466,7 @@
       await applySourceDir(folderFromHandle(dir));
     }
 
-    // Adopt a folder (src/source-folder.js) as the source folder. Split from
+    // Adopt a folder (src/app/source-folder.js) as the source folder. Split from
     // the picker so a dropped folder, and an archive, land exactly where File >
     // Open Folder… does.
     async function applySourceDir(folder) {
@@ -6666,7 +6666,7 @@
     }
     window.grantScoreFolder = grantScoreFolder;
 
-    // ---- File > Open Recent (src/recent-files.js) ----
+    // ---- File > Open Recent (src/app/recent-files.js) ----
     let _recent = [];
 
     // A score inside the open folder is remembered with it, so reopening it
@@ -7579,7 +7579,7 @@
     // Two recorders, both writing H.264 + AAC MP4, what X takes. With
     // WebCodecs (Chrome) the page stamps each frame itself — frame k at
     // k/VIDEO_FPS, however late the paint that drew it ran — and
-    // src/mp4-mux.js writes the encoders' output. Without it, MediaRecorder
+    // src/export/mp4-mux.js writes the encoders' output. Without it, MediaRecorder
     // stamps a frame when it noticed the canvas painted, 5–15 ms off the
     // vsync under the player's load, which plays back as a stutter; where it
     // cannot write MP4 either, the video is whatever it has, with a warning.
@@ -8119,7 +8119,7 @@
       }
     }
 
-    // The compile, off the page's thread (src/compile-worker.js): on a long
+    // The compile, off the page's thread (src/app/compile-worker.js): on a long
     // score it held up Build, Play and a drag's hot-swap. One at a time, in the
     // order asked, so each compiles the document of its turn, as a synchronous
     // compile did. Where no worker starts it runs here.
@@ -8133,7 +8133,7 @@
         : compileMMLisp(src, name, { imports });
       if (_compileWorker === undefined) {
         try {
-          _compileWorker = new Worker('./src/compile-worker.js', { type: 'module' });
+          _compileWorker = new Worker('./src/app/compile-worker.js', { type: 'module' });
           _compileWorker.onmessage = (e) => {
             const p = _compilePending.get(e.data.id);
             if (!p) return;
@@ -8374,7 +8374,7 @@
     let _editorKind = null;                 // 'fm' | 'vector' | 'pcm': the one editor shown (null: the target's own)
     let _vecSubject = null;                 // the vector editor's subject (edit-tools.js vectorAt), shown even dimmed
     let _vecActive = false;                 // the vector subject is the panel's now (not dimmed)
-    let _vecEditor = null;                  // the vector editor (src/vector-editor.js), once its section is built
+    let _vecEditor = null;                  // the vector editor (src/editor/vector-editor.js), once its section is built
     let _importList = null;                 // the score's (import …) paths as last read (syncImportList)
     let _libLoaded = null;                  // the Library's rows, as read (showLibraryItems)
     let _libTarget;                         // the machine they are marked for (_builtTarget)
@@ -8387,7 +8387,7 @@
     let _libImports = null;                 // the imports that are read against
     let _pcmSubject = null;                 // the sample editor's subject (pcmSubjectOf), shown even dimmed
     let _pcmActive = false;                 // the sample subject is the panel's now (not dimmed)
-    let _pcmEditor = null;                  // the sample editor (src/pcm-editor.js), once its section is built
+    let _pcmEditor = null;                  // the sample editor (src/editor/pcm-editor.js), once its section is built
     let _pcmCompiled = null;                // { doc, metadata }: the score's samples, last asked (compiledSamples)
     let _pcmWave = null;                    // the wave it has, baked (requestPcmWave)
     let _fmShownRegs = null;                // the FM editor's last subject's registers, kept while dimmed
@@ -8439,7 +8439,7 @@
     let _lastPreviewMidi = 60;             // last previewed pitch (initial C4 = MIDI 60)
     let _algPreviewTimer = null;           // fixed-gate timer for the algorithm-diagram tap preview
     const PREVIEW_GATE_MS = 600;           // tap-preview note length (long enough to hear sustain/release)
-    // MIDI input (src/midi-input.js). Set up by initMidi() once prefs exist.
+    // MIDI input (src/midi/midi-input.js). Set up by initMidi() once prefs exist.
     let _midi = null;                      // createMidiInput(), made on first enable
     let _midiVelocity = false;             // key velocity → preview :vel and step input
     let _midiLearn = false;                // MIDI Learn: click a slider, move a knob
@@ -9345,7 +9345,7 @@
 
     // File > Import > YM2608 Rhythm ROM…: the YM2608 reads its six rhythm sounds from
     // a ROM of Yamaha's, which does not ship. The user brings theirs, kept in
-    // this browser (src/recent-files.js); :target pc88's rhythm plays from it,
+    // this browser (src/app/recent-files.js); :target pc88's rhythm plays from it,
     // in the worklet and the WAV export. Without one the score's kit stands in
     // (chips/rhythm-rom.js), and a role with no :file is silent.
     const RHYTHM_ROM_KEY = 'ym2608-rhythm';
@@ -11687,7 +11687,7 @@
     // -----------------------------------------------------------------------
     // AI bridge (Tools > Connect to AI): an AI client on this computer — Claude
     // Code or Claude Desktop running tools/mcp/mmlisp-mcp.mjs — reads and edits
-    // the score here and plays it, over 127.0.0.1 (src/ai-bridge.js). The ops
+    // the score here and plays it, over 127.0.0.1 (src/app/ai-bridge.js). The ops
     // below are all it can do: read, edit (one undoable step, logged), build,
     // play, stop. Off until turned on; the choice is remembered, and
     // ?ai-bridge=<port> in the URL turns it on for that port.
@@ -12006,7 +12006,7 @@
     // the OPN's, DT2 the OPM's, WS / EG / KSL / VIB the OPLL's, and the OPLL
     // has two operators, op1's TL alone.
     // In the panel's order (the envelope's first), each row the FM family's
-    // word (src/chips/fm-words.js): its range, label and regs field. VEL's
+    // word (src/machine/chips/fm-words.js): its range, label and regs field. VEL's
     // slider runs 0–1 in sixteenths (language.md §6), not its -1 "the role's own".
     const OP_PARAMS = ['FM_TL', 'FM_AR', 'FM_DR', 'FM_SL', 'FM_SR', 'FM_RR', 'FM_ML', 'FM_DT', 'FM_DT2_', 'FM_KS', 'FM_SSG',
       'FM_WS', 'FM_EG', 'FM_KSL', 'FM_VIB', 'FM_VEL']
@@ -12255,7 +12255,7 @@
       return doc.line(node.endLine).from + node.endColumn - 2;
     }
 
-    // ---- the vector editor (src/vector-editor.js) ----
+    // ---- the vector editor (src/editor/vector-editor.js) ----
     // Its subject is the vector the cursor is on (edit-tools.js vectorAt), or
     // a selected wave strip's def-wave; a stroke is heard at once on the
     // channels playing that wave (IRPlayer.setWave) and lands in the score as
@@ -12407,7 +12407,7 @@
       _vecEditor.draw(); // a section just shown has its size only now
     }
 
-    // ---- the sample editor (src/pcm-editor.js) ----
+    // ---- the sample editor (src/editor/pcm-editor.js) ----
     // Its subject is the def-pcm the cursor is in, drawn as the note bakes it:
     // the slice, `:fx` done, on the time its points are read in (`:rate`, else
     // the file's). A handle let go lands in the score as one edit.
@@ -12824,7 +12824,7 @@
     }
 
     // The preview's writes for one FM operation, from the player's FM
-    // encoder (src/chips/): the score's chip, at its clock.
+    // encoder (src/machine/chips/): the score's chip, at its clock.
     function writePreviews(writes) {
       for (const [port, addr, data] of writes) writePreview(port, addr, data);
     }
@@ -13773,7 +13773,7 @@
       else if (out) openMidiOut();
     }
 
-    // ── MIDI output (src/midi-output.js) ────────────────────────────────────
+    // ── MIDI output (src/midi/midi-output.js) ────────────────────────────────────
     // A `:target midi` score's sound (midiSound): a chip's score has its own,
     // which nothing turns down, so there the output is idle and its menu
     // items disabled (File > Export > MIDI is every machine's).
@@ -13781,7 +13781,7 @@
     // the score the player runs, compiled off the page's thread (the compile
     // worker's 'midi'), sent ahead on the player's clock every 25 ms. The
     // output is kept by name (pref 'midiOut'); Off is none. Two are the
-    // page's own (src/gm-output.js): the GM output on the bundled bank, and
+    // page's own (src/midi/gm-output.js): the GM output on the bundled bank, and
     // on the user's SoundFont (kept as ROM 'soundfont', its name pref
     // 'soundFont'); they take the run once their bank is loaded.
     let _midiOuts = null;      // openMidiOutputs(), once access is given
@@ -14722,7 +14722,7 @@
     }
     // Safari has no requestIdleCallback.
     // The measure plays the whole song through, so it runs in a worker
-    // (src/time-worker.js); until it answers, the bar shows time but has no
+    // (src/player/time-worker.js); until it answers, the bar shows time but has no
     // length. Where no worker starts, or the IR does not clone, it runs here.
     let _timeWorker;           // undefined: not tried yet; null: unavailable
     let _timeMeasureId = 0;
@@ -14737,7 +14737,7 @@
         _timeWorker = undefined;
       }
       if (_timeWorker === undefined) {
-        try { _timeWorker = new Worker('./src/time-worker.js', { type: 'module' }); }
+        try { _timeWorker = new Worker('./src/player/time-worker.js', { type: 'module' }); }
         catch (_) { _timeWorker = null; }
       }
       if (!_timeWorker) { fallback(); return; }
@@ -15688,7 +15688,7 @@
     let _scopeAbs = 0;              // absolute sample count at the ring write head
     let _scopeFreqs = new Array(SCOPE_CH).fill(0); // latched pitch per channel (Hz)
     let _scopeSR = 48000;           // worklet sample rate (updates per batch)
-    // One correlation trigger per channel (src/scope-trigger.js), rebuilt if
+    // One correlation trigger per channel (src/synth/scope-trigger.js), rebuilt if
     // the audio context turns out to run at another rate.
     let _scopeTriggers = null;
     let _scopeTrigSR = 0;
@@ -16096,7 +16096,7 @@
     // 'load' event has already fired — register at once then.
     if ('serviceWorker' in navigator) {
       // Each launch then fetches, through the worker, anything it does not
-      // hold yet (src/offline-cache.js), and says when the app is ready to
+      // hold yet (src/app/offline-cache.js), and says when the app is ready to
       // run offline.
       const registerSw = () => navigator.serviceWorker.register('./sw.js')
         .then(async () => {

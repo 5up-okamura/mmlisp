@@ -6,11 +6,11 @@
 // appends the bank to PCM_START instead of sending PCM_START_BANKED
 // (multibank-model.mjs MultibankPairs).
 import { readFileSync } from "node:fs";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { createSampleBankBuilder, encodeMmb } from "../../live/src/export-mmb.js";
-import { parsePcmBank } from "../../live/src/pcm-model.js";
-import { engineImage } from "../../live/src/engine-images.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { createSampleBankBuilder, encodeMmb } from "../../live/src/driver/export-mmb.js";
+import { parsePcmBank } from "../../live/src/driver/pcm-model.js";
+import { engineImage } from "../../live/src/driver/engine-images.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
 import { readImportSources } from "./mmb-build.mjs";
 import { loadSamplesForIr } from "./wav.mjs";
 import { MultibankPairs } from "./multibank-model.mjs";

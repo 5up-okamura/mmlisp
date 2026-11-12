@@ -135,7 +135,7 @@ console.log(`${dry}project: ${project}`);
 
 // ---- regenerate the generated artifacts ----------------------------------
 // mmlispdrv_bin.h is a build output of tools/emit-bin.mjs and 68k/tables.c one of
-// live/src/ir-utils.js; copying either stale is the classic way to ship a
+// live/src/lang/ir-utils.js; copying either stale is the classic way to ship a
 // driver that does not match the repo.
 if (opts.build) {
   const { headerSource } = await import("./emit-bin.mjs");

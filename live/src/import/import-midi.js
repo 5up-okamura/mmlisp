@@ -1,0 +1,781 @@
+// ---------------------------------------------------------------------------
+// Standard MIDI File (.mid) → MMLisp import
+//
+// Notes, tempo, time signatures and programs. A program names a voice of
+// presets/gm (the libOPNMIDI XG bank), played at the bank's own note offset;
+// channel 10 plays presets/gm-drums on the PCM channels. MIDI plays chords on
+// one channel and MMLisp one note a track, so each channel is split into
+// lanes (a lane is as many notes as can sound at once) and every lane gets a
+// destination: a channel of the target's, or dropped. The defaults put the
+// busiest lanes on the kind of channel the machine has most of, FM first; what
+// does not fit is dropped and reported — from the channels with the most lanes
+// first (a channel's first lane goes before any channel's second).
+//
+// Any target can take a file, since a program is read by the channel it lands
+// on: a 4-op FM channel plays its gm voice, an FM channel of the chip's ROM
+// voices and a wave channel the role it is nearest (GM_ROLES: `piano`,
+// `wave-piano`), a tone channel its family's envelope. Drums play gm-drums on
+// a sample channel, the ROM rhythm's nearest sound on its tracks, and on a
+// noise channel a rate and an envelope by the kind of hit (DRUM_KINDS).
+//
+// Volume (CC7), expression (CC11) and velocity fold into `:vel`; the song's
+// loudest note lands on 15, and where volume and expression move during a
+// note, they are its `:vel+` macro (shared as `env-NN`, as VGM's envelopes). Pan (CC10) is a note's `:pan`, as it was at its
+// note-on, where the channel pans. The
+// sustain pedal (CC64) holds notes. A part sent to the PSG takes the
+// envelope of its program's family from presets/envelopes. Pitch bend (its
+// range from RPN 0) is read frame by frame through each note and drawn as a
+// `:pitch` macro — a vibrato or a few lines, shared as defs (import-song.js
+// assignBends); the modulation wheel (CC1) is a vibrato on a fixed mapping:
+// 127 → ±50 cents at 5.5 Hz, coming in 12 frames (0.2 s) into the note. The
+// other controllers are skipped and reported. A loop marked the RPG Maker
+// way (CC111) or with `loopStart` / `loopEnd` markers becomes `#top … (go
+// top)`; without one the whole song loops (unless the dialog says not to).
+//
+//   parseMidi(bytes)                  → the file's events
+//   analyzeMidi(parsed)               → what the import dialog shows
+//   defaultMidiOptions(analysis)      → its defaults
+//   midiToMmlisp(parsed, options, analysis) → { source, warnings }
+// ---------------------------------------------------------------------------
+
+import { PPQN, RATE, barEnds, emitSong, emitStructured, withPre, dropIdleNones, bestBars, qstr, estimateGrid, regrid,
+  assignBends, PITCH_NONE, destsFor, onBoard } from "./import-song.js";
+import { DEFAULT_TARGET, targetProfile } from "../machine/targets.js";
+import { assignEnvelopes } from "./import-shapes.js";
+import { RHYTHM_KIT } from "./import-mucom.js";
+import { GM_PROGRAMS, GM_KIT_ROLES } from "../midi/gm-names.js";
+
+// presets/gm, in program order (README.md), the MIDI export's table. The
+// bank's note offsets live on the voices themselves, as `:key` — a key is
+// written as the MIDI file has it.
+const GM_VOICES = GM_PROGRAMS;
+// presets/gm-drums by GM key; the keys the kit lacks borrow a neighbour.
+const GM_DRUMS = {
+  35: "kick2", 36: "kick", 37: "rim", 38: "snare", 41: "tom1", 42: "hat", 43: "tom2", 44: "hat-pedal",
+  45: "tom3", 46: "hat-open", 47: "tom4", 48: "tom5", 49: "crash", 50: "tom6", 51: "ride", 53: "ride-bell",
+  54: "tamb", 56: "cowbell", 57: "crash2", 58: "vibraslap", 59: "ride2", 60: "bongo-hi", 61: "bongo-lo",
+  62: "conga-mute", 63: "conga-hi", 64: "conga-lo", 65: "timbale-hi", 66: "timbale-lo", 67: "agogo-hi",
+  68: "agogo-lo", 69: "cabasa", 71: "whistle", 72: "whistle-long", 73: "guiro", 74: "guiro-long",
+  75: "claves", 76: "woodblock-hi", 77: "woodblock-lo", 78: "cuica-mute", 79: "cuica",
+  80: "triangle-mute", 81: "triangle",
+  39: "snare", 40: "snare", 52: "crash2", 55: "crash", 70: "cabasa",
+};
+const DRUM_CH = 9;
+const DRUM_KEY = 60; // a PCM note at c4 plays the sample as recorded
+
+// A GM program on the PSG: its family's envelope (presets/envelopes), the
+// level shape the voice would have had — fixed by family.
+const PSG_ENV_BY_FAMILY = [
+  "env-piano", "env-bell", "env-organ", "env-guitar", "env-guitar", "env-pad", "env-pad", "env-brass",
+  "env-lead", "env-lead", "env-lead", "env-pad", "env-pad", "env-guitar", "env-pluck", "env-organ",
+];
+const PSG_ENV_BY_PROGRAM = { 45: "env-pluck-long", 47: "env-bell", 55: "env-stab" }; // pizzicato, timpani, orchestra hit
+const psgEnvOf = (program) => PSG_ENV_BY_PROGRAM[program] ?? PSG_ENV_BY_FAMILY[program >> 3];
+// A GM program as the nearest of the fifteen roles: the voices of an OPLL's
+// ROM, the `wave-` macros of presets/wavetable.
+const ROLE_BY_FAMILY = [
+  "piano", "vibraphone", "organ", "guitar", "acoustic-bass", "violin", "violin", "trumpet",
+  "oboe", "flute", "synth", "synth", "synth", "guitar", "vibraphone", "synth",
+];
+const ROLE_BY_PROGRAM = {
+  6: "harpsichord", 7: "harpsichord", 27: "electric-guitar", 28: "electric-guitar", 29: "electric-guitar", 30: "electric-guitar", 31: "electric-guitar",
+  38: "synth-bass", 39: "synth-bass", 45: "guitar", 46: "guitar", 47: "acoustic-bass", 55: "horn",
+  57: "horn", 58: "horn", 60: "horn", 61: "horn", 62: "synth", 63: "synth",
+  64: "clarinet", 65: "clarinet", 66: "clarinet", 67: "clarinet", 71: "clarinet",
+  108: "vibraphone", 109: "oboe", 110: "violin", 111: "oboe",
+};
+const roleOf = (program) => ROLE_BY_PROGRAM[program] ?? ROLE_BY_FAMILY[program >> 3];
+// A role on a ROM of other names (the VRC7's): the nearest it has.
+const ROLE_NEAR = {
+  piano: ["wurly", "guitar"], harpsichord: ["guitar"], "electric-guitar": ["guitar"], "acoustic-bass": ["fretless", "synth-bass"],
+  violin: ["tutti", "flute"], horn: ["trumpet"], oboe: ["clarinet"], vibraphone: ["vibes", "bells"],
+};
+const romVoiceOf = (part, role) => (part.romNames.includes(role) ? role
+  : (ROLE_NEAR[role] ?? []).find((n) => part.romNames.includes(n)) ?? part.romNames[0]);
+
+// A GM drum as the kind of hit it is, where a chip has no sample of it: the
+// ROM rhythm's sound (the first of `kit` the kit has) and, on a noise channel,
+// its rate and envelope (presets/envelopes).
+const DRUM_KINDS = {
+  kick: { kit: ["kick"], hz: 500, env: "env-stab" },
+  tom: { kit: ["tom4", "snare"], hz: 1200, env: "env-stab" },
+  snare: { kit: ["snare"], hz: 4000, env: "env-snare" },
+  rim: { kit: ["rim", "snare"], hz: 6000, env: "env-hat" },
+  hat: { kit: ["hat"], hz: 12000, env: "env-hat" },
+  cymbal: { kit: ["ride", "hat"], hz: 9000, env: "env-pluck-long" },
+};
+const DRUM_KIND_OF = {
+  35: "kick", 36: "kick", 37: "rim", 38: "snare", 39: "snare", 40: "snare", 41: "tom", 42: "hat", 43: "tom", 44: "hat",
+  45: "tom", 46: "hat", 47: "tom", 48: "tom", 49: "cymbal", 50: "tom", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal",
+  57: "cymbal", 59: "cymbal", 60: "tom", 61: "tom", 62: "tom", 63: "tom", 64: "tom", 65: "tom", 66: "tom",
+  75: "rim", 76: "rim", 77: "rim",
+};
+const drumKindOf = (key) => DRUM_KINDS[DRUM_KIND_OF[key] ?? "hat"];
+// Quantize grids, coarsest first: 16th, 16th triplet, 32nd, 32nd triplet, 64th…
+export const GRIDS = [24, 16, 12, 8, 6, 4, 3, 2, 1];
+
+// ── The file ──────────────────────────────────────────────────────────────
+
+/**
+ * @returns {{ format, division, tracks: Array<Array<{tick, kind, ch?, a?, b?, text?, value?}>> }}
+ *   kind: on (a key, b velocity) | off | cc (a controller, b value) | pc (a)
+ *   | bend (value) | tempo (value: µs per quarter) | ts (a num, b den)
+ *   | name | marker (text)
+ */
+export function parseMidi(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const str = (o, n) => String.fromCharCode(...u8.subarray(o, o + n));
+  const u32 = (o) => ((u8[o] << 24) | (u8[o + 1] << 16) | (u8[o + 2] << 8) | u8[o + 3]) >>> 0;
+  const u16 = (o) => (u8[o] << 8) | u8[o + 1];
+  let p = 0;
+  // RIFF-wrapped MIDI (.rmi)
+  if (str(0, 4) === "RIFF" && str(8, 4) === "RMID") {
+    p = 12;
+    while (p + 8 <= u8.length && str(p, 4) !== "data") p += 8 + (u8[p + 4] | (u8[p + 5] << 8) | (u8[p + 6] << 16) | (u8[p + 7] << 24));
+    p += 8;
+  }
+  if (str(p, 4) !== "MThd") throw new Error("not a Standard MIDI File (no MThd)");
+  const hlen = u32(p + 4);
+  const format = u16(p + 8);
+  const ntrk = u16(p + 10);
+  const division = u16(p + 12);
+  if (division & 0x8000) throw new Error("SMPTE-timed MIDI files are not supported");
+  p += 8 + hlen;
+  const tracks = [];
+  for (let k = 0; k < ntrk && p + 8 <= u8.length; k++) {
+    const id = str(p, 4);
+    const len = u32(p + 4);
+    const start = p + 8;
+    const end = Math.min(u8.length, start + len);
+    p = start + len;
+    if (id !== "MTrk") { k--; continue; }
+    const ev = [];
+    let q = start;
+    let tick = 0;
+    let running = 0;
+    const vlq = () => {
+      let v = 0;
+      for (let i = 0; i < 4 && q < end; i++) {
+        const b = u8[q++];
+        v = (v << 7) | (b & 0x7f);
+        if (!(b & 0x80)) break;
+      }
+      return v;
+    };
+    while (q < end) {
+      tick += vlq();
+      let st = u8[q];
+      if (st & 0x80) q++;
+      else st = running;
+      if (st === 0xff) {
+        const type = u8[q++];
+        const n = vlq();
+        const d = u8.subarray(q, q + n);
+        q += n;
+        if (type === 0x2f) break;
+        if (type === 0x51 && n >= 3) ev.push({ tick, kind: "tempo", value: (d[0] << 16) | (d[1] << 8) | d[2] });
+        else if (type === 0x58 && n >= 2) ev.push({ tick, kind: "ts", a: d[0], b: 1 << d[1] });
+        else if (type === 0x03) ev.push({ tick, kind: "name", text: decodeText(d) });
+        else if (type === 0x06 || type === 0x01) ev.push({ tick, kind: "marker", text: decodeText(d) });
+        continue;
+      }
+      if (st === 0xf0 || st === 0xf7) {
+        q += vlq();
+        continue;
+      }
+      if (!(st & 0x80)) throw new Error(`track ${k + 1}: data byte with no running status at ${q}`);
+      running = st;
+      const hi = st & 0xf0;
+      const ch = st & 0x0f;
+      const a = u8[q++];
+      const b = hi === 0xc0 || hi === 0xd0 ? 0 : u8[q++];
+      if (hi === 0x90 && b > 0) ev.push({ tick, kind: "on", ch, a, b });
+      else if (hi === 0x80 || hi === 0x90) ev.push({ tick, kind: "off", ch, a });
+      else if (hi === 0xb0) ev.push({ tick, kind: "cc", ch, a, b });
+      else if (hi === 0xc0) ev.push({ tick, kind: "pc", ch, a });
+      else if (hi === 0xe0) ev.push({ tick, kind: "bend", ch, value: ((b << 7) | a) - 8192 });
+    }
+    tracks.push(ev);
+  }
+  return { format, division, tracks };
+}
+
+function decodeText(d) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(d).trim();
+  } catch {
+    try {
+      return new TextDecoder("shift-jis").decode(d).trim();
+    } catch {
+      return String.fromCharCode(...d).trim();
+    }
+  }
+}
+
+// ── What is in it ────────────────────────────────────────────────────────
+
+/**
+ * Notes with their channel state, the tempo map, the lanes.
+ * @returns {{ title, division, tempos, timeSigs, loop, notes, lanes, counts }}
+ *   lanes: [{key, ch, lane, drums, program, voice, notes, label}]
+ */
+// `mono`: the file is a score's own export (a chip song read as General MIDI),
+// each of its tracks one voice — a lane is its track, a note running into the
+// next is cut there, and a fast run (notes closer than a 32nd) is no chord.
+export function analyzeMidi(parsed, { mono = false } = {}) {
+  const all = [];
+  parsed.tracks.forEach((tr, ti) => tr.forEach((e, i) => all.push({ ...e, ti, i })));
+  // Same tick: offs before ons, so a repeated key is released then struck.
+  const order = { off: 0, cc: 1, pc: 1, tempo: 1, ts: 1, bend: 1, name: 2, marker: 2, on: 3 };
+  all.sort((x, y) => x.tick - y.tick || order[x.kind] - order[y.kind] || x.ti - y.ti || x.i - y.i);
+
+  const tempos = [];
+  const timeSigs = [];
+  let title = null;
+  let loopStart = null;
+  let loopEnd = null;
+  const counts = { bend: 0, cc: new Map() };
+  // Pitch bend in cents, through each channel's range (RPN 0, ±2 semitones
+  // until set), and the modulation wheel: [tick, value] a channel.
+  const bends = Array.from({ length: 16 }, () => [[0, 0]]);
+  const mods = Array.from({ length: 16 }, () => [[0, 0]]);
+  // Volume (CC7) and expression (CC11) as they move: [tick, value] a channel.
+  const vols = Array.from({ length: 16 }, () => [[0, 100]]);
+  const exprs = Array.from({ length: 16 }, () => [[0, 127]]);
+  const range = new Array(16).fill(200);
+  const rpn = Array.from({ length: 16 }, () => [127, 127]);
+  const raw = new Array(16).fill(0);
+  const program = new Array(16).fill(0);
+  const vol = new Array(16).fill(100);
+  const expr = new Array(16).fill(127);
+  const pan = new Array(16).fill(null);
+  const sustain = new Array(16).fill(false);
+  const sounding = new Map(); // ch*128+key → [note …]
+  const pedalHeld = Array.from({ length: 16 }, () => []);
+  const notes = [];
+  const close = (n, tick) => { n.end = Math.max(tick, n.tick); };
+
+  for (const e of all) {
+    switch (e.kind) {
+      case "tempo": tempos.push({ tick: e.tick, usPerQ: e.value }); break;
+      case "ts": timeSigs.push({ tick: e.tick, num: e.a, den: e.b }); break;
+      case "name": if (title == null && e.ti === 0 && e.text) title = e.text; break;
+      case "marker":
+        if (/^loop\s*start$/i.test(e.text) && loopStart == null) loopStart = e.tick;
+        else if (/^loop\s*end$/i.test(e.text) && loopEnd == null) loopEnd = e.tick;
+        break;
+      case "pc": program[e.ch] = e.a; break;
+      case "bend":
+        if (e.value !== 0) counts.bend++;
+        raw[e.ch] = e.value;
+        bends[e.ch].push([e.tick, (e.value / 8192) * range[e.ch]]);
+        break;
+      case "cc":
+        if (e.a === 101) rpn[e.ch][0] = e.b;
+        else if (e.a === 100) rpn[e.ch][1] = e.b;
+        else if ((e.a === 6 || e.a === 38) && rpn[e.ch][0] === 0 && rpn[e.ch][1] === 0) {
+          range[e.ch] = e.a === 6 ? e.b * 100 + (range[e.ch] % 100) : Math.floor(range[e.ch] / 100) * 100 + e.b;
+          bends[e.ch].push([e.tick, (raw[e.ch] / 8192) * range[e.ch]]);
+        } else if (e.a === 1) mods[e.ch].push([e.tick, e.b]);
+        else if (e.a === 7) { vol[e.ch] = e.b; vols[e.ch].push([e.tick, e.b]); }
+        else if (e.a === 11) { expr[e.ch] = e.b; exprs[e.ch].push([e.tick, e.b]); }
+        else if (e.a === 10) pan[e.ch] = e.b;
+        else if (e.a === 111) loopStart ??= e.tick;
+        else if (e.a === 64) {
+          sustain[e.ch] = e.b >= 64;
+          if (!sustain[e.ch]) {
+            for (const n of pedalHeld[e.ch]) close(n, e.tick);
+            pedalHeld[e.ch] = [];
+          }
+        } else if (![0, 32, 6, 38, 98, 99, 100, 101, 121, 120, 123].includes(e.a)) {
+          counts.cc.set(e.a, (counts.cc.get(e.a) ?? 0) + 1);
+        }
+        break;
+      case "on": {
+        const k = e.ch * 128 + e.a;
+        // A key struck again while sounding ends the earlier note.
+        const prev = sounding.get(k);
+        if (prev?.length) for (const n of prev.splice(0)) close(n, e.tick);
+        const n = {
+          tick: e.tick, end: null, ch: e.ch, key: e.a, vel: e.b, program: program[e.ch], ti: e.ti, pan: pan[e.ch],
+          level: gainDb(e.b) + gainDb(vol[e.ch]) + gainDb(expr[e.ch]),
+        };
+        notes.push(n);
+        sounding.set(k, [...(sounding.get(k) ?? []), n]);
+        break;
+      }
+      case "off": {
+        const list = sounding.get(e.ch * 128 + e.a);
+        const n = list?.shift();
+        if (!n) break;
+        if (sustain[e.ch]) pedalHeld[e.ch].push(n);
+        else close(n, e.tick);
+        break;
+      }
+    }
+  }
+  const last = all.length ? all[all.length - 1].tick : 0;
+  for (const n of notes) if (n.end == null) n.end = Math.max(last, n.tick + 1);
+  if (!tempos.length || tempos[0].tick > 0) tempos.unshift({ tick: 0, usPerQ: 500000 });
+
+  // Lanes: per channel, each note on the first lane free at its start.
+  const lanes = [];
+  const byCh = new Map();
+  for (const n of notes) {
+    if (!byCh.has(n.ch)) byCh.set(n.ch, []);
+    byCh.get(n.ch).push(n);
+  }
+  // A 32nd: how long a drum hit holds its lane, and how far a played note
+  // may run into the next before that takes a second lane (it is cut).
+  const slack = parsed.division / 8;
+  for (const [ch, list] of [...byCh].sort((a, b) => a[0] - b[0])) {
+    const drums = ch === DRUM_CH;
+    const ends = [];
+    if (mono) {
+      const order = [...new Set(list.map((n) => n.ti))].sort((x, y) => x - y); // a lane a track, in the file's order
+      list.sort((a, b) => a.tick - b.tick || b.key - a.key);
+      const prev = new Map();
+      for (const n of list) {
+        n.lane = order.indexOf(n.ti);
+        const p = prev.get(n.lane);
+        if (p && !drums && p.end > n.tick) p.end = n.tick;
+        prev.set(n.lane, n);
+        ends[n.lane] = n.end;
+      }
+    } else {
+      // A chord, even a played one, is laned top note first.
+      list.sort((a, b) => Math.round(a.tick / slack) - Math.round(b.tick / slack) || b.key - a.key);
+      for (const n of list) {
+        const end = drums ? n.tick + slack : n.end;
+        let l = ends.findIndex((x) => x <= n.tick + (drums ? 0 : slack));
+        if (l < 0) { l = ends.length; ends.push(0); }
+        ends[l] = end;
+        n.lane = l;
+      }
+    }
+    for (let l = 0; l < ends.length; l++) {
+      const mine = list.filter((n) => n.lane === l);
+      const prog = mine[0].program;
+      const voice = drums ? "drums" : GM_VOICES[prog];
+      lanes.push({
+        key: `${ch}:${l}`, ch, lane: l, drums, program: prog, voice, notes: mine.length,
+        label: `ch${ch + 1}${ends.length > 1 ? ` · ${l + 1}/${ends.length}` : ""} · ${voice} · ${mine.length} notes`,
+      });
+    }
+  }
+  // Seconds, through the tempo map.
+  const marks = [];
+  let at = 0;
+  for (let i = 0; i < tempos.length; i++) {
+    if (i > 0) at += ((tempos[i].tick - tempos[i - 1].tick) * tempos[i - 1].usPerQ) / parsed.division / 1e6;
+    marks.push({ tick: tempos[i].tick, sec: at, usPerQ: tempos[i].usPerQ });
+  }
+  const markAt = marks.map((m) => [m.tick, m]);
+  const secOf = (tick) => {
+    const m = valueAt(markAt, tick) || marks[0];
+    return m.sec + ((tick - m.tick) * m.usPerQ) / parsed.division / 1e6;
+  };
+  // The tempo the music starts at: a file may run a silent setup section at
+  // a tempo of its own before the first note.
+  const firstTick = notes.length ? Math.min(...notes.map((n) => n.tick)) : 0;
+  const atFirst = tempos.filter((t) => t.tick <= firstTick).pop() ?? tempos[0];
+  const a = {
+    title, division: parsed.division, tempos, timeSigs, notes, lanes, counts, secOf, firstTick, bends, mods, vols, exprs,
+    loop: loopStart != null ? { start: loopStart, end: loopEnd } : null,
+    bpm: 60e6 / atFirst.usPerQ,
+  };
+  a.fileGrid = detectGrid(a);
+  a.beat = estimateGrid(notes.map((n) => secOf(n.tick) * RATE));
+  return a;
+}
+
+/** The value in force at `at` in a list of [at, value] in time order (0 before the first). */
+function valueAt(list, at) {
+  let lo = 0, hi = list.length - 1;
+  if (hi < 0 || list[0][0] > at) return 0;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (list[mid][0] <= at) lo = mid; else hi = mid - 1; }
+  return list[lo][1];
+}
+
+const VEL_NONE = "(macro :vel none)";
+
+/**
+ * CC10 as `:pan` −1..1, 64 the centre — the export's pan7 read back (64
+ * steps to the left, 63 to the right); a chip with a left and a right bit
+ * snaps it.
+ */
+const panOf = (v) => (v === 64 ? "center" : v === 0 ? "left" : v === 127 ? "right" : String(+((v - 64) / (v < 64 ? 64 : 63)).toFixed(2)));
+
+/** dB of a 0-127 MIDI level (GM: 40 log10). */
+const gainDb = (v) => (v <= 0 ? -96 : 40 * Math.log10(v / 127));
+
+/**
+ * The coarsest grid the onsets sit on within a tick. `fits` is false when
+ * only a grid finer than a 64th does — the file's ticks are not its beat (a
+ * recorded performance, a conversion from a log) and the beat has to be
+ * estimated from the notes' times instead.
+ */
+function detectGrid(analysis) {
+  const k = PPQN / analysis.division;
+  const ticks = analysis.notes.map((n) => n.tick * k);
+  if (!ticks.length) return { grid: 12, fits: true };
+  for (const g of GRIDS) {
+    let err = 0;
+    for (const t of ticks) err += Math.abs(t - Math.round(t / g) * g);
+    if (err / ticks.length <= 1) return { grid: g, fits: g >= 6 };
+  }
+  return { grid: 12, fits: false };
+}
+
+/**
+ * The channels a `target` score offers a file's lanes: melodic ones, a drum
+ * lane's. `machine`: the machine as it is had (targets.js configuredTarget).
+ */
+export function midiDests(targetName = DEFAULT_TARGET, machine = null) {
+  const tp = targetProfile(targetName, machine);
+  const d = destsFor(tp);
+  return { melodic: [...d.fm, ...d.psg, ...d.wave, ...d.midi], drums: [...d.pcm, ...d.noises] };
+}
+// What one channel is to the rest: the sounds of a kit share a voice but each
+// is a track, so a track names itself.
+const channelKey = (tp, h) => (tp.partOf(h).kit ? h : tp.voiceKey(h));
+// The channels a track on `h` takes from the melody, as their voice keys: what
+// a sample part claims (fm6), what a kit takes (the OPLL's fm7-9).
+const takenBy = (tp, h) => {
+  const part = tp.partOf(h);
+  return new Set(tp.channelNames.filter((f) => {
+    const c = tp.channels[f];
+    return !c.part.kit && ((part.claims?.kind === c.part.kind && part.claims.voice === c.voice) || part.takes?.(c));
+  }).map((f) => tp.voiceKey(f)));
+};
+
+/**
+ * The dialog's defaults: lanes by importance (every channel's first lane,
+ * busiest first, before any second lane) onto the machine's kinds of channel,
+ * the one it has most of first (FM first of equals); drums onto a ROM rhythm's
+ * tracks, else its sample channels, then its noise. The Mega Drive's DAC
+ * spends its rate on a voice: two at most, and no lane on the noise. A sample
+ * voice that is a wave channel's costs the melody one: the last, once. A
+ * channel the drums take (fm6, the OPLL's fm7-9) is not the melody's. A channel
+ * with no level (the 2A03's triangle) gets the lowest lane of those kept.
+ */
+// A MIDI file's own machine is the GM instrument (`:target midi`), as a VGM's
+// is its chips': the dialog opens on it.
+export const MIDI_DEFAULT_TARGET = "midi";
+
+export function defaultMidiOptions(analysis, target = MIDI_DEFAULT_TARGET, machine = null) {
+  const tp = targetProfile(target, machine);
+  const d = destsFor(tp);
+  // The machine as it is had holds only what it has: a cartridge turned on
+  // is filled as the rest; without it, the machine's own board.
+  const board = machine ? () => true : onBoard(tp);
+  const melodic = analysis.lanes.filter((l) => !l.drums)
+    .sort((a, b) => a.lane - b.lane || b.notes - a.notes);
+  const drums = analysis.lanes.filter((l) => l.drums).sort((a, b) => a.lane - b.lane);
+  const kit = d.pcm.filter((h) => tp.partOf(h).kit);
+  const samples = d.pcm.filter((h) => !tp.partOf(h).kit && board(h));
+  const noises = d.noises.filter(board);
+  const ownVoice = samples.filter((h) => !d.wave.some((w) => tp.voiceKey(w) === tp.voiceKey(h)));
+  const drumDests = kit.length ? kit : tp.hasPart("dac") ? samples.slice(0, 2) : [...(ownVoice.length ? ownVoice : samples.slice(-1)), ...noises];
+  // Where the noise takes a lane, the first channel keeps the kick and the snare.
+  if (drumDests.some((h) => noises.includes(h))) {
+    const body = (l) => analysis.notes.filter((n) => n.ch === l.ch && n.lane === l.lane && [35, 36, 38, 40].includes(n.key)).length;
+    drums.sort((a, b) => body(b) - body(a));
+  }
+  const dest = {};
+  const gone = new Set();
+  const take = (h) => {
+    gone.add(channelKey(tp, h));
+    for (const k of takenBy(tp, h)) gone.add(k);
+  };
+  drums.forEach((l) => {
+    const h = drumDests.find((c) => !gone.has(channelKey(tp, c)));
+    dest[l.key] = h ?? "drop";
+    if (h) take(h);
+  });
+  const pools = [d.fm, d.psg, d.wave, d.midi].map((p) => p.filter(board)).sort((a, b) => b.length - a.length);
+  const free = pools.flat().filter((h) => !gone.has(tp.voiceKey(h)));
+  melodic.forEach((l) => { dest[l.key] = free.shift() ?? "drop"; });
+  // The 2A03's triangle has no level: the bass, which least needs one.
+  const flat = Object.entries(dest).find(([, h]) => h !== "drop" && tp.partOf(h).noLevel);
+  if (flat) {
+    const mean = (l) => { const ns = analysis.notes.filter((n) => `${n.ch}:${n.lane}` === l.key); return ns.reduce((s, n) => s + n.key, 0) / ns.length; };
+    const low = melodic.filter((l) => dest[l.key] !== "drop").sort((a, b) => mean(a) - mean(b))[0];
+    if (low) [dest[flat[0]], dest[low.key]] = [dest[low.key], dest[flat[0]]];
+  }
+  const timing = analysis.fileGrid.fits || analysis.beat.frames ? "file" : "beats";
+  return { dest, grid: analysis.fileGrid.grid, timing, bpm: null, loop: true, target };
+}
+
+// ── The score ────────────────────────────────────────────────────────────
+
+/**
+ * @param options {dest: {laneKey: channel|"drop"}, grid, bpm?: number|null,
+ *                 timing: "file" (the file's ticks and tempo map, quantized
+ *                 to `grid`; `bpm` scales the map) | "beats" (the beat
+ *                 estimated from the notes' times; `bpm` replaces it),
+ *                 loop: bool, target?, machine? (its options, as
+ *                 midiDests), fileName?, from? (what the header
+ *                 says it was: "MIDI" unless a chip's import came this way)}
+ */
+export function midiToMmlisp(parsed, options, analysis = analyzeMidi(parsed)) {
+  const warnings = [];
+  const tp = targetProfile(options.target, options.machine);
+  const { melodic: melodicDests, drums: drumDests } = midiDests(tp.name, options.machine);
+  const k = PPQN / analysis.division;
+  const beats = options.timing === "beats";
+  // q: a file tick → a score tick. Either way the song starts at the first
+  // note's bar (file) or step (beats): a silent lead-in is not written.
+  let g, q, beat = null;
+  if (beats) {
+    beat = analysis.beat;
+    if (options.bpm > 0) beat = regrid(beat, options.bpm);
+    g = beat.unitTicks;
+    q = (t) => Math.max(0, beat.units(analysis.secOf(t) * RATE)) * g;
+    warnings.push(`timed by the estimated beat (${beat.bpm.toFixed(1)} BPM, onsets fit ${Math.round(beat.fit * 100)}%) — the file's tempo map is not used`);
+  } else {
+    g = Math.max(1, options.grid | 0);
+    const sig = analysis.timeSigs.filter((x) => x.tick <= analysis.firstTick).pop() ?? { num: 4, den: 4 };
+    const bar = Math.max(1, Math.round((PPQN * 4 * sig.num) / sig.den));
+    const first = Math.round((analysis.firstTick * k) / g) * g;
+    const lead = Math.floor(first / bar) * bar;
+    q = (t) => Math.max(0, Math.round((t * k) / g) * g - lead);
+  }
+  const dest = options.dest ?? {};
+
+  // Channels: each used once; a second lane sent to the same one is dropped.
+  const laneDest = new Map();
+  const taken = new Set();
+  for (const l of analysis.lanes) {
+    const d = dest[l.key] ?? "drop";
+    if (d === "drop") continue;
+    if (!(l.drums ? drumDests : melodicDests).includes(d)) {
+      warnings.push(`${l.label}: ${d} ${!tp.channels[d] ? `is not the ${tp.system}'s` : l.drums ? "takes no drums" : "takes only drums"} — dropped`);
+      continue;
+    }
+    if (taken.has(channelKey(tp, d))) { warnings.push(`${l.label}: ${d} is already taken — dropped`); continue; }
+    taken.add(channelKey(tp, d));
+    laneDest.set(l.key, d);
+  }
+  const dropped = analysis.lanes.filter((l) => !laneDest.has(l.key));
+  if (dropped.length)
+    warnings.push(`dropped ${dropped.length} lane(s): ${dropped.map((l) => l.label).join("; ")}`);
+  // pcm2 alone still needs two voices: the count is the highest one used.
+  const dests = new Set(laneDest.values());
+  const dacUsed = Math.max(0, ...[...dests].filter((d) => tp.partOf(d).name === "dac").map((d) => tp.channels[d].voice + 1));
+  // A channel a sample or a kit takes: its lane gives way.
+  for (const d of dests) {
+    const gone = takenBy(tp, d);
+    for (const [key, h] of laneDest) {
+      if (tp.partOf(h).kit || !gone.has(tp.voiceKey(h))) continue;
+      warnings.push(`${h} is ${d}'s while the score plays it — its lane was dropped`);
+      laneDest.delete(key);
+    }
+  }
+
+  // Levels: the loudest note kept lands on :vel 15, 2 dB a step.
+  const kept = analysis.notes.filter((n) => laneDest.has(`${n.ch}:${n.lane}`));
+  const top = Math.max(-96, ...kept.map((n) => n.level));
+  const velOf = (n) => Math.max(0, Math.min(15, Math.round(15 + (n.level - top) / 2)));
+
+  // The song: its end on a bar, the loop — the file's, or with none marked
+  // the whole song.
+  const loop = !options.loop ? null : analysis.loop ?? { start: 0, end: null };
+  let endTick = Math.max(0, ...kept.map((n) => q(n.end)));
+  if (loop?.end != null) endTick = q(loop.end);
+  const timeSigs = beats ? [] : analysis.timeSigs.map((s) => ({ ...s, tick: q(s.tick) }));
+  const bars = barEnds(timeSigs, Math.max(1, endTick));
+  endTick = bars.length ? bars[bars.length - 1] : endTick;
+  const loopTick = loop ? q(loop.start) : null;
+
+  // Tempo: the map, scaled when the first tempo is set by hand.
+  const scale = options.bpm ? options.bpm / analysis.bpm : 1;
+  const bpmToken = (us) => {
+    const bpm = (60e6 / us) * scale;
+    return `:tempo ${Number.isInteger(bpm) ? bpm : +bpm.toFixed(2)}`;
+  };
+  const tempoMarks = [];
+  if (beats) {
+    const bpm = Math.abs(beat.bpm - Math.round(beat.bpm)) < 0.1 ? Math.round(beat.bpm) : +beat.bpm.toFixed(2);
+    tempoMarks.push({ tick: 0, tokens: [`:tempo ${bpm}`] });
+  } else for (const t of analysis.tempos) {
+    // A tempo set before the first note (a setup section's) gives way to
+    // the one the music starts at.
+    const tick = t.tick <= analysis.firstTick ? 0 : q(t.tick);
+    if (tick >= endTick && tick > 0) continue;
+    const prev = tempoMarks.findIndex((m) => m.tick === tick);
+    if (prev >= 0) tempoMarks.splice(prev, 1);
+    tempoMarks.push({ tick, tokens: [bpmToken(t.usPerQ)] });
+  }
+  // `(go top)` keeps the end's tempo: restate the loop's own.
+  if (!beats && loopTick != null && !tempoMarks.some((m) => m.tick === loopTick)
+    && tempoMarks.some((m) => m.tick > loopTick)) {
+    const inForce = analysis.tempos.filter((t) => q(t.tick) <= loopTick).pop();
+    tempoMarks.push({ tick: loopTick, tokens: [bpmToken(inForce.usPerQ)] });
+  }
+
+  // Tracks in channel order.
+  const order = tp.channelNames;
+  const tracks = [];
+  // A note's pitch as it plays: the bend, a frame (1/60 s) each, from where
+  // it is struck to where it ends — its own key moved to the semitone it
+  // spends the most frames at, a move of 30 cents or less dropped — else the
+  // modulation wheel's vibrato.
+  const secOfBend = analysis.bends.map((list) => list.map(([t, c]) => [analysis.secOf(t), c]));
+  const secOfMod = analysis.mods.map((list) => list.map(([t, v]) => [analysis.secOf(t), v]));
+  const MOD_WAIT = 12; // frames before the wheel's vibrato starts (0.2 s)
+  const pitchOf = (n, note) => {
+    const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
+    const F = Math.max(1, Math.min(600, Math.round((s1 - s0) * 60)));
+    const list = secOfBend[n.ch];
+    const c = [];
+    for (let f = 0; f < F; f++) c.push(valueAt(list, s0 + (f + 0.5) / 60));
+    const at = new Map();
+    for (const v of c) { const k = Math.round(v / 100); at.set(k, (at.get(k) ?? 0) + 1); }
+    const shift = [...at].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    note.midi += shift;
+    const rel = c.map((v) => Math.round((v - shift * 100) / 5) * 5);
+    if (Math.max(...rel) - Math.min(...rel) > 30) { note.bend = rel; return; }
+    // The wheel: on at the note's start, a delayed vibrato (a held note
+    // starts to wobble, a short one never does); else from where it comes in.
+    const mods = secOfMod[n.ch];
+    let m = valueAt(mods, s0), wait = MOD_WAIT;
+    if (!m) {
+      const later = mods.find(([t, v]) => t > s0 && t < s1 && v > 0);
+      if (later) { m = later[1]; wait = Math.round(((later[0] - s0) * 60) / 2) * 2; }
+    }
+    const depth = Math.round((m / 127) * 50 / 10) * 10;
+    if (depth > 0) note.vib = { kind: "vib", centre: 0, depth, period: 11, wait, phase: 64 };
+  };
+  // A note's level as it plays: volume and expression, a frame each, from
+  // where it is struck to where it ends, as :vel+ steps off its note-on's
+  // (2 dB a step, as :vel) — a swell or a fade drawn as an envelope.
+  const secOfVol = analysis.vols.map((list) => list.map(([t, v]) => [analysis.secOf(t), v]));
+  const secOfExpr = analysis.exprs.map((list) => list.map(([t, v]) => [analysis.secOf(t), v]));
+  const levelOf = (n, note) => {
+    const s0 = analysis.secOf(n.tick), s1 = analysis.secOf(n.end);
+    const F = Math.max(1, Math.min(600, Math.round((s1 - s0) * 60)));
+    const db = (t) => gainDb(valueAt(secOfVol[n.ch], t)) + gainDb(valueAt(secOfExpr[n.ch], t));
+    const at0 = db(s0);
+    const env = [];
+    for (let f = 0; f < F; f++) env.push(Math.max(-15, Math.min(15, Math.round((db(s0 + (f + 0.5) / 60) - at0) / 2))) || 0);
+    if (env.some((v) => v !== 0)) { note.env = env; note.canRelease = false; }
+  };
+  const laneNotes = [];
+  const presets = new Set();
+  const use = (set, name) => { presets.add(set); return name; };
+  // A program as the channel plays it (the header's reading of a program).
+  const voiceOf = (part, program) => {
+    if (part.kind === "midi") return GM_VOICES[program]; // built in: the program itself
+    if (part.kind === "fm") return part.words("FM_ALG") ? use("gm", GM_VOICES[program]) : romVoiceOf(part, roleOf(program));
+    if (part.kind === "wave") return use("wavetable", `wave-${roleOf(program)}`);
+    return part.noLevel ? null : use("envelopes", psgEnvOf(program));
+  };
+  // A drum key as the channel plays it: the sound to switch to, the note.
+  const drumOf = (part, key) => {
+    const kind = drumKindOf(key);
+    // A GM kit (`:target midi`'s drums) has the key's own role.
+    if (part.kit?.[GM_KIT_ROLES[key]]) return { name: GM_KIT_ROLES[key], midi: DRUM_KEY };
+    if (part.kit) return { name: kind.kit.find((k) => part.kit[k]), midi: DRUM_KEY };
+    if (part.kind === "sample") return { name: GM_DRUMS[key] && use("gm-drums", GM_DRUMS[key]), midi: DRUM_KEY };
+    const env = use("envelopes", kind.env);
+    if (part.noteOfHz) return { name: env, midi: part.noteOfHz(kind.hz) };
+    // A noise of a word, not a note: the Mega Drive's modes, the SSG's and the
+    // OPM's rate (125 kHz / rate on both).
+    const word = part.modes?.white0 ? `:mode white${kind.hz < 2000 ? 2 : kind.hz < 8000 ? 1 : 0}`
+      : part.words("NOISE_RATE") || part.songWords?.("NOISE_RATE") ? `:noise-rate ${Math.max(1, Math.min(31, Math.round(125000 / kind.hz)))}` : null;
+    return { name: word ? `${env} ${word}` : env, midi: DRUM_KEY };
+  };
+  const keptByLane = new Map();
+  for (const n of kept) {
+    const key = `${n.ch}:${n.lane}`;
+    if (!keptByLane.has(key)) keptByLane.set(key, []);
+    keptByLane.get(key).push(n);
+  }
+  for (const [key, d] of [...laneDest].sort((a, b) => order.indexOf(a[1]) - order.indexOf(b[1]))) {
+    const lane = analysis.lanes.find((l) => l.key === key);
+    const part = tp.partOf(d);
+    const src = (keptByLane.get(key) ?? []).sort((a, b) => a.tick - b.tick);
+    // (the Mega Drive's DAC has one pan for every voice, fm6's: not a lane's)
+    const panned = !!part.words("PAN") && part.name !== "dac";
+    const notes = [];
+    let cur = null;
+    for (const n of src) {
+      const tick = q(n.tick);
+      if (tick >= endTick) break;
+      let end = Math.min(endTick, q(n.end));
+      if (lane.drums) end = tick; // a drum lasts to the next hit (below)
+      const note = { tick, len: Math.max(g, end - tick), vel: velOf(n) };
+      if (lane.drums) {
+        const { name, midi } = drumOf(part, n.key);
+        if (!name) { warnings.push(`drum key ${n.key} has no sample in presets/gm-drums — dropped`); continue; }
+        note.midi = midi;
+        // The kick and snare tell where the bars go (bestBars).
+        if (n.key === 35 || n.key === 36) note.drum = { id: "kick", bright: 0 };
+        else if (n.key === 38 || n.key === 40) note.drum = { id: "snare", bright: 1 };
+        cur = name;
+      } else {
+        note.midi = n.key;
+        cur = voiceOf(part, n.program) ?? cur;
+        pitchOf(n, note);
+        if (!part.noLevel) levelOf(n, note);
+      }
+      note.voice = cur;
+      if (panned && n.pan != null) note.pan = `:pan ${panOf(n.pan)}`;
+      note.midi = Math.max(0, Math.min(127, note.midi));
+      const prev = notes[notes.length - 1];
+      if (prev && prev.tick === tick) {
+        // Two notes quantized onto one start: keep the louder.
+        if (note.vel > prev.vel) notes[notes.length - 1] = note;
+        continue;
+      }
+      if (prev && prev.tick + prev.len > tick) prev.len = tick - prev.tick;
+      notes.push(note);
+    }
+    for (let i = 0; i < notes.length; i++) {
+      const next = i + 1 < notes.length ? notes[i + 1].tick : endTick;
+      // A drum lasts to the next hit; a gap of one grid step is legato.
+      if (lane.drums || next - (notes[i].tick + notes[i].len) <= g) notes[i].len = next - notes[i].tick;
+    }
+    if (!notes.length) continue;
+    laneNotes.push(notes);
+    // A hit's sound, and the voice voiceOf names off FM and MIDI (an
+    // envelope, a role's macro), hold a level shape: a note with none of its
+    // own takes it back by naming it.
+    tracks.push({ channel: d, head: [], notes, marks: [], drums: lane.drums, noVel: !!part.noLevel, holdsLevel: lane.drums || (part.kind !== "fm" && part.kind !== "midi") });
+  }
+  if (tracks.length) tracks[0].marks = tempoMarks;
+  else warnings.push("no notes to import");
+
+  // Bends and modulation → `:pitch`, volume and expression → `:vel+`, each
+  // shape a def where notes share it. A note's switches — its voice, its
+  // level shape (`(macro :vel none)` after one, or the voice again where it
+  // holds one), its pan, its pitch macro (`(macro :pitch none)` after one) —
+  // are its state; the writer writes where they change.
+  const bendDefs = assignBends(laneNotes.flat());
+  const envDefs = assignEnvelopes(laneNotes.flat());
+  for (const [i, notes] of laneNotes.entries()) {
+    const level = (n) => (n.envName ? [n.envName] : tracks[i].holdsLevel ? [] : [VEL_NONE]);
+    for (const n of notes) n.state = [n.voice, ...level(n), n.pan, n.bendName ?? PITCH_NONE].filter(Boolean);
+    tracks[i].notes = dropIdleNones(notes);
+  }
+  const ccs = [...analysis.counts.cc].map(([c, n]) => `CC${c}×${n}`);
+  if (ccs.length) warnings.push(`controllers skipped: ${ccs.join(", ")}`);
+
+  const header = [`; Imported from ${options.fileName ?? "a MIDI file"} (${options.from ?? "MIDI"})`];
+  const score = [tp.name !== DEFAULT_TARGET && `:target ${tp.name}`, analysis.title && `:title ${qstr(analysis.title)}`, dacUsed && `:pcm-voices ${dacUsed}`].filter(Boolean);
+  if (score.length) header.push(`(def-score ${score.join(" ")})`);
+  for (const set of ["gm", "wavetable", "envelopes", "gm-drums"]) if (presets.has(set)) header.push(`(import "presets/${set}/set.mmlisp")`);
+  // The YM2608's rhythm: the RX5 kit stands in for a ROM the user has not
+  // loaded (as the other imports have it).
+  if (tracks.some((t) => tp.partOf(t.channel).name === "rhythm"))
+    header.push(`(import ${qstr(RHYTHM_KIT)})  ; the rhythm's sounds without a rhythm ROM (File > Import > YM2608 Rhythm ROM…)`);
+  if (bendDefs.length || envDefs.length) header.push("", ...bendDefs, ...envDefs);
+
+  // Timed by its notes, the file's bars say nothing: the meter is read
+  // from how the song repeats, the downbeat from the drums (bestBars).
+  const song = { header, bars, endTick, loopTick, tracks };
+  const source = options.structure === false ? emitSong(withPre(song))
+    : emitStructured(beats ? { ...song, bars: bestBars(song) } : song);
+  return { source, warnings };
+}

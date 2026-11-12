@@ -26,15 +26,15 @@
 // their register writes: a rewrite that must sound the same writes the same.
 import fs from "node:fs";
 import path from "node:path";
-import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
-import { parseMgs, analyzeMgs, mgsToMmlisp } from "../../live/src/import-mgs.js";
-import { importMucom } from "../../live/src/import-mucom.js";
-import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp } from "../../live/src/import-midi.js";
-import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import-tracker.js";
-import { parseDmf } from "../../live/src/import-dmf.js";
-import { parseFur } from "../../live/src/import-fur.js";
-import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
+import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
+import { parseMgs, analyzeMgs, mgsToMmlisp } from "../../live/src/import/import-mgs.js";
+import { importMucom } from "../../live/src/import/import-mucom.js";
+import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp } from "../../live/src/import/import-midi.js";
+import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import/import-tracker.js";
+import { parseDmf } from "../../live/src/import/import-dmf.js";
+import { parseFur } from "../../live/src/import/import-fur.js";
+import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
 
 // A preset an imported score names, read from live/ (and what it imports).
 const LIVE = new URL("../../live/", import.meta.url);

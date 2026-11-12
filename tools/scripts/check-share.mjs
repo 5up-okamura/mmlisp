@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Share links with files (live/worker/, live/src/share-files.js), run against
+// Share links with files (live/worker/, live/src/app/share-files.js), run against
 // an in-memory KV: a score alone keeps the id it always had; one with files
 // stores them, serves them, and gets the same id however its ZIP was packed;
 // a bundle that is not one the app writes is refused; a wav travels mono,
 // 16-bit, at most CARRY_RATE — but at its own rate where a def counts frames.
 import assert from "node:assert/strict";
 import worker from "../../live/worker/index.js";
-import { writeZip, readArchive } from "../../live/src/archive.js";
-import { shareBundle, carriedWav, wavBytes, CARRY_RATE, MAX_SHARE_FILES } from "../../live/src/share-files.js";
-import { decodeWav } from "../../live/src/wav-decode.js";
+import { writeZip, readArchive } from "../../live/src/app/archive.js";
+import { shareBundle, carriedWav, wavBytes, CARRY_RATE, MAX_SHARE_FILES } from "../../live/src/app/share-files.js";
+import { decodeWav } from "../../live/src/audio/wav-decode.js";
 
 const kv = new Map();
 const env = {

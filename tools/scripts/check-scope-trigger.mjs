@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Exercise live/src/scope-trigger.js on synthetic chip-like waves.
+// Exercise live/src/synth/scope-trigger.js on synthetic chip-like waves.
 //
 // The oscilloscope is judged by eye, but the property that makes it readable —
 // the trace standing still while a note holds — is exactly what is hard to see
 // in a screenshot. So assert it numerically here, and print the per-frame cost
 // of running the trigger on all 10 scope channels.
 import assert from 'node:assert/strict';
-import { CorrelationTrigger, TRIGGER_STRIDE } from '../../live/src/scope-trigger.js';
+import { CorrelationTrigger, TRIGGER_STRIDE } from '../../live/src/synth/scope-trigger.js';
 
 const SR = 48000;
 const RING = 16384;              // live/index.html SCOPE_RING

@@ -1,0 +1,3590 @@
+import { bankedEngineImage } from "./engine-banked-images.js";
+// ---------------------------------------------------------------------------
+// MMLispDRV reference driver — the sequencer's executable spec (driver.md §12.1).
+//
+// It reads an MMB (docs/mmb.md, docs/opcodes.md) the way the 68000 sequencer
+// in drv/68k/mmlispseq.c does: frame-stepped at the score's own rate (60 Hz,
+// or 50 Hz for a PAL-baked score), per-track 8.8 fixed-point tick
+// accumulators, a shadow register file with change-only writes, the sweep and
+// macro engines, SE channel arbitration, and the PCM voices' command stream.
+// Its register writes go out through the same write callback IRPlayer uses.
+//
+// The gates that hold it (driver.md §12):
+// - c-gate: the C sequencer produces the identical slot stream
+//   (captureSlotLog) — every write, PCM command and trig byte — on the corpus,
+//   NTSC and PAL; banked:gate does the same for multi-bank PCM scores.
+// - claim-gate: a channel's modulators do not outlive its owner (§12.2a).
+// - pairs-gate: this player's frames are the reference both converters —
+//   drv/68k/mmlpairs.c and its JS twin — turn into pairs (§12.3).
+// - verify:ab: the register log against ir-player (ab-compare.js), within the
+//   documented tolerances (§12.5).
+// - pcm-ab / pcm-loop: its PCM commands against the IR preview's, and against
+//   the points the language gives each note.
+//
+// The runtime is integer-only, like the C: all float math happens once, in
+// buildLuts (F-number/block and PSG period by MIDI note, vel/vol level
+// offsets), from the same ir-utils.js functions tools/gen-c-tables.mjs emits
+// drv/68k/tables.c from. One stepFrame() is one frame in the normative order
+// of driver.md §4: host commands → per-track dispatch → engines → the frame.
+//
+// Gate rule (opcodes.md §3.1 + language.md §3.1 legato): key-off fires at
+// dur×gate/8 ticks. With gate = 8 the key-off at dur expiry is *pending*: a TIE
+// (extension) cancels it, a REST or END_OF_TRACK fires it, and a NOTE_ON fires
+// it too — right before the incoming note's own writes — unless that note
+// carries the legato flag (a slur), which cancels it. On FM the key transition
+// IS the attack, so a note that ran into the next without one would swallow it;
+// PSG re-asserts its attenuation and PCM restarts its sample on every note-on,
+// so for those the pending key-off is simply dropped. A NOTE_ON_EX absolute
+// gate (`:gate-`, irregular gates) counts from note-on across TIE segments — it
+// may outlast this segment's dur and key off mid-tie.
+// ---------------------------------------------------------------------------
+
+import {
+  MAGIC,
+  VERSION_MAJOR,
+  VERSION_MINOR,
+  SECTION_ID,
+  TRACK_FLAG,
+  OPCODE,
+  TARGET_ID,
+  TARGET_NAME,
+  PCM_POINT_TARGET_IDS,
+  targetWidth,
+  readDuration,
+  bpmToTickIncrement,
+  curveUnit8,
+  sweepValue,
+  sweepStep,
+  headerPcmVoices,
+  headerFrameHz,
+  tickIncrementToBpm,
+  pcmBankStamp,
+  VAL_TARGET_IDS,
+  resolveChannelId,
+} from "./mmb.js";
+import {
+  toSlotValue,
+  midiToPsgPeriod,
+  midiToFnumBlock,
+  snapNote,
+  velSteps,
+  VEL_FINE,
+  VEL_FINE_MAX,
+  faderSteps,
+  VOL_UNITY,
+  OP_ADDR_OFFSET,
+  encodeB0,
+  encodeB4,
+  encode60,
+  encode30,
+  detuneFromReg,
+  encode80,
+  fmCarrierOpsForAlg,
+  FRAME_HZ_NTSC,
+  fnumBlockOf,
+  psgPeriodOf,
+} from "../lang/ir-utils.js";
+
+// The channels the macro engine runs on: 0-9 and FM3's four operators
+// (mmlispseq.h MML_MACRO_CHANNELS).
+const MACRO_CHANNELS = 17;
+// Macro binds a channel holds (mmlispseq.h MML_MACRO_BINDS).
+const MACRO_BINDS = 8;
+// The song-wide targets' own sweep slots: :master, :lfo-rate, VAL0–15.
+const GLOBAL_SWEEPS = 18;
+const LOOP_STACK_DEPTH = 4; // the track's control stack (driver.md §4.3)
+
+// A register word's value into its field: clamped to the field's range, as
+// the language has it (language.md §5: "values are clamped to the register's
+// range"), the IR preview's too — never wrapped.
+const clampReg = (value, max) => (value < 0 ? 0 : value > max ? max : value);
+
+// ── LUT construction (float math lives here and only here) ────────────────
+function buildLuts() {
+  // note → (block << 11) | fnum, u16, indexed by MIDI note — the same
+  // 128-entry table drv/68k/tables.c ships as MML_FNUM_BLOCK (driver.md §8).
+  const fnumBlock = new Uint16Array(128);
+  for (let n = 0; n < 128; n++) {
+    const { fnum, block } = midiToFnumBlock(n);
+    fnumBlock[n] = ((block & 0x07) << 11) | (fnum & 0x7ff);
+  }
+  // note → SN76489 tone period (10 bit), u16 — tables.c MML_PSG_PERIOD.
+  const psgPeriod = new Uint16Array(128);
+  for (let n = 0; n < 128; n++) psgPeriod[n] = midiToPsgPeriod(n);
+  // Level offset tables (driver.md §7). Stored as float-exact step offsets;
+  // composition sums them and rounds once (integer end result), matching the
+  // player's float-sum-then-quantize within the documented ±2 TL band.
+  // To keep the runtime integer-only the offsets are stored in 1/4 steps.
+  // vel is indexed in eighths of a step (driver.md §7.1). The ladders are the
+  // Mega Drive's parts' (chips/: the YM2612's TL, the SN76489's attenuator).
+  const TL_STEP_DB = opnFm.level.stepDb;
+  const PSG_STEP_DB = snSqr.level.stepDb;
+  const velTl4 = new Int16Array(VEL_FINE_MAX + 1);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velTl4[v] = Math.round(velSteps(v / VEL_FINE, TL_STEP_DB) * 4);
+  const volTl4 = new Int16Array(32);
+  for (let v = 0; v < 32; v++) volTl4[v] = Math.round(faderSteps(v, TL_STEP_DB) * 4);
+  const velPsg4 = new Int16Array(VEL_FINE_MAX + 1);
+  for (let v = 0; v <= VEL_FINE_MAX; v++) velPsg4[v] = Math.round(velSteps(v / VEL_FINE, PSG_STEP_DB) * 4);
+  const volPsg4 = new Int16Array(32);
+  for (let v = 0; v < 32; v++) volPsg4[v] = Math.round(faderSteps(v, PSG_STEP_DB) * 4);
+  return { fnumBlock, psgPeriod, velTl4, volTl4, velPsg4, volPsg4 };
+}
+
+// Little-endian readers over a Uint8Array.
+const u16 = (b, o) => b[o] | (b[o + 1] << 8);
+const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];
+const u32 = (b, o) =>
+  (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+const i8 = (v) => (v & 0x80 ? v - 0x100 : v);
+const i16 = (v) => (v & 0x8000 ? v - 0x10000 : v);
+
+// Scaled-macro sample (driver.md §13.2): `(sample × depth) >> 8`, depth = slot
+// low byte (0..255). The multiply is unsigned on magnitude then re-signed
+// (toward zero), as mmlispseq.c scale_macro_sample does, so the players agree
+// bit-for-bit. Depth 256 (≈×1) is not representable; 255 ≈ full.
+function scaleMacroSample(sample, slotValue) {
+  const depth = slotValue & 0xff;
+  const mag = (Math.abs(sample) * depth) >> 8;
+  return sample < 0 ? -mag : mag;
+}
+
+// Fresh per-FM-channel state (voiced values; driver.md §4.3).
+// The channel a YM write addresses (0-5), or -1 for a song-wide register:
+// $30-$B6 carry it in their low two bits and the port; $A8-$AE are CH3's
+// operator F-numbers. mmlispseq.c ym_write_ch.
+function ymWriteCh(port, addr) {
+  if (addr < 0x30) return -1;
+  if (port === 0 && addr >= 0xa8 && addr <= 0xae) return 2;
+  const c = addr & 3;
+  return c === 3 ? -1 : port * 3 + c;
+}
+// …and the channel a $28 key edge names.
+function keyWriteCh(data) {
+  const c = data & 3;
+  return c === 3 ? -1 : ((data >> 2) & 1) * 3 + c;
+}
+// The patch an FM channel's structured shadow encodes, VOICE_TABLE-shaped
+// (29 bytes; $B4 apart). mmlispseq.c encode_patch.
+function fmPatchOf(r) {
+  return [
+    ...r.ops.map((o) => encode30(o)),
+    ...r.ops.map((o) => o.voicedTl),
+    ...r.ops.map((o) => (o.rs << 6) | o.ar),
+    ...r.ops.map((o) => encode60(o)),
+    ...r.ops.map((o) => o.d2r),
+    ...r.ops.map((o) => encode80(o)),
+    ...r.ops.map((o) => o.ssg),
+    encodeB0(r),
+  ];
+}
+
+function freshFmChannel() {
+  return {
+    algorithm: 7,
+    feedback: 0,
+    ams: 0,
+    fms: 0,
+    lfoSync: false, // `:lfo-sync on`: each key-on starts the LFO over (_lfoReset)
+    pan: 0, // -1/0/+1; B4 defaults to both speakers
+    snap: 0, // `:snap` pitch-class mask (snapNote); 0 = off
+    // vel is TWO values (driver.md §7.1). velBase is the score's sticky
+    // velocity, written only by a PARAM_SET VEL out of the stream; vel is the
+    // live one a macro drives. Every note-on copies base → live, which is what
+    // makes the note's own velocity land — the IR carries vel on every NOTE_ON,
+    // the MMB carries it as change-only sticky state, so without the copy a
+    // macro's last sample would stay the channel's velocity forever.
+    velBase: VEL_FINE_MAX, // FM and PSG vel are in eighths of a step (§7.1)
+    vel: VEL_FINE_MAX,
+    // vol likewise (§7.2): volBase is the score's fader, vol the live level a
+    // :vol macro moves. A note-on puts the fader back; key-on mutes on it.
+    volBase: VOL_UNITY,
+    vol: VOL_UNITY,
+    gate: 8, // eighths of dur (opcodes.md §4)
+    pitchCents: 0, // PARAM_SET NOTE_PITCH offset
+    currentNote: 60,
+    keyed: false,
+    ops: Array.from({ length: 4 }, () => ({
+      voicedTl: 0,
+      tl: 0,
+      ar: 31,
+      dr: 0,
+      d2r: 0,
+      sl: 0,
+      rr: 15,
+      mul: 1,
+      dt: 0,
+      rs: 0,
+      amen: 0,
+      ssg: 0,
+      velk1: 0, // velocity sensitivity + 1 (sixteenths); 0 = the role's own
+    })),
+  };
+}
+
+import {
+  SlotBuilder,
+  SLOT_SUBS,
+  PCM_START,
+  PCM_START_BANKED,
+  PCM_MASTER,
+} from "./slot-builder.js";
+import { PcmLiveEngine, PCM_WINDOW, PCM_SILENCE_ADDR, parsePcmBank } from "./pcm-model.js";
+import { PcmVoices } from "./pcm-voices.js";
+import { engineImage } from "./engine-images.js";
+import { opnFm } from "../machine/chips/opn-fm.js";
+import { snSqr } from "../machine/chips/sn76489.js";
+
+// Sub-tick share of a frame's tempo increment (driver.md §3.5). Bresenham:
+// step_j = ((j+1)·inc)/K − (j·inc)/K, so the K steps sum to exactly `inc` and
+// §3.2's zero-drift-over-loops property is untouched — the frame still advances
+// the same number of ticks it always did, only in K instalments.
+// The channels a ghost may hold, in the order their sweeps step (mmlispseq.c
+// ghost_ix): the register channels, then the PCM voices.
+const GHOST_CHS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 20, 21, 22];
+
+function subIncrement(inc, sub, subs) {
+  return Math.floor(((sub + 1) * inc) / subs) - Math.floor((sub * inc) / subs);
+}
+
+export class DrvPlayer {
+  /**
+   * @param {function(port:number, addr:number, data:number, when?:number)} writeCallback
+   *   Same signature as IRPlayer's: port 0/1 = YM2612 parts, port 2 = PSG
+   *   (addr ignored, data = the SN76489 byte).
+   */
+  constructor(writeCallback) {
+    this._writeCb = writeCallback ?? (() => {});
+    this._luts = buildLuts();
+    this._song = null;
+    this._playing = false;
+    this._timer = null;
+    this._onRunStart = null; // () => void — after play()'s reset, before the first frame
+    this._audioContext = null;
+    this._startAudioTime = 0;
+    this._lookahead = 0.2; // seconds the realtime run steps ahead of the audible position (setLookahead)
+    this._diagnostics = [];
+    // Live mixer state — usable before playback starts (the app may mute/solo
+    // any time). Preserved across a hot-swap _reset.
+    this._mutedTracks = new Set();
+    this._soloTracks = new Set();
+    // The engine's PCM, for LIVE playback only (docs/driver.md §14.3):
+    // the state machine engine:gate grades the Z80 engine against, driven by
+    // this player's own commands, producing the DAC bytes the page hears. The
+    // gates never build it — they compare commands, not samples.
+    this._pcmModel = null;
+    this._slotSink = null;       // set by captureSlotLog
+    this._sampleBankBase = 0;    // ROM bank the sample blob starts at
+  }
+
+  // ── Container loading ────────────────────────────────────────────────────
+  /** Parse an MMB v0.4 byte buffer. Throws on a malformed container. */
+  loadMMB(bytes, sampleBankBytes = null) {
+    this._frameHz = FRAME_HZ_NTSC; // replaced by the MMB header's PAL_TIMEBASE
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (b.length < 12 || MAGIC.some((m, i) => b[i] !== m)) {
+      throw new Error("not an MMB file (bad magic)");
+    }
+    if (b[4] !== VERSION_MAJOR || b[5] !== VERSION_MINOR) {
+      throw new Error(`unsupported MMB version ${b[4]}.${b[5]}`);
+    }
+    // Bits 2-3 of the flags: the PCM voice count, i.e. which engine image the
+    // score plays on and the rate its bank is baked at (mmb.md §4).
+    const pcmVoices = headerPcmVoices(u16(b, 6));
+    const pcmBanked = (u16(b, 6) & 0x10) !== 0;
+    if (pcmBanked && pcmVoices > 3) throw new RangeError("unsupported banked PCM image");
+    // Bit 1: the frame clock this score's numbers were baked for (mmb.md §4).
+    // The dispatcher never reads it — it counts frames — but the tempo
+    // readback and a live tempo override have to speak the score's own clock.
+    this._frameHz = headerFrameHz(u16(b, 6));
+    const sectionCount = u16(b, 8);
+    const headerSize = u16(b, 10);
+    const sections = new Map();
+    for (let i = 0; i < sectionCount; i++) {
+      const at = headerSize + i * 12;
+      const id = u16(b, at);
+      const off = u32(b, at + 4);
+      const size = u32(b, at + 8);
+      if (off + size > b.length) throw new Error(`section ${id} out of bounds`);
+      sections.set(id, b.subarray(off, off + size));
+    }
+
+    const trackTable = sections.get(SECTION_ID.TRACK_TABLE);
+    const stream = sections.get(SECTION_ID.EVENT_STREAM);
+    if (!trackTable || !stream) {
+      throw new Error("MMB missing TRACK_TABLE or EVENT_STREAM");
+    }
+    const trackCount = u16(trackTable, 0);
+    const tracks = [];
+    for (let i = 0; i < trackCount; i++) {
+      const at = 2 + i * 5;
+      tracks.push({
+        trackId: trackTable[at],
+        channelId: trackTable[at + 1],
+        flags: trackTable[at + 2],
+        eventOffset: u16(trackTable, at + 3),
+      });
+    }
+
+    const valInits = [];
+    const valTable = sections.get(SECTION_ID.VAL_TABLE);
+    if (valTable) {
+      const n = u16(valTable, 0);
+      for (let i = 0; i < n; i++) valInits.push(i16(u16(valTable, 2 + i * 2)));
+    }
+
+    // METADATA (mmb.md §5): repeated {u8 keyLen, key, u16 valLen, value}. The
+    // driver itself never reads this section — the sequencer skips it — but the
+    // exporter records each value slot's source name as `val_<slot>`, which is
+    // the only place a name survives compilation (the stream and VAL_TABLE are
+    // numeric). Recovering that map is what lets the UI drive `def-val` slots
+    // by name (setVal) on this backend, exactly as it does on the IR player.
+    const valNameToSlot = new Map();
+    const meta = sections.get(SECTION_ID.METADATA);
+    if (meta) {
+      const dec = new TextDecoder();
+      for (let p = 0; p + 3 <= meta.length; ) {
+        const kLen = meta[p];
+        if (p + 1 + kLen + 2 > meta.length) break;
+        const key = dec.decode(meta.subarray(p + 1, p + 1 + kLen));
+        const vLen = u16(meta, p + 1 + kLen);
+        const vAt = p + 1 + kLen + 2;
+        if (vAt + vLen > meta.length) break;
+        const m = /^val_(\d+)$/.exec(key);
+        if (m) valNameToSlot.set(dec.decode(meta.subarray(vAt, vAt + vLen)), +m[1]);
+        p = vAt + vLen;
+      }
+    }
+    this._valNameToSlot = valNameToSlot;
+
+    // SAMPLE_BANK (mmb.md §10): entry table + byte-packed 8-bit signed blobs,
+    // in their own ROM resource beside the MMB, passed in as `sampleBankBytes`.
+    // `blobBase` is the offset of the blob region within the bank; entry
+    // offsets are relative to it.
+    const samples = [];
+    let sampleData = null;
+    const sampleBank =
+      sampleBankBytes == null
+        ? null
+        : sampleBankBytes instanceof Uint8Array
+          ? sampleBankBytes
+          : new Uint8Array(sampleBankBytes);
+    if (sampleBank) {
+      sampleData = sampleBank;
+      // The engine model reads the bank; this player only grades the stamp.
+      const { stamp, entries, multibank } = parsePcmBank(sampleBank);
+      if (multibank !== pcmBanked) throw new RangeError("PCM bank format does not match the score");
+      // The bank stamps the image rate its blobs were baked at (mmb.md §10).
+      // Baked data is bound to that rate: played under another the pitch is
+      // quietly wrong, so the mismatch is reported here rather than heard.
+      const want = pcmBankStamp((pcmBanked ? bankedEngineImage(Math.max(1,pcmVoices),this._frameHz) : engineImage(pcmVoices, this._frameHz)).rateHz);
+      if (stamp !== want) {
+        if (pcmBanked) throw new RangeError(`banked PCM stamp ${stamp} does not match ${want}`);
+        this._diagnostics.push({
+          severity: "error",
+          code: "E_MMB_BAKE_RATE",
+          message: `sample bank baked for ${stamp} Hz; the pcm${Math.max(1, pcmVoices)} image runs at ${want} Hz`,
+        });
+      }
+      for (const id in entries) samples[id] = entries[id];
+    }
+
+    // MACRO_TABLE (mmb.md §15): 8-byte descriptors + a value blob. Parsed into
+    // per-macro descriptors with the values sliced out (i8, or i16 if flags
+    // bit0). Hold sentinel 0x80 / 0x8000 stays as null.
+    const macros = [];
+    const macroTable = sections.get(SECTION_ID.MACRO_TABLE);
+    if (macroTable) {
+      const n = u16(macroTable, 0);
+      const blobBase = 2 + n * 8;
+      for (let i = 0; i < n; i++) {
+        const e = 2 + i * 8;
+        const flags = macroTable[e + 1];
+        const wide = (flags & 1) !== 0;
+        const count = macroTable[e + 5];
+        let off = blobBase + u16(macroTable, e + 6);
+        const values = [];
+        for (let k = 0; k < count; k++) {
+          if (wide) {
+            const raw = u16(macroTable, off);
+            values.push(raw === 0x8000 ? null : i16(raw));
+            off += 2;
+          } else {
+            const raw = macroTable[off];
+            values.push(raw === 0x80 ? null : (raw << 24) >> 24);
+            off += 1;
+          }
+        }
+        // Scaled macro (flags bit2, mmb.md §15): one slot-id byte follows the values.
+        const scaleSlot = (flags & 4) !== 0 ? macroTable[off] : null;
+        if (flags & 4) off += 1;
+        // A release from where the macro is (flags bit4): its :to follows.
+        const relTo = (flags & 16) === 0 ? null : wide ? i16(u16(macroTable, off)) : (macroTable[off] << 24) >> 24;
+        macros.push({
+          target: macroTable[e],
+          flags,
+          step: macroTable[e + 2],
+          loopStart: macroTable[e + 3],
+          release: macroTable[e + 4],
+          count,
+          values,
+          scaleSlot,
+          relTo,
+        });
+      }
+    }
+
+    // VOICE_TABLE (mmb.md §11): N × 29-byte entries, applied by VOICE_SET.
+    const voices = [];
+    const voiceTable = sections.get(SECTION_ID.VOICE_TABLE);
+    if (voiceTable) {
+      const n = u16(voiceTable, 0);
+      for (let i = 0; i < n; i++) {
+        voices.push(voiceTable.subarray(2 + i * 29, 2 + i * 29 + 29));
+      }
+    }
+
+    // SE_TABLE (mmb.md §16): a def-se's number → {prio, first track, parts}.
+    const seTable = [];
+    const seSec = sections.get(SECTION_ID.SE_TABLE);
+    if (seSec)
+      for (let i = 0; i < seSec[0]; i++)
+        seTable.push({ prio: seSec[1 + i * 3], first: seSec[2 + i * 3], count: seSec[3 + i * 3] });
+    this._song = { stream, tracks, valInits, samples, sampleData, macros, voices, pcmVoices, pcmBanked, seTable };
+    return this;
+  }
+
+  // ── Playback state reset (driver "power-on + START_TRACK all") ──────────
+  // `autoStart`: true starts every track but the effects' parts from frame 0
+  // (the default); false leaves them idle so the host command schedule drives
+  // START_TRACK / PLAY_SE explicitly (the SE gates; driver.md §2.5).
+  _reset(autoStart = true) {
+    const song = this._song;
+    this._frame = 0;
+    this._sub = 0; // which sub-tick of the frame is dispatching (§3.5)
+    // Song increment; TEMPO_SET replaces it. A run starts with the score's
+    // own values: the panel's hands go (hold).
+    this._increment = bpmToTickIncrement(120, this._frameHz);
+    this._hands = new Map();
+    this._diagnostics = [];
+    this._master = VOL_UNITY;
+    this._lfoRate = null;
+    this._sePan = 0; // an effect's pan on the DAC (_b4Of)
+    this._noiseMode = 4; // white0 — compiler emits an explicit tick-0 set anyway
+    this._fm = Array.from({ length: 6 }, freshFmChannel);
+    this._psg = Array.from({ length: 4 }, () => ({
+      velBase: VEL_FINE_MAX, // score's sticky velocity; vel is the macro-driven live one
+      vel: VEL_FINE_MAX,
+      volBase: VOL_UNITY, // score's fader; vol is the macro-driven live one
+      vol: VOL_UNITY,
+      gate: 8,
+      pitchCents: 0,
+      currentNote: 60,
+      snap: 0,
+      sounding: false, // audible: att < 15 (change-only / master gate)
+      keyed: false, // note active: set at NOTE_ON, cleared at channel-off. A
+      // vel macro can drive att to 15 (silent) mid-note without un-keying, so
+      // the macro engine keys off this, not `sounding` (driver.md §13.3).
+    }));
+    // Hardware shadow for change-only suppression (driver.md §4). Key ($28)
+    // and raw PSG bytes are edges, not state — they bypass the shadow.
+    this._shadow = [new Map(), new Map()]; // per YM port: addr → data
+    this._opMasks = new Array(6).fill(0xf0); // UI op-enable mask per channel
+
+    // Sweep engine (driver.md §4 step 3). Two concurrent sweep slots per
+    // channel (e.g. a pitch glide and a volume fade at once) + one global tempo
+    // sweep. Slot: { target, curveId, loop, from, to, len, frame, phase16, step16 }.
+    // Banks (_sweepBank): channels 0-9, the three PCM voices as 10-12 — their
+    // loop points sweep like any other param — then FM3's four operators
+    // (ids 16-19) as 13-16.
+    this._sweeps = Array.from({ length: 17 }, () => [null, null]);
+    // The song-wide targets' sweeps — :master, :lfo-rate, VAL0–15 — one slot
+    // each, owned by no channel (_globalSweep).
+    this._gsweeps = new Array(GLOBAL_SWEEPS).fill(null);
+    // Macro engine (driver.md §13). Per channel: a sticky active set (up to
+    // MACRO_BINDS macros keyed by target) and running slots instantiated on NOTE_ON.
+    this._macros = song?.macros ?? [];
+    this._voices = song?.voices ?? [];
+    // The macro engine's channels (_macroCh): 0-9, FM3's four operators
+    // (ids 16-19) as 10-13, and the PCM voices (ids 20-22) as 14-16.
+    this._macroActive = Array.from({ length: MACRO_CHANNELS }, () => new Map()); // target → macro index
+    this._macroSlots = Array.from({ length: MACRO_CHANNELS }, () => []); // running slots
+    this._curAcc = 0; // the dispatching track's accumulator after its tick
+    this._offAcc = new Array(MACRO_CHANNELS).fill(0); // _curAcc at each channel's last key-off
+    // The effect part whose note triggered a channel's macros (track index + 1,
+    // 0 = the song's): a tick-clocked macro counts that part's ticks.
+    this._mcSe = new Array(MACRO_CHANNELS).fill(0);
+    // A displaced part's channel, per channel 0-9 (_ghostCapture), and the one
+    // swapped in now (-1 = none): its writes are dropped (_ghostMuted).
+    this._ghost = []; // by channel id: 0-9, pcm1-pcm3 (20-22)
+    this._ghostCh = -1;
+    this._psgLatchCh = -1;
+    // Dynamic value slots (driver.md §6.4): 16 × i16, seeded from VAL_TABLE,
+    // overwritten by SET_VAL. $time (slot 0xFF) reads the frame counter instead.
+    this._valSlots = new Int16Array(16);
+    const vi = song?.valInits ?? [];
+    for (let i = 0; i < 16; i++) this._valSlots[i] = vi[i] ?? 0;
+    this._tempoSweep = null;
+    this._reg27 = 0; // CH3/CSM mode register (bit7 CSM, bit6 special)
+    this._fm3Ops = false; // CH3's operators are tracks of their own (FM3_MODE 1 / 3)
+    this._csmRateSweep = null; // swept Timer A period (driver.md §9)
+    this._fm3OpMask = 0; // FM3 independent-OP key bits (0x10..0x80 → $28)
+    this._fm3OpSound = 0; // CSM: the operators sounding — from the note to its gate or, with a level macro's release, to its end (§9)
+    this._csmHold = false; // a rate rest stopped Timer A: LOAD A low, CSM on (§9)
+    // FM3 independent-OP: each operator's own note and sticky :pitch offset
+    // (index = op − 1); in special mode the operator's F-number is written from
+    // these, not from _fm[2] (driver.md §13.4).
+    this._fm3OpNote = [60, 60, 60, 60];
+    this._fm3OpCents = [0, 0, 0, 0];
+    // ...and its own level, composed with the shared CH3's vol — the group
+    // fader the note-less `(fm3 …)` track writes — and the global master.
+    this._fm3OpVel = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
+    this._fm3OpVelBase = [VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX, VEL_FINE_MAX];
+    this._fm3OpVol = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
+    this._fm3OpVolBase = [VOL_UNITY, VOL_UNITY, VOL_UNITY, VOL_UNITY];
+    // PCM voices (driver.md §14): pcm1–pcm3 (channels 20–22). The sequencer
+    // does not model playback — the engine owns every pointer — it keeps what
+    // its commands need: the note's blob, whether it loops, and the level.
+    // The three voices' note model, shared with ir-player (pcm-voices.js).
+    this._pcm = new PcmVoices((c) => this._pcmCmd(c));
+    this._pcmDacOn = false;
+    // Live playback of a PCM score runs the engine model for the DAC bytes;
+    // an offline capture (no audio context) compares commands and builds none.
+    this._pcmModel = this._audioContext && song?.sampleData && song.pcmVoices
+      ? new PcmLiveEngine(song.pcmBanked ? bankedEngineImage(song.pcmVoices,this._frameHz) : engineImage(song.pcmVoices, this._frameHz), song.sampleData)
+      : null;
+    this._pcmSampleRem = 0;
+    this._pcmSampleIndex = 0;
+
+    // Live mixer mute/solo (track index = position in the MMB/IR track list).
+    // Preserved across a hot-swap _reset so the mixer keeps its state.
+    if (!this._mutedTracks) this._mutedTracks = new Set();
+    if (!this._soloTracks) this._soloTracks = new Set();
+    this._trk = (song?.tracks ?? []).map((t, i) => ({
+      index: i,
+      trackId: t.trackId,
+      channelId: t.channelId,
+      flags: t.flags,
+      eventOffset: t.eventOffset, // stream start, for START_TRACK re-init
+      pc: t.eventOffset,
+      acc: 0, // 8.8 fractional accumulator (low byte only is fractional)
+      inc: this._increment, // an effect part's own tempo increment (the song's is _increment)
+      trigByte: 0, // the game-readable trig status byte (opcodes.md §0x42)
+      wait: 0, // ticks until the next timed event resumes
+      gateLeft: -1, // >0: ticks until scheduled key-off; -1: none
+      keyedNow: false, // a note keyed this frame (a gate running out in it waits)
+      offNext: false, // a gate key-off held to the next frame's head
+      pendingOff: false, // full-gate key-off awaiting the next event
+      running: autoStart && !(t.flags & TRACK_FLAG.isSe), // the game starts an effect
+      // FRESH: the track's leading setup has not run yet. A start sets it; the
+      // setup runs at the head of the track's first frame, before that frame's
+      // tempo step is taken, so a head TEMPO_SET governs the frame it starts in
+      // (driver.md §4.2). autoStart mirrors the harness posting START_TRACK
+      // for every track before frame 0.
+      fresh: autoStart && !(t.flags & TRACK_FLAG.isSe),
+      held: false, // len=0 hold: dispatcher suspended
+      loops: [], // {resumePc, remaining}
+      fading: false, // FADE_TRACK (host command): Bresenham vol ramp to 0, then stop
+      fadeN: 0,
+      fadeErr: 0,
+      fadeVol: 0,
+      // SE suspend/restore (driver.md §2.5). A displaced BGM owner is
+      // `suspended`: it does not own its channel, and plays on into the
+      // channel's ghost (_ghost[ch]), unheard. An SE that stole the channel
+      // carries `isSe` and the displaced owner's INDEX — the ghost is the
+      // channel's, so a preempting SE inherits the duty by inheriting the
+      // index and only the last SE restores it.
+      suspended: false,
+      isSe: false,
+      displaced: null, // owner track index this SE displaced (null = none)
+      seIndex: null, // the effect this part plays for (SE_TABLE number)
+      sePrio: 0, // register-SE priority (for same-channel preempt/drop)
+    }));
+    this._emitInitWrites();
+  }
+
+  _diag(code, message) {
+    this._diagnostics.push({ severity: "warning", code, message });
+  }
+
+  // ── Write paths ──────────────────────────────────────────────────────────
+  // A write is stamped at its own sub-tick, not at the frame head: that is what
+  // the sub-ticks buy (driver.md §3.5), and here it costs nothing to
+  // hand a realtime consumer the same resolution. Offline runs (the gates) have
+  // no audio context and get `undefined`, so the traces are unaffected.
+  _when() {
+    return this._audioContext
+      ? this._startAudioTime +
+          (this._frame + this._sub / SLOT_SUBS) / this._frameHz
+      : undefined;
+  }
+  // A displaced part plays on into a ghost of its channel (_ghostSwap): while
+  // it does, a write addressed to that channel is dropped — the chip and its
+  // shadow are the effect's. The song-wide registers ($22-$2B) and the other
+  // channels' are not the ghost's, and go out.
+  _ghostMuted(port, addr) {
+    return this._ghostCh >= 0 && ymWriteCh(port, addr) === this._ghostCh;
+  }
+  // YM parameter write, change-only via the shadow file.
+  _ym(port, addr, data, when = undefined) {
+    const d = data & 0xff;
+    if (this._ghostMuted(port, addr)) return;
+    if (this._shadow[port].get(addr) === d) return;
+    this._shadow[port].set(addr, d);
+    this._writeCb(port, addr, d, when ?? this._when());
+  }
+  // YM write that always emits (but keeps the shadow current). For the F-number
+  // pair $A4-A6/$A0-A2: the high-byte write latches into a port-shared register
+  // and the low-byte write commits {latch, low} to the channel. Change-only
+  // suppression is invalid here — if another channel's high-byte write clobbered
+  // the shared latch since this channel's last note, a suppressed high byte lets
+  // the low-byte commit pick up the wrong octave. Write the pair every note.
+  _ymAlways(port, addr, data) {
+    const d = data & 0xff;
+    if (this._ghostMuted(port, addr)) return;
+    this._shadow[port].set(addr, d);
+    this._writeCb(port, addr, d, this._when());
+  }
+  // YM key register — an edge, always written.
+  _ymKey(data) {
+    if (this._ghostCh >= 0 && keyWriteCh(data) === this._ghostCh) return;
+    this._writeCb(0, 0x28, data & 0xff, this._when());
+  }
+  // PSG byte — the SN76489 has no readable state; bytes always go out. A data
+  // byte belongs to the channel its latch byte named.
+  _psgByte(byte) {
+    if (byte & 0x80) this._psgLatchCh = 6 + ((byte >> 5) & 3);
+    if (this._ghostCh >= 0 && this._psgLatchCh === this._ghostCh) return;
+    this._writeCb(2, 0, byte & 0xff, this._when());
+  }
+
+  // Neutral power-on patch — the same preamble IRPlayer emits, so tick-0 voice
+  // PARAM_SET bursts land on identical baseline state in both players.
+  _emitInitWrites() {
+    for (let ch = 0; ch < 6; ch++) {
+      const port = ch >= 3 ? 1 : 0;
+      const off = ch % 3;
+      const regs = this._fm[ch];
+      this._ym(port, 0xb0 + off, encodeB0(regs));
+      this._ym(port, 0xb4 + off, 0xc0);
+      for (let slot = 0; slot < 4; slot++) {
+        const opOff = OP_ADDR_OFFSET[slot];
+        const op = regs.ops[slot];
+        this._ym(port, 0x30 + opOff + off, encode30(op));
+        this._ym(port, 0x40 + opOff + off, 0);
+        this._ym(port, 0x50 + opOff + off, 31);
+        this._ym(port, 0x60 + opOff + off, 0);
+        this._ym(port, 0x70 + opOff + off, 0);
+        this._ym(port, 0x80 + opOff + off, encode80(op));
+        // SSG-EG off. The patch has to cover every register a voice writes, or
+        // those shadow entries stay unwritten and VOICE_SET cannot suppress a
+        // matching value — and on hardware a power-on SSG-EG bit would never
+        // be cleared.
+        this._ym(port, 0x90 + opOff + off, 0);
+      }
+    }
+    // The global registers, so the chip starts from a known state and the
+    // shadow covers every address the change-only layer writes (driver.md §4).
+    this._ym(0, 0x22, 0); // LFO off
+    this._ym(0, 0x27, 0); // CH3 normal mode, timers off
+    this._ym(0, 0x2a, 0); // DAC data 0 — the DAC is off; the engine feeds it
+    this._ym(0, 0x2b, 0); // DAC off: fm6 is FM until a PCM note claims it
+    // $2A stays in the neutral patch for parity with ir-player but never
+    // crosses the bus — the engine writes the DAC. $2B does: it is the
+    // sequencer's, and a score's first PCM note turns it on (driver.md §14).
+  }
+
+  // ── Level composition (driver.md §7; integer end-to-end) ────────────────
+  // An operator's velocity sensitivity in sixteenths (language.md §6): its
+  // own (`velk1` holds it plus one, so a fresh operator is unset), else the
+  // role's — 16 on a carrier, 0 on a modulator.
+  _velK(o, carrier) {
+    return o.velk1 ? o.velk1 - 1 : carrier ? 16 : 0;
+  }
+  // An operator's composed TL. At sensitivity 16 a carrier is _carrierTl; any
+  // other sensitivity holds the sum in 64ths of a step (vel × k, the faders ×
+  // 16) and rounds it once. A modulator takes its scaled vel only — vol and
+  // master are the mix's faders, and a fader must not move the timbre.
+  _levelTl(o, vel, vol, carrier) {
+    const k = this._velK(o, carrier);
+    if (k === 16 && carrier) return this._carrierTl(o.voicedTl, vel, vol);
+    const { velTl4, volTl4 } = this._luts;
+    let off = velTl4[vel] * k;
+    if (carrier) off += (volTl4[vol] + volTl4[this._master]) * 16;
+    const tl = o.voicedTl + ((off + (off >= 0 ? 32 : -32)) >> 6);
+    return tl < 0 ? 0 : tl > 127 ? 127 : tl;
+  }
+  _carrierTl(voicedTl, vel, vol) {
+    const { velTl4, volTl4 } = this._luts;
+    const off4 = velTl4[vel] + volTl4[vol] + volTl4[this._master];
+    const tl = voicedTl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2); // round(off/4)
+    return tl < 0 ? 0 : tl > 127 ? 127 : tl;
+  }
+  _psgAtt(vel, vol) {
+    if (vol <= 0 || this._master <= 0) return 15;
+    const { velPsg4, volPsg4 } = this._luts;
+    const off4 = velPsg4[vel] + volPsg4[vol] + volPsg4[this._master];
+    const att = (off4 + (off4 >= 0 ? 2 : -2)) >> 2;
+    return att < 0 ? 0 : att > 15 ? 15 : att;
+  }
+
+  // ── Pitch (integer LUT + cent interpolation) ─────────────────────────────
+  // Returns (block << 11) | fnum for note + cents, interpolating between the
+  // two neighbouring semitone entries. The interpolation is done in block0's
+  // F-number units (not the full fnum<<block space) with a non-negative
+  // numerator, so the whole thing stays inside 16-bit integers and matches the
+  // C bit-for-bit (driver.md §8; the residue against ir-player's float-space
+  // pitch is ≤ 1 F-number LSB, well inside the A/B band).
+  // The driver's pitch rule (driver.md §8), the IR preview's too (ir-utils.js).
+  _fnumBlockFor(note, cents) {
+    return fnumBlockOf(note, cents);
+  }
+  _psgPeriodFor(note, cents) {
+    return psgPeriodOf(note, cents);
+  }
+
+  // Every pitch write passes its whole-semitone note through the channel's
+  // `:snap` mask first (driver.md §8); the cents then ride the snapped note.
+  _writeFmPitch(ch, note, cents) {
+    note = snapNote(note, this._fm[ch].snap);
+    // CSM (driver.md §9): CH3's operators 1-3 read their own F-numbers
+    // ($A8-$AE) in this mode and only op4 the channel's, so the note that sets
+    // the channel's pitch sets all four — the formant the voice defines.
+    if (ch === 2 && this._reg27 & 0x80) {
+      for (let op = 1; op <= 4; op++) this._writeFm3OpPitch(op, note, cents);
+      return;
+    }
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    const fb = this._fnumBlockFor(note, cents);
+    const block = fb >> 11;
+    const fnum = fb & 0x7ff;
+    this._ymAlways(port, 0xa4 + off, ((block & 0x07) << 3) | ((fnum >> 8) & 0x07));
+    this._ymAlways(port, 0xa0 + off, fnum & 0xff);
+  }
+  _writePsgPitch(psgCh, note, cents) {
+    const period = this._psgPeriodFor(snapNote(note, this._psg[psgCh].snap), cents);
+    this._psgByte(0x80 | ((psgCh & 0x03) << 5) | (period & 0x0f));
+    this._psgByte((period >> 4) & 0x3f);
+  }
+  _writePsgAtt(psgCh, att) {
+    this._psg[psgCh].sounding = (att & 0x0f) < 15;
+    this._psgByte(0x80 | ((psgCh & 0x03) << 5) | 0x10 | (att & 0x0f));
+  }
+  _writeNoiseCfg() {
+    this._psgByte(0x80 | (0x03 << 5) | (this._noiseMode & 0x07));
+  }
+
+  // ── Key handling ─────────────────────────────────────────────────────────
+  // `:lfo-sync` (language.md §5): the LFO off holds its counter at 0, then on
+  // again at its rate, ahead of the key-on (the C's lfo_reset).
+  _lfoReset() {
+    if (!this._lfoRate) return;
+    this._ym(0, 0x22, 0x00);
+    this._ym(0, 0x22, 0x08 | ((this._lfoRate - 1) & 0x07));
+  }
+  _keyOn(ch) {
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const chKey = (port << 2) | (ch % 3);
+    // vol/master 0 = hard mute: skip key-on entirely (language.md §6). The
+    // score's fader decides, not a :vol macro's level: a macro's 0 attenuates.
+    if (regs.volBase === 0 || this._master === 0) return;
+    // CSM keys CH3 from Timer A's overflow; held on through $28 the operators
+    // would see no edge and every retrigger would be lost: the note writes no
+    // key, and is keyed "csm": sounding (its macros run while it does) with
+    // nothing in $28 (the C's keyed 2).
+    if (ch === 2 && this._reg27 & 0x80) {
+      regs.keyed = "csm";
+      return;
+    }
+    regs.keyed = true;
+    if (regs.lfoSync) this._lfoReset();
+    // fm6 keyed while the DAC has it takes it back (the C's key_on): $2B off;
+    // the PCM voices play on unheard until a PCM note turns it on again.
+    if (ch === 5 && this._pcmDacOn) {
+      this._pcmDacOn = false;
+      this._ym(0, 0x2b, 0x00);
+    }
+    this._ymKey((this._opMasks?.[ch] ?? 0xf0) | chKey);
+  }
+  _keyOff(ch) {
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const chKey = (port << 2) | (ch % 3);
+    const was = regs.keyed;
+    regs.keyed = false;
+    if (was === true) this._ymKey(chKey); // a CSM note has no key in $28 to lift
+  }
+  // A full-gate note meets the next note-on: the key-off it was holding fires
+  // here, before that note's writes, so the FM envelope sees the transition it
+  // needs to attack. A slur (NOTE_ON_EX bit3) cancels it instead — that is the
+  // one place the envelope is meant to carry over. Off and on land in the same
+  // frame as separate pairs; the engine consumes at most one pair a slot, so
+  // the densest shipped image (banked, 5310 master clocks a slot) still puts
+  // them ≥ 99 µs apart, well past the chip's 18.8 µs key latch round.
+  _resolvePendingOff(trk, legato) {
+    if (!trk.pendingOff) return;
+    trk.pendingOff = false;
+    if (legato) return;
+    const ch = trk.channelId;
+    if (!this._fm3OpFor(ch) && ch >= 6) return; // PSG/PCM re-attack on their own
+    this._channelOff(ch);
+  }
+
+  _channelOff(channelId) {
+    // A tick-clocked release counts from the key-off's tick (§13.2).
+    const mc = this._macroCh(channelId);
+    if (mc >= 0) this._offAcc[mc] = this._curAcc;
+    const op = this._fm3OpFor(channelId);
+    if (op) {
+      this._fm3KeyOp(op, false);
+      return;
+    }
+    if (channelId < 6) this._keyOff(channelId);
+    else if (channelId < 10) {
+      this._psg[channelId - 6].keyed = false;
+      // A :vel macro with a release is the note's decay: it takes the level
+      // from here (release[0] lands this frame) and silences at its end.
+      if (this._psg[channelId - 6].sounding && !this._velReleasePending(channelId))
+        this._writePsgAtt(channelId - 6, 15);
+    } else if (channelId >= 20 && channelId <= 22) {
+      // A PCM key-off (opcodes.md §6): a shot plays to its end regardless; a
+      // loop's release moves END to the sample's end and WRAP to silence, and
+      // the tail plays out. Either way the note's macros take their release —
+      // and a `:len 0` loop is let go by the host's KEY_OFF or STOP_TRACK.
+      this._pcmVoices[channelId - 20].keyed = false;
+      this._pcm.release(channelId - 20);
+    }
+  }
+
+  // Whether a running level macro (:vel or :vol) on the channel will play a
+  // release region at key-off — PSG key-off then leaves the level to it (_channelOff).
+  _velReleasePending(ch) {
+    const mc = this._macroCh(ch);
+    if (mc < 0) return false;
+    return this._macroSlots[mc].some((slot) => {
+      const d = slot && this._macros[slot.descIdx];
+      if (!d || (d.target !== TARGET_ID.VEL && d.target !== TARGET_ID.VOL)) return false;
+      // ...or is playing it: a second key-off (a rest) must not cut it.
+      if (slot.state === "release") return true;
+      return (
+        (slot.state === "run" || slot.state === "hold") &&
+        d.release !== 0xff && d.release < d.count
+      );
+    });
+  }
+
+  // ── FM3 independent-OP mode (driver.md §13.4 / opcodes.md 0xA3/0xA4) ───────
+  // With the operators as tracks (FM3_MODE 1, or 3 under CSM) CH3's four
+  // operators have independent F-numbers, levels and keys. The four operator
+  // tracks are channel ids 16-19; channel 2 is the shared CH3 (patch + channel
+  // level).
+  _fm3OpFor(ch) {
+    if (!this._fm3Ops) return 0; // the operators are not tracks → normal channels
+    if (ch >= 16 && ch <= 19) return ch - 15;
+    return 0;
+  }
+
+  // The macro engine's channel index: 0-9 are their own, FM3's four operators
+  // (ids 16-19) are 10-13. -1 = no macro engine (PCM).
+  _macroCh(ch) {
+    if (ch < 10) return ch;
+    if (ch >= 16 && ch <= 19) return 10 + (ch - 16);
+    if (ch >= 20 && ch <= 22) return 14 + (ch - 20);
+    return -1;
+  }
+  _macroChId(mc) {
+    return mc < 10 ? mc : mc < 14 ? 16 + (mc - 10) : 20 + (mc - 14);
+  }
+
+  _fm3KeyOp(op, on) {
+    const bit = 0x10 << (op - 1); // OP1=0x10 … OP4=0x80 ($28 slot bits)
+    // An operator keyed that was not, under CH3's :lfo-sync (not under CSM,
+    // whose $28 holds no operator).
+    if (on && !(this._fm3OpMask & bit) && this._fm[2].lfoSync && !(this._reg27 & 0x80)) this._lfoReset();
+    if (on) this._fm3OpMask |= bit;
+    else this._fm3OpMask &= ~bit;
+    // CSM (driver.md §9): Timer A keys CH3 and $28 must hold no operator, so
+    // the operator's key is its level — its TL from the note, 127 off
+    // (_fm3OpTl). As a PSG note's (_channelOff), a level macro's release is
+    // the decay: the operator sounds on through it and falls silent at its
+    // end (_macroSample).
+    if (this._reg27 & 0x80) {
+      if (on) this._fm3OpSound |= bit;
+      else if (!this._velReleasePending(15 + op)) this._fm3OpSound &= ~bit;
+      this._writeFm3OpTl(op);
+      return;
+    }
+    this._ymKey(this._fm3OpMask | 0x02); // ch2 key = 0x02
+  }
+
+  // An FM3 operator's TL in special mode: its OWN vel and vol, the shared
+  // CH3's vol (the group fader) and the global master, on the same dB ladder
+  // every other level uses. Whether the operator is a carrier under the
+  // current algorithm is not consulted: on alg 7 — four independent voices,
+  // the reason the mode exists — this is its volume, and on a modulator it is
+  // its modulation depth, which is a level too (driver.md §13.4).
+  // The operator's vel offset is scaled by its sensitivity, whose own value
+  // in this mode is 16 on every operator.
+  _fm3OpTl(op) {
+    const i = op - 1;
+    // CSM: an operator that is not sounding — or any, while a rate rest holds
+    // Timer A: the voice's breath — is held at TL 127 (driver.md §9).
+    if (this._reg27 & 0x80 && (this._csmHold || !(this._fm3OpSound & (0x10 << i)))) return 127;
+    const { velTl4, volTl4 } = this._luts;
+    const o = this._fm[2].ops[i];
+    const k = this._velK(o, true);
+    const faders4 = volTl4[this._fm3OpVol[i]] + volTl4[this._fm[2].vol] + volTl4[this._master];
+    let tl;
+    if (k === 16) {
+      const off4 = velTl4[this._fm3OpVel[i]] + faders4;
+      tl = o.voicedTl + ((off4 + (off4 >= 0 ? 2 : -2)) >> 2);
+    } else {
+      const off = velTl4[this._fm3OpVel[i]] * k + faders4 * 16;
+      tl = o.voicedTl + ((off + (off >= 0 ? 32 : -32)) >> 6);
+    }
+    return tl < 0 ? 0 : tl > 127 ? 127 : tl;
+  }
+  _writeFm3OpTl(op) {
+    const o = this._fm[2].ops[op - 1];
+    o.tl = this._fm3OpTl(op);
+    this._ym(0, 0x40 + OP_ADDR_OFFSET[op - 1] + 2, o.tl);
+  }
+  _recomposeFm3Ops() {
+    for (let op = 1; op <= 4; op++) this._writeFm3OpTl(op);
+  }
+  // An operator's $40 value under the channel's CURRENT level rule (§7). A :tl
+  // is a VOICED level, not a register value — what reaches the chip is that
+  // level plus vel/vol/master — so every path that writes $40 composes here, or
+  // a mid-song :tl (and a VOICE_SET) silently discards the level the channel is
+  // playing at until the next note-on recomposes it. On a sustaining note there
+  // is no next note-on, so it never comes back. CH3's operators in special mode
+  // each carry their own level; a normal channel composes its carriers and
+  // leaves its modulators raw, where the level is modulation depth, not volume.
+  // `alg` is a parameter because VOICE_SET composes against the voice's NEW
+  // algorithm, which is decided before its $B0 goes out.
+  // A modulator its voice makes velocity-sensitive (`:vel2`) composes too.
+  _opLevel(ch, idx, alg) {
+    if (ch === 2 && this._fm3Ops) return this._fm3OpTl(idx + 1);
+    const regs = this._fm[ch];
+    const o = regs.ops[idx];
+    const carrier = fmCarrierOpsForAlg(alg & 7).includes(idx);
+    if (!carrier && !this._velK(o, false)) return o.voicedTl;
+    return this._levelTl(o, regs.vel, regs.vol, carrier);
+  }
+  // A channel's levels, from its voiced levels + vel/vol/master: its carriers
+  // and its velocity-sensitive modulators. In special mode CH3's four
+  // operators are independent voices with their own levels, so the carrier
+  // set is not what decides its TLs (driver.md §13.4).
+  _recomposeCarriers(ch) {
+    if (ch === 2 && this._fm3Ops) { this._recomposeFm3Ops(); return; }
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    const carriers = fmCarrierOpsForAlg(regs.algorithm);
+    for (let opIdx = 0; opIdx < 4; opIdx++) {
+      const o = regs.ops[opIdx];
+      const carrier = carriers.includes(opIdx);
+      if (!carrier && !this._velK(o, false)) continue;
+      const tl = this._levelTl(o, regs.vel, regs.vol, carrier);
+      o.tl = tl;
+      this._ym(port, 0x40 + OP_ADDR_OFFSET[opIdx] + off, tl);
+    }
+  }
+
+  _writeFm3OpPitch(op, note, cents = 0) {
+    // An operator's note snaps on CH3's mask (:snap on an fm3-N track is CH3's).
+    const fb = this._fnumBlockFor(snapNote(note, this._fm[2].snap), cents);
+    const high = (((fb >> 11) & 0x07) << 3) | ((fb >> 8) & 0x07);
+    const low = fb & 0xff;
+    if (op === 4) {
+      this._ymAlways(0, 0xa6, high); // CH3 base F-number path
+      this._ymAlways(0, 0xa2, low);
+    } else {
+      const idx = [1, 2, 0][op - 1]; // OP1→A9/AD, OP2→AA/AE, OP3→A8/AC
+      this._ymAlways(0, 0xac + idx, high);
+      this._ymAlways(0, 0xa8 + idx, low);
+    }
+  }
+
+  // The pitch a note sounds from its key-on (driver.md §13.1): a NOTE_PITCH
+  // sweep (a glide) and the bound :semi / :pitch macros write this frame's
+  // pitch in step 3, after the key-on — so the note-on writes it itself, and
+  // the key-on never sounds the plain note first; step 3 then writes the same.
+  // The sweep's value is the one step 3 is about to write (sub-tick 0 only:
+  // past it, step 3 has run and `cents` holds what it wrote); the macros' is
+  // their first sample, the later bind winning as in step 3. As
+  // _restoreLevelBase does for a level. Mirrors mmlispseq.c onset_pitch.
+  _onsetPitch(ch, note, cents) {
+    const bank = this._sweepBank(ch);
+    if (this._sub === 0 && bank >= 0) {
+      for (const sw of this._sweeps[bank]) {
+        if (!sw || sw.target !== TARGET_ID.NOTE_PITCH) continue;
+        cents = !sw.loop && sw.frame >= sw.len - 1
+          ? sw.to
+          : sweepValue(sw.from, sw.to, curveUnit8(sw.curveId, sw.phase16 >> 8));
+      }
+    }
+    const base = cents;
+    const n0 = note;
+    const mc = this._macroCh(ch);
+    for (const [target, macroId] of mc >= 0 ? this._macroActive[mc] ?? [] : []) {
+      if (target !== TARGET_ID.NOTE_SEMI && target !== TARGET_ID.NOTE_PITCH) continue;
+      const d = this._macros[macroId];
+      if (!d || d.release === 0) continue;
+      let v = d.values[0];
+      if (v === null || v === undefined) continue;
+      if (d.scaleSlot != null) v = scaleMacroSample(v, this._readSlot(d.scaleSlot));
+      const add = (d.flags & 2) !== 0;
+      if (target === TARGET_ID.NOTE_SEMI) [note, cents] = [n0 + v, add ? base : 0];
+      else [note, cents] = [n0, (add ? base : 0) + v];
+    }
+    return [note, cents];
+  }
+
+  // ── NOTE_ON execution ────────────────────────────────────────────────────
+  // `legato` (NOTE_ON_EX bit3, a slur to a different pitch): update the frequency
+  // and recompose levels/macros but do NOT re-key — the FM envelope (or the PSG
+  // tone) carries over from the previous note.
+  // `exVel` (NOTE_ON_EX bit0): a velocity that rides this note only, replacing
+  // the sticky base without becoming it.
+  _noteOn(trk, note, dur, exGate, legato = false, exVel = null) {
+    const ch = trk.channelId;
+    const fm3op = this._fm3OpFor(ch);
+    // Every note starts from the score's velocity (driver.md §7.1). The stream
+    // carries VEL as change-only sticky state, so once a macro has driven the
+    // live vel there is nothing left to re-assert it — without this copy the
+    // macro's last sample would be the channel's velocity for the rest of the
+    // song, which is how a level macro anywhere in a loop left every following
+    // note at full volume. ir-player does the same with `regs.vel = noteVel`.
+    this._restoreLevelBase(ch, TARGET_ID.VEL, exVel);
+    this._restoreLevelBase(ch, TARGET_ID.VOL); // and the fader (§7.2)
+    // Live mixer: a muted / non-soloed track advances but does not sound — skip
+    // the key and its macros (which gate on the keyed state). Always true during
+    // the trace gate (nothing muted), so it doesn't affect verification.
+    const audible = this._isTrackAudible(trk.index);
+    if (fm3op) {
+      // FM3 independent-OP: the F-number was set by the preceding FM3_OP_PITCH.
+      // The patch is the shared CH3's, but the LEVEL is this operator's own and
+      // is recomposed on every note, so a level change between notes always
+      // lands — exactly as a channel's carriers are (driver.md §13.4).
+      this._writeFm3OpTl(fm3op);
+      if (audible) this._fm3KeyOp(fm3op, true);
+    } else if (ch < 6) {
+      const regs = this._fm[ch];
+      regs.currentNote = note;
+      // Carrier TL from voiced levels + vel/vol/master (every note, so a
+      // level change always lands; matches the IR player).
+      this._recomposeCarriers(ch);
+      this._writeFmPitch(ch, ...this._onsetPitch(ch, note, regs.pitchCents));
+      if (!legato && audible) this._keyOn(ch);
+    } else if (ch < 10) {
+      const psgCh = ch - 6;
+      const st = this._psg[psgCh];
+      st.currentNote = note;
+      if (!legato && audible) st.keyed = true; // the note is active
+      if (psgCh === 3) this._writeNoiseCfg();
+      else this._writePsgPitch(psgCh, ...this._onsetPitch(ch, note, st.pitchCents));
+      // Legato: keep the tone sounding (att = the PSG "key"); just the frequency
+      // moved. A non-sounding channel still needs its attenuation to start.
+      if (audible && (!legato || !st.sounding))
+        this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+    }
+
+    // Re-trigger the channel's active macros (driver.md §13.1). The first step
+    // fires this frame in step 3, overriding the note-on's base level. A muted
+    // track skips it (its channel is keyed-off, so a retrigger would sound a
+    // release tail); gate scheduling below still runs so the track keeps time.
+    if ((fm3op || ch < 10) && audible) {
+      this._macroTrigger(ch, trk.acc, trk);
+      // Past the frame's first sub-tick the step pass has already run, so the
+      // first step fires HERE instead (driver.md §3.5). §13.1 requires it in the
+      // same frame and after the note-on, and leaving it to sub-tick 0 of the
+      // next frame would invert that order. A channel that stepped at sub-tick 0
+      // and then takes a note-on steps twice in the frame — correct, because the
+      // note-on re-instantiated the macros: those are two different instances.
+      if (this._sub > 0) this._stepChannelMacros(ch);
+    }
+
+    // Gate scheduling (opcodes.md §3.1). exGate: absolute ticks (NOTE_ON_EX);
+    // 0 = hold until the host keys off.
+    const gate = fm3op ? 8 : ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
+    if (dur === 0) {
+      trk.held = true; // len 0: an indefinite hold, the dispatcher waits for KEY_OFF
+      trk.gateLeft = -1;
+      return;
+    }
+    trk.wait = dur;
+    trk.keyedNow = true;
+    trk.offNext = false; // this note-on keys the channel; an off held for the last is moot
+    if (exGate === 0) {
+      // gate 0: the note holds until a runtime KEY_OFF or the next note, and
+      // the track keeps time by its length (language.md §17).
+      trk.gateLeft = -1;
+      trk.pendingOff = false;
+    } else if (exGate != null) {
+      // Absolute gate ticks from note-on. Counts down across TIE segments (a tie
+      // extends `wait`, never touches `gateLeft`), so a gate that outlasts this
+      // note's own `dur` — e.g. `:gate- Nt` resolved over a tied whole — keys off
+      // mid-tie, not clamped to the first segment's end. REST/next-note reset it.
+      trk.gateLeft = exGate;
+      trk.pendingOff = false;
+    } else if (gate < 8) {
+      trk.gateLeft = Math.max(1, (dur * gate) >> 3);
+      trk.pendingOff = false;
+    } else {
+      // Full gate: key-off at expiry is pending on the next event.
+      trk.gateLeft = -1;
+      trk.pendingOff = true;
+    }
+  }
+
+  // ── Event dispatch: run stream events until a timed event loads `wait` ───
+  _dispatch(trk) {
+    const s = this._song.stream;
+    let guard = 0;
+    while (trk.running && !trk.held && guard++ < 4096) {
+      const op = s[trk.pc];
+      // A fresh track runs the score's leading setup — VOICE_SET, PARAM_SET,
+      // TEMPO_SET, macro binds — and stops at the first opcode that sounds or
+      // consumes time (driver.md §4.2).
+      if (trk.fresh && ((op >= OPCODE.NOTE_ON && op <= OPCODE.NOTE_ON_EX) || op === OPCODE.PCM_NOTE_ON)) return;
+      switch (op) {
+        case OPCODE.END_OF_TRACK: {
+          trk.pendingOff = false;
+          this._channelOff(trk.channelId);
+          // Stopping an fm3-csm track must clear CSM (driver.md §9) — only the
+          // track that turned it on: a rate track ending leaves the buzz alone.
+          if (trk.csmOn) this._setReg27(this._reg27 & ~0x80);
+          trk.running = false;
+          // A single-shot SE self-cleans at EOT: restore the BGM owner it stole
+          // the channel from (driver.md §2.5 — an effect ends here or on STOP).
+          this._reclaimSe(trk);
+          return;
+        }
+        case OPCODE.NOTE_ON: {
+          const note = s[trk.pc + 1];
+          const dur = readDuration(s, trk.pc + 2);
+          this._resolvePendingOff(trk, false);
+          this._noteOn(trk, note, dur.ticks, null);
+          trk.pc = dur.next;
+          if (dur.ticks === 0) return; // held
+          trk.wait = dur.ticks;
+          return;
+        }
+        case OPCODE.NOTE_ON_EX: {
+          let pc = trk.pc + 1;
+          const flags = s[pc++];
+          const note = s[pc++];
+          let exVel = null;
+          if (flags & 0b01) exVel = s[pc++];
+          const dur = readDuration(s, pc);
+          pc = dur.next;
+          let exGate = null;
+          if (flags & 0b10) {
+            const g = readDuration(s, pc);
+            exGate = g.ticks;
+            pc = g.next;
+          }
+          this._resolvePendingOff(trk, (flags & 0b1000) !== 0);
+          this._noteOn(trk, note, dur.ticks, exGate, (flags & 0b1000) !== 0, exVel);
+          trk.pc = pc;
+          if (dur.ticks === 0) return; // len 0: held
+          trk.wait = dur.ticks;
+          return;
+        }
+        case OPCODE.REST: {
+          trk.pendingOff = false;
+          trk.gateLeft = -1; // a rest cancels any gate still counting (unclamped exGate)
+          this._channelOff(trk.channelId);
+          const dur = readDuration(s, trk.pc + 1);
+          trk.pc = dur.next;
+          trk.wait = dur.ticks === 0 ? 1 : dur.ticks; // defensive: no 0 rests
+          return;
+        }
+        case OPCODE.TIE: {
+          // An extension, not a retrigger: the note keeps sounding and keeps
+          // its pending key-off, which the event after the tie resolves.
+          const dur = readDuration(s, trk.pc + 1);
+          trk.pc = dur.next;
+          trk.wait = dur.ticks === 0 ? 1 : dur.ticks;
+          return;
+        }
+        case OPCODE.LOOP_BEGIN: {
+          const count = s[trk.pc + 1];
+          trk.pc += 2;
+          if (trk.loops.length >= LOOP_STACK_DEPTH) {
+            this._diag("W_DRV_LOOP_DEPTH", "loop stack overflow; loop ignored");
+            break;
+          }
+          trk.loops.push({ resumePc: trk.pc, remaining: count - 1 });
+          break;
+        }
+        case OPCODE.LOOP_END: {
+          const top = trk.loops[trk.loops.length - 1];
+          trk.pc += 1;
+          if (!top) break;
+          if (top.remaining > 0) {
+            top.remaining--;
+            trk.pc = top.resumePc;
+          } else {
+            trk.loops.pop();
+          }
+          break;
+        }
+        case OPCODE.LOOP_BREAK: {
+          const skip = u16(s, trk.pc + 1);
+          trk.pc += 3;
+          const top = trk.loops[trk.loops.length - 1];
+          // Final pass: jump past the LOOP_END and leave the loop.
+          if (top && top.remaining === 0) {
+            trk.pc += skip;
+            trk.loops.pop();
+          }
+          break;
+        }
+        case OPCODE.TRIG: {
+          // The track's game-readable status byte (opcodes.md §0x42): a 2-bit
+          // firing counter in bits 7-6, the id in bits 5-0. The counter runs
+          // 1→2→3→1 and starts at 0, so 0x00 means "never fired" — a game can
+          // tell that from `(trig 0)` — and a repeat of the SAME id still moves
+          // the byte, which is what a cue that fires every loop needs. No
+          // register effect; the host reads it (MMLisp_trig).
+          const c = (trk.trigByte >> 6) & 3;
+          trk.trigByte = (((c >= 3 ? 1 : c + 1) << 6) | (s[trk.pc + 1] & 0x3f)) & 0xff;
+          trk.pc += 2;
+          break;
+        }
+        case OPCODE.JUMP: {
+          // dest is a byte offset relative to the EVENT_STREAM payload start.
+          trk.pc = u16(s, trk.pc + 1);
+          break;
+        }
+        case OPCODE.CALL: {
+          // dest is EVENT_STREAM-relative (like JUMP). Push the return pointer
+          // on the shared control stack, tagged as a call (remaining -1); RET
+          // pops it. driver.md §4.3 — CALL and LOOP share the 4-entry stack.
+          const dest = u16(s, trk.pc + 1);
+          const resumePc = trk.pc + 3;
+          if (trk.loops.length >= LOOP_STACK_DEPTH) {
+            this._diag("W_DRV_CALL_DEPTH", "control stack overflow; call ignored");
+            trk.pc = resumePc;
+            break;
+          }
+          trk.loops.push({ resumePc, remaining: -1, isCall: true });
+          trk.pc = dest;
+          break;
+        }
+        case OPCODE.RET: {
+          const top = trk.loops[trk.loops.length - 1];
+          if (top && top.isCall) {
+            trk.loops.pop();
+            trk.pc = top.resumePc;
+          } else {
+            // Malformed stream (RET without a matching CALL on top); step past.
+            this._diag("W_DRV_RET_UNMATCHED", "RET with no matching CALL");
+            trk.pc += 1;
+          }
+          break;
+        }
+        case OPCODE.PARAM_SET: {
+          const target = s[trk.pc + 1];
+          const w = targetWidth(target);
+          const raw = w === 2 ? i16(u16(s, trk.pc + 2)) : i8(s[trk.pc + 2]);
+          trk.pc += 2 + w;
+          // The score's velocity is note-on scoped (language.md §5): stored
+          // here, composed by the next note-on, never applied to a note that
+          // is already sounding. The host's own writes stay immediate.
+          if (target === TARGET_ID.VEL) this._storeVel(trk.channelId, raw);
+          else {
+            this._stopSweep(this._paramCh(trk, target), target); // a write ends the target's sweep
+            this._paramSet(this._paramCh(trk, target), target, raw);
+          }
+          break;
+        }
+        case OPCODE.VOICE_SET: {
+          const voiceId = s[trk.pc + 1];
+          trk.pc += 2;
+          this._stopVoiceSweeps(trk.channelId);
+          this._voiceSet(trk.channelId, voiceId);
+          break;
+        }
+        case OPCODE.TEMPO_SET: {
+          // The panel's tempo, while it holds it, waits the score's out
+          // (hold). An effect's part sets its own clock, the same in
+          // every song.
+          if (trk.flags & TRACK_FLAG.isSe) trk.inc = u16(s, trk.pc + 1);
+          else if (this._scoreWrites("tempo")) this._increment = u16(s, trk.pc + 1);
+          trk.pc += 3;
+          break;
+        }
+        // ── Motion: sweeps, param-add, tempo sweep ────────────────────────
+        case OPCODE.PARAM_SWEEP: {
+          const target = s[trk.pc + 1];
+          const curve = s[trk.pc + 2];
+          const flags = s[trk.pc + 3];
+          // Dynamic endpoints (opcodes.md §6, note-on tier): flags bit1/bit2 mark from/to
+          // as slot ids (in the field's low byte), read live at dispatch.
+          // bit3: no :from — start where the parameter is now.
+          const from = flags & 8 ? this._readParam(this._paramCh(trk, target), target)
+            : flags & 2 ? this._readSlot(s[trk.pc + 4]) : i16(u16(s, trk.pc + 4));
+          const to = flags & 4 ? this._readSlot(s[trk.pc + 6]) : i16(u16(s, trk.pc + 6));
+          const len = u16(s, trk.pc + 8);
+          trk.pc += 10;
+          this._startSweep(this._paramCh(trk, target), target, curve, flags & 1, from, to, len);
+          break;
+        }
+        case OPCODE.PARAM_SWEEP_STOP: {
+          const target = s[trk.pc + 1];
+          trk.pc += 2;
+          this._stopSweep(this._paramCh(trk, target), target);
+          break;
+        }
+        case OPCODE.PARAM_ADD: {
+          const target = s[trk.pc + 1];
+          const w = targetWidth(target);
+          const delta = w === 2 ? i16(u16(s, trk.pc + 2)) : i8(s[trk.pc + 2]);
+          trk.pc += 2 + w;
+          this._paramSet(this._paramCh(trk, target), target, this._readParam(this._paramCh(trk, target), target) + delta);
+          break;
+        }
+        case OPCODE.TEMPO_SWEEP: {
+          const from = u16(s, trk.pc + 1);
+          const to = u16(s, trk.pc + 3);
+          const len = u16(s, trk.pc + 5);
+          const curve = s[trk.pc + 7];
+          trk.pc += 8;
+          if (!this._scoreWrites("tempo")) break; // the panel holds the tempo
+          this._tempoSweep = {
+            curveId: curve,
+            from,
+            to,
+            len: Math.max(1, len),
+            frame: 0,
+            phase16: 0,
+            step16: sweepStep(len, false),
+          };
+          break;
+        }
+        // ── Dynamic value ops (driver.md §6.4; opcodes.md §6/§8) ──────────
+        case OPCODE.PARAM_MUL: {
+          const target = s[trk.pc + 1];
+          const factor = s[trk.pc + 2] | (s[trk.pc + 3] << 8); // unsigned 8.8
+          trk.pc += 4;
+          const cur = this._readParam(this._paramCh(trk, target), target);
+          this._paramSet(this._paramCh(trk, target), target, (cur * factor) >> 8);
+          break;
+        }
+        case OPCODE.PARAM_FROM_VAL: {
+          const target = s[trk.pc + 1];
+          const v = this._readSlot(s[trk.pc + 2]);
+          trk.pc += 3;
+          this._paramSet(this._paramCh(trk, target), target, v);
+          break;
+        }
+        case OPCODE.PARAM_ADD_VAL: {
+          const target = s[trk.pc + 1];
+          const v = this._readSlot(s[trk.pc + 2]);
+          trk.pc += 3;
+          this._paramSet(this._paramCh(trk, target), target, this._readParam(this._paramCh(trk, target), target) + v);
+          break;
+        }
+        case OPCODE.PARAM_MUL_VAL: {
+          const target = s[trk.pc + 1];
+          const factor = this._readSlot(s[trk.pc + 2]); // 8.8 factor
+          trk.pc += 3;
+          const cur = this._readParam(this._paramCh(trk, target), target);
+          this._paramSet(this._paramCh(trk, target), target, (cur * factor) >> 8);
+          break;
+        }
+        case OPCODE.CSM_ON:
+          trk.pc += 1;
+          trk.csmOn = true;
+          this._setReg27(this._reg27 | 0x80);
+          break;
+        case OPCODE.CSM_OFF:
+          trk.pc += 1;
+          this._setReg27(this._reg27 & ~0x80);
+          break;
+        case OPCODE.CSM_RATE: {
+          const flags = s[trk.pc + 1];
+          if (flags & 2) {
+            // Gate form: bit2 clear = a rate rest stops Timer A, set = it runs
+            // again at the period it had (§9).
+            trk.pc += 2;
+            this._csmHold = !(flags & 4);
+            this._setReg27(this._reg27);
+            break;
+          }
+          if (this._csmHold) {
+            // A rate after a rest: the buzz starts again.
+            this._csmHold = false;
+            this._setReg27(this._reg27);
+          }
+          if ((flags & 1) === 0) {
+            const period = u16(s, trk.pc + 2);
+            trk.pc += 4;
+            this._csmRateSweep = null; // a const rate ends a running sweep
+            this._writeTimerA(period);
+          } else {
+            const from = u16(s, trk.pc + 2);
+            const to = u16(s, trk.pc + 4);
+            const len = u16(s, trk.pc + 6);
+            const curve = s[trk.pc + 8];
+            trk.pc += 9;
+            this._csmRateSweep = {
+              curveId: curve,
+              from,
+              to,
+              len: Math.max(1, len),
+              frame: 0,
+              phase16: 0,
+              step16: sweepStep(len, false),
+            };
+          }
+          break;
+        }
+        case OPCODE.FM3_MODE: {
+          const mode = s[trk.pc + 1]; // 0 normal, 1 special (op), 2 CSM, 3 CSM with op tracks
+          trk.pc += 2;
+          // bit6 = CH3 special (independent-OP), bit7 = CSM. The chip keys CSM
+          // in mode 2 alone, so mode 3 writes CSM and keeps "the operators are
+          // tracks" here (driver.md §9).
+          this._fm3Ops = mode === 1 || mode === 3;
+          let r = this._reg27 & ~0xc0;
+          if (mode === 1) r |= 0x40;
+          else if (mode === 2 || mode === 3) r |= 0x80;
+          this._setReg27(r);
+          break;
+        }
+        case OPCODE.FM3_OP_PITCH: {
+          const opn = s[trk.pc + 1];
+          const note = s[trk.pc + 2];
+          trk.pc += 3;
+          if (opn >= 1 && opn <= 4) {
+            this._fm3OpNote[opn - 1] = note;
+            this._writeFm3OpPitch(opn, note, this._fm3OpCents[opn - 1]);
+          }
+          break;
+        }
+        case OPCODE.PCM_NOTE_ON: {
+          const sampleId = s[trk.pc + 1];
+          const note = s[trk.pc + 2];
+          const dur = readDuration(s, trk.pc + 3);
+          trk.pc = dur.next;
+          // Live mixer: a muted / non-soloed PCM track advances but starts no
+          // voice (always audible during the trace gate, so A/B is unaffected).
+          // Its macros re-instantiate as an FM/PSG note's do (driver.md
+          // §13.1) — not a muted one's: a :keyon would re-START the voice.
+          if (this._isTrackAudible(trk.index)) {
+            this._pcmNoteOn(trk.channelId, sampleId, note);
+            this._macroTrigger(trk.channelId, trk.acc, trk);
+            if (this._sub > 0) this._stepChannelMacros(trk.channelId);
+          } else this._macroSlots[this._macroCh(trk.channelId)] = [];
+          // Held (dur 0) PCM suspends the dispatcher like any hold; otherwise
+          // advance the clock. The sample keeps feeding via step 3 regardless.
+          if (dur.ticks === 0) {
+            trk.held = true;
+            return;
+          }
+          trk.wait = dur.ticks;
+          return;
+        }
+        case OPCODE.PCM_NOTE_OFF:
+          trk.pc += 1;
+          this._channelOff(trk.channelId); // a PCM key-off: the loop's release
+          break;
+        case OPCODE.PCM_NOTE_CUT:
+          trk.pc += 1;
+          // A key-off that also silences the voice (`:mode gate`).
+          this._channelOff(trk.channelId);
+          if (trk.channelId >= 20 && trk.channelId <= 22) this._pcm.cut(trk.channelId - 20);
+          break;
+        case OPCODE.MACRO_SET: {
+          const macroId = s[trk.pc + 1];
+          trk.pc += 2;
+          const d = this._macros[macroId];
+          const mc = this._macroCh(trk.channelId);
+          const binds = mc >= 0 ? this._macroActive[mc] : null;
+          // Sticky: bind this macro as the active macro for its target,
+          // replacing any macro already active on that target in place
+          // (driver.md §13.1). A channel holds MACRO_BINDS; a further target
+          // is ignored (mmlispseq.c macro_bind).
+          if (d && binds && (binds.has(d.target) || binds.size < MACRO_BINDS)) {
+            binds.set(d.target, macroId);
+          }
+          break;
+        }
+        case OPCODE.MACRO_CLEAR: {
+          const target = s[trk.pc + 1];
+          trk.pc += 2;
+          const mc = this._macroCh(trk.channelId);
+          if (mc >= 0) {
+            if (target === 0xff) this._macroActive[mc].clear();
+            else this._macroActive[mc].delete(target);
+          }
+          break;
+        }
+        default: {
+          this._diag(
+            "W_DRV_UNKNOWN_OPCODE",
+            `unknown opcode 0x${(op ?? 0).toString(16)} at ${trk.pc}; track stopped`,
+          );
+          trk.running = false;
+          return;
+        }
+      }
+    }
+  }
+
+  _setLevel(channelId, key, value) {
+    if (channelId < 6) this._fm[channelId][key] = value;
+    else if (channelId < 10) this._psg[channelId - 6][key] = value;
+  }
+
+  // A note-on's level: the live vel and vol go back to their bases — the
+  // score's sticky velocity (driver.md §7.1) and the fader (§7.2) — or to this
+  // note's own velocity (NOTE_ON_EX), so no macro of the previous note carries
+  // into it. Composition is left to the caller (it recomposes carriers / att /
+  // shift right after), so this only moves the shadow. Mirrors mmlispseq.c
+  // restore_level_base. `target` is VEL or VOL; `exVel` (VEL only) is
+  // NOTE_ON_EX's velocity, in eighths as the stream carries it.
+  //
+  // A bound VEL / VOL macro wins: the note-on retrigger re-instantiates that
+  // bind and its first sample lands in the same frame (step 3), so the note
+  // takes that sample rather than write a level overwritten a moment later.
+  _restoreLevelBase(channelId, target, exVel = null) {
+    const isVel = target === TARGET_ID.VEL;
+    const max = isVel ? VEL_FINE_MAX : 31;
+    const clamp = (v) => (v < 0 ? 0 : v > max ? max : v);
+    const op = this._fm3OpFor(channelId);
+    const st = op
+      ? null
+      : channelId < 6
+        ? this._fm[channelId]
+        : channelId < 10
+          ? this._psg[channelId - 6]
+          : channelId >= 20 && channelId <= 22
+            ? this._pcmVoices[channelId - 20]
+            : null;
+    if (!op && !st) return;
+    const base = op
+      ? (isVel ? this._fm3OpVelBase : this._fm3OpVolBase)[op - 1]
+      : isVel ? st.velBase : st.volBase;
+    const set = (v) => {
+      if (op) (isVel ? this._fm3OpVel : this._fm3OpVol)[op - 1] = v;
+      else if (isVel) st.vel = v;
+      else st.vol = v;
+    };
+    const mc = this._macroCh(channelId);
+    if (exVel == null && mc >= 0 && this._macroActive[mc]?.has(target)) {
+      // A bound level macro owns the level, and its first sample lands in this
+      // same frame: the note composes from that sample, so it writes no level
+      // the macro overwrites a moment later. With no first sample (a leading
+      // hold, `[#rel …]`) the note takes the base; an additive or scaled
+      // macro keeps the live one.
+      const d = this._macros[this._macroActive[mc].get(target)];
+      if (!d || d.flags & 6) return;
+      const v = d.release === 0 ? null : d.values[0];
+      set(v != null ? clamp(v) : base);
+      return;
+    }
+    set(exVel != null ? clamp(exVel) : base);
+  }
+
+
+
+  // ── PARAM_SET execution (opcodes.md §7 target table) ─────────────────────
+  // `force` (macro-driven writes): a macro is the channel's envelope authority,
+  // so its PSG attenuation writes must land even after key-off — the release
+  // region (`:off`) runs entirely while keyed is false and is exactly the decay
+  // tail. Non-macro writes (mailbox SET_PARAM, sweeps) keep the keyed guard so
+  // they never un-mute a silenced channel. Mirrors ir-player, whose macro engine
+  // writes att unconditionally while the guard only fences the VOL re-apply path.
+  // VOICE_SET (driver.md §10): apply a 29-byte VOICE_TABLE entry to an FM
+  // channel — the register-order block a full-voice PARAM_SET burst coalesced
+  // into. Populates the structured shadow (so later VEL recompose / relative
+  // reads stay correct) and queues the same register writes the burst emitted.
+  _voiceSet(channelId, voiceId) {
+    const ch = channelId >= 16 && channelId <= 19 ? 2 : channelId; // an operator track's patch is CH3's
+    if (ch >= 6) return;
+    const entry = this._voices[voiceId];
+    if (entry) this._applyPatch(ch, entry);
+  }
+
+  // A VOICE_TABLE-shaped entry onto an FM channel — a voice, or an SE
+  // ghost's patch. Mirrors mmlispseq.c apply_patch.
+  _applyPatch(ch, entry) {
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    // Change-only against the structured shadow (not _shadow): the burst only
+    // writes a register a PARAM_SET touched, so e.g. $90/SSG — which init never
+    // writes — must stay unwritten when the voice omits it. old byte is derived
+    // from the current op fields before they are overwritten.
+    const put = (addr, oldByte, newByte) => {
+      if (newByte !== oldByte) this._ym(port, addr, newByte);
+    };
+    // TL goes out COMPOSED, not raw — _opLevel holds that rule (driver.md §7).
+    // Raw would be a step of up to +10 dB on whatever note is still sounding:
+    // silent at track start (a start silences the channel's owner), audible at every loop point and
+    // every mid-song patch change that re-applies a voice. The voice's own
+    // algorithm is passed in, because it decides the carriers here even though
+    // its $B0 still goes out last.
+    const newAlg = entry[28] & 0x07;
+    for (let op = 0; op < 4; op++) {
+      const o = regs.ops[op];
+      const opOff = OP_ADDR_OFFSET[op];
+      const b30 = entry[0 + op];
+      put(0x30 + opOff + off, encode30(o), b30);
+      o.dt = detuneFromReg(b30 >> 4);
+      o.mul = b30 & 0x0f;
+      o.voicedTl = entry[4 + op];
+      const tl = this._opLevel(ch, op, newAlg);
+      put(0x40 + opOff + off, o.tl, tl);
+      o.tl = tl;
+      const b50 = entry[8 + op];
+      put(0x50 + opOff + off, (o.rs << 6) | o.ar, b50);
+      o.rs = (b50 >> 6) & 0x03;
+      o.ar = b50 & 0x1f;
+      const b60 = entry[12 + op];
+      put(0x60 + opOff + off, encode60(o), b60);
+      o.amen = (b60 >> 7) & 0x01;
+      o.dr = b60 & 0x1f;
+      const b70 = entry[16 + op];
+      put(0x70 + opOff + off, o.d2r, b70);
+      o.d2r = b70 & 0x1f;
+      const b80 = entry[20 + op];
+      put(0x80 + opOff + off, encode80(o), b80);
+      o.sl = (b80 >> 4) & 0x0f;
+      o.rr = b80 & 0x0f;
+      const b90 = entry[24 + op];
+      put(0x90 + opOff + off, o.ssg, b90);
+      o.ssg = b90 & 0x0f;
+    }
+    const b0 = entry[28];
+    put(0xb0 + off, (regs.feedback << 3) | regs.algorithm, b0);
+    regs.feedback = (b0 >> 3) & 0x07;
+    regs.algorithm = b0 & 0x07;
+  }
+
+  // The stream's PARAM_SET VEL: the base and the live value, no write — the
+  // next note-on composes it (driver.md §7.1). Mirrors mmlispseq.c store_vel.
+  // Only the base: the sounding note keeps its velocity (a :vol or :master
+  // change recomposes it with that), and the next note-on takes the base up.
+  _storeVel(channelId, value) {
+    // The stream's vel is in eighths (driver.md §7.1).
+    const v = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
+    const op = this._fm3OpFor(channelId);
+    if (op) this._fm3OpVelBase[op - 1] = v;
+    else if (channelId < 6) this._fm[channelId].velBase = v;
+    else if (channelId < 10) this._psg[channelId - 6].velBase = v;
+    else if (channelId >= 20 && channelId <= 22) {
+      const pv = this._pcmVoices[channelId - 20];
+      if (pv) pv.velBase = v;
+    }
+  }
+
+  // The channel a track's word writes: its own, but a pcm track's PAN — the
+  // song's is fm6's (the DAC comes out on its L / R, driver.md §14); an
+  // effect's is its own, the DAC's while it plays (_sePan). mmlispseq.c
+  // param_ch.
+  _paramCh(trk, target) {
+    const ch = trk.channelId;
+    return target === TARGET_ID.PAN && ch >= 20 && ch <= 22 && !trk.isSe ? 5 : ch;
+  }
+
+  // The DAC comes out on fm6's L / R: while a PCM SE plays they are the
+  // effect's pan, the song's again at its end (driver.md §14). b4_of.
+  _sePanLive() {
+    return this._trk.some((t) => t.isSe && t.channelId >= 20 && t.channelId <= 22);
+  }
+  _b4Of(ch) {
+    const r = this._fm[ch];
+    return ch === 5 && this._sePanLive() ? encodeB4({ ...r, pan: this._sePan }) : encodeB4(r);
+  }
+
+  _paramSet(channelId, target, value, force = false) {
+    // A word in the panel's hand: the score's write waits while it is held,
+    // and takes it back once let go (hold).
+    if (this._hands?.size && !this._panelWrite) {
+      const key = target === TARGET_ID.MASTER || target === TARGET_ID.LFO_RATE ? TARGET_NAME[target]
+        : VAL_TARGET_IDS.has(target) ? `val:${target - TARGET_ID.VAL0}` : `${channelId}:${target}`;
+      if (!this._scoreWrites(key)) return;
+    }
+    const name = TARGET_NAME[target];
+    if (!name) {
+      this._diag("W_DRV_UNKNOWN_TARGET", `PARAM_SET target 0x${target.toString(16)}`);
+      return;
+    }
+    // A macro (force) writes eighths, a host or relative write whole steps.
+    if (target === TARGET_ID.VEL && !force) value *= VEL_FINE;
+    // Global targets first.
+    if (target === TARGET_ID.MASTER) {
+      this._master = value < 0 ? 0 : value > 31 ? 31 : value;
+      // Re-apply carrier TL on all FM channels; PSG att on sounding channels.
+      for (let ch = 0; ch < 6; ch++) this._recomposeCarriers(ch);
+      for (let p = 0; p < 4; p++) {
+        if (!this._psg[p].sounding) continue;
+        this._writePsgAtt(p, this._psgAtt(this._psg[p].vel, this._psg[p].vol));
+      }
+      // PCM: master rides the SUM (pcm-voices.js setMaster).
+      this._pcm.setMaster(this._master);
+      return;
+    }
+    if (VAL_TARGET_IDS.has(target)) {
+      this._valSlots[target - TARGET_ID.VAL0] = value < -32768 ? -32768 : value > 32767 ? 32767 : value;
+      return;
+    }
+    if (target === TARGET_ID.LFO_RATE) {
+      const rate = value < 0 ? 0 : value > 8 ? 8 : value;
+      this._lfoRate = rate;
+      this._ym(0, 0x22, rate === 0 ? 0x00 : 0x08 | ((rate - 1) & 0x07));
+      return;
+    }
+    if (target === TARGET_ID.NOISE_MODE) {
+      this._noiseMode = value & 0x07;
+      if (this._psg[3].sounding) this._writeNoiseCfg();
+      return;
+    }
+    if (target === TARGET_ID.GATE) {
+      this._setLevel(channelId, "gate", value < 0 ? 0 : value > 8 ? 8 : value);
+      return;
+    }
+
+    // FM3 independent-OP: :pitch on an fm3-N track detunes that operator's
+    // F-number alone, and :vel/:vol are its own level; the patch is the shared
+    // CH3's, below (driver.md §13.4).
+    {
+      const op = this._fm3OpFor(channelId);
+      if (op && target === TARGET_ID.NOTE_PITCH) {
+        this._fm3OpCents[op - 1] = value;
+        this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], value);
+        return;
+      }
+      if (op && target === TARGET_ID.SNAP) {
+        // The mask is CH3's (every operator snaps on it); this operator's note
+        // moves onto it now, as its NOTE_PITCH would.
+        this._fm[2].snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], this._fm3OpCents[op - 1]);
+        return;
+      }
+      if (op && (target === TARGET_ID.VEL || target === TARGET_ID.VOL)) {
+        if (target === TARGET_ID.VEL) {
+          this._fm3OpVel[op - 1] = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
+          // score's vel; a macro moves only the live one
+          if (!force) this._fm3OpVelBase[op - 1] = this._fm3OpVel[op - 1];
+        } else {
+          this._fm3OpVol[op - 1] = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) this._fm3OpVolBase[op - 1] = this._fm3OpVol[op - 1];
+        }
+        this._writeFm3OpTl(op);
+        return;
+      }
+    }
+
+    // PSG-channel targets.
+    if (channelId >= 6 && channelId < 10) {
+      const psgCh = channelId - 6;
+      const st = this._psg[psgCh];
+      if (target === TARGET_ID.VOL || target === TARGET_ID.VEL) {
+        // vel and vol both compose into the PSG attenuation — re-apply on a keyed
+        // note (even if currently silent, so a vel macro can bring it back up).
+        if (target === TARGET_ID.VOL) {
+          st.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) st.volBase = st.vol; // score's fader; a macro moves only the live one
+        } else {
+          st.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
+          if (!force) st.velBase = st.vel; // score's vel; a macro moves only the live one
+        }
+        if (st.keyed || force) this._writePsgAtt(psgCh, this._psgAtt(st.vel, st.vol));
+      } else if (target === TARGET_ID.NOTE_PITCH) {
+        st.pitchCents = value;
+        if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, value);
+      } else if (target === TARGET_ID.SNAP) {
+        // Sticky mask (language.md §5.3); the sounding note moves onto it.
+        st.snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        if (psgCh < 3) this._writePsgPitch(psgCh, st.currentNote, st.pitchCents);
+      }
+      return;
+    }
+    // PCM soft-mix volume (docs/driver.md §14): vel+vol+master compose to a per-voice
+    // bit-shift the mixer applies as an arithmetic right shift (cheap per sample).
+    // VEL and VOL are per-voice state; MASTER is global (handled above, which
+    // recomposes every voice). Composition + mute are recomputed here, off the
+    // mix hot path. See pcm-voices.js composeShift.
+    // A pcm channel's PAN here is an effect's (_paramCh: the song's is
+    // fm6's): the DAC's while the effect plays.
+    if (target === TARGET_ID.PAN && channelId >= 20 && channelId <= 22) {
+      this._sePan = value < -1 ? -1 : value > 1 ? 1 : value;
+      if (this._sePanLive()) this._ym(1, 0xb6, this._b4Of(5));
+      return;
+    }
+    if (channelId >= 20 && channelId <= 22) {
+      const v = this._pcmVoices[channelId - 20];
+      if (!v) return;   // ditto
+      if (target === TARGET_ID.VEL) {
+        v.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
+        if (!force) v.velBase = v.vel; // score's vel; a macro moves only the live one
+      } else if (target === TARGET_ID.VOL) {
+        v.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+        if (!force) v.volBase = v.vol; // score's fader; a macro moves only the live one
+      } else if (PCM_POINT_TARGET_IDS.has(target)) {
+        this._pcm.pointParam(channelId - 20, TARGET_NAME[target], value);
+        return;
+      } else return;
+      this._pcm.composeShift(channelId - 20, this._master);
+      return;
+    }
+    // An FM3 operator track's other targets are the shared CH3's — the patch
+    // (alg, fb, every operator's params), pan, the LFO bits: written on fm3-N
+    // they apply to fm3, as if written there (driver.md §13.4).
+    const ch = channelId >= 16 && channelId <= 19 ? 2 : channelId;
+    if (ch >= 6) return;
+
+    // FM-channel targets.
+    const regs = this._fm[ch];
+    const port = ch >= 3 ? 1 : 0;
+    const off = ch % 3;
+    const opFor = (base) => {
+      const idx = target - base; // 0..3 → op index
+      return { idx, op: regs.ops[idx] };
+    };
+    switch (true) {
+      case target === TARGET_ID.NOTE_PITCH:
+        regs.pitchCents = value;
+        this._writeFmPitch(ch, regs.currentNote, value);
+        return;
+      case target === TARGET_ID.SNAP:
+        // Sticky mask (language.md §5.3); the sounding note moves onto it.
+        regs.snap = value < 0 ? 0 : value > 0xfff ? 0xfff : value;
+        this._writeFmPitch(ch, regs.currentNote, regs.pitchCents);
+        return;
+      case target === TARGET_ID.VEL:
+      case target === TARGET_ID.VOL: {
+        // vel and vol both compose into the carrier TL — recompose every carrier.
+        if (target === TARGET_ID.VEL) {
+          regs.vel = value < 0 ? 0 : value > VEL_FINE_MAX ? VEL_FINE_MAX : value;
+          if (!force) regs.velBase = regs.vel; // score's vel; a macro moves only the live one
+        } else {
+          regs.vol = value < 0 ? 0 : value > 31 ? 31 : value;
+          if (!force) regs.volBase = regs.vol; // score's fader; a macro moves only the live one
+        }
+        this._recomposeCarriers(ch);
+        return;
+      }
+      case target === TARGET_ID.FM_FB:
+        regs.feedback = clampReg(value, 0x07);
+        this._ym(port, 0xb0 + off, encodeB0(regs));
+        return;
+      case target === TARGET_ID.FM_ALG:
+        regs.algorithm = clampReg(value, 0x07);
+        this._ym(port, 0xb0 + off, encodeB0(regs));
+        return;
+      case target === TARGET_ID.LFO_SYNC:
+        regs.lfoSync = value !== 0;
+        return;
+      case target === TARGET_ID.FM_AMS:
+        regs.ams = clampReg(value, 0x03);
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
+        return;
+      case target === TARGET_ID.FM_FMS:
+        regs.fms = clampReg(value, 0x07);
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
+        return;
+      case target === TARGET_ID.PAN:
+        regs.pan = value < -1 ? -1 : value > 1 ? 1 : value;
+        this._ym(port, 0xb4 + off, this._b4Of(ch));
+        return;
+      case target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4: {
+        const { idx, op } = opFor(TARGET_ID.FM_TL1);
+        op.voicedTl = value < 0 ? 0 : value > 127 ? 127 : value;
+        op.tl = this._opLevel(ch, idx, regs.algorithm);
+        this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
+        return;
+      }
+      case target >= TARGET_ID.FM_VEL1 && target <= TARGET_ID.FM_VEL4: {
+        // Velocity sensitivity: no register of its own, it re-composes the
+        // operator's level. 0–16 sixteenths; anything else (-1) is the role's.
+        const { idx, op } = opFor(TARGET_ID.FM_VEL1);
+        const k = value & 0xff;
+        op.velk1 = k <= 16 ? k + 1 : 0;
+        op.tl = this._opLevel(ch, idx, regs.algorithm);
+        this._ym(port, 0x40 + OP_ADDR_OFFSET[idx] + off, op.tl);
+        return;
+      }
+      case target >= TARGET_ID.FM_AR1 && target <= TARGET_ID.FM_AR4: {
+        const { idx, op } = opFor(TARGET_ID.FM_AR1);
+        op.ar = clampReg(value, 0x1f);
+        this._ym(port, 0x50 + OP_ADDR_OFFSET[idx] + off, (op.rs << 6) | op.ar);
+        return;
+      }
+      case target >= TARGET_ID.FM_DR1 && target <= TARGET_ID.FM_DR4: {
+        const { idx, op } = opFor(TARGET_ID.FM_DR1);
+        op.dr = clampReg(value, 0x1f);
+        this._ym(port, 0x60 + OP_ADDR_OFFSET[idx] + off, encode60(op));
+        return;
+      }
+      case target >= TARGET_ID.FM_SR1 && target <= TARGET_ID.FM_SR4: {
+        const { idx, op } = opFor(TARGET_ID.FM_SR1);
+        op.d2r = clampReg(value, 0x1f);
+        this._ym(port, 0x70 + OP_ADDR_OFFSET[idx] + off, op.d2r & 0x1f);
+        return;
+      }
+      case target >= TARGET_ID.FM_RR1 && target <= TARGET_ID.FM_RR4: {
+        const { idx, op } = opFor(TARGET_ID.FM_RR1);
+        op.rr = clampReg(value, 0x0f);
+        this._ym(port, 0x80 + OP_ADDR_OFFSET[idx] + off, encode80(op));
+        return;
+      }
+      case target >= TARGET_ID.FM_SL1 && target <= TARGET_ID.FM_SL4: {
+        const { idx, op } = opFor(TARGET_ID.FM_SL1);
+        op.sl = clampReg(value, 0x0f);
+        this._ym(port, 0x80 + OP_ADDR_OFFSET[idx] + off, encode80(op));
+        return;
+      }
+      case target >= TARGET_ID.FM_KS1 && target <= TARGET_ID.FM_KS4: {
+        const { idx, op } = opFor(TARGET_ID.FM_KS1);
+        op.rs = clampReg(value, 0x03);
+        this._ym(port, 0x50 + OP_ADDR_OFFSET[idx] + off, (op.rs << 6) | op.ar);
+        return;
+      }
+      case target >= TARGET_ID.FM_ML1 && target <= TARGET_ID.FM_ML4: {
+        const { idx, op } = opFor(TARGET_ID.FM_ML1);
+        op.mul = clampReg(value, 0x0f);
+        this._ym(port, 0x30 + OP_ADDR_OFFSET[idx] + off, encode30(op));
+        return;
+      }
+      case target >= TARGET_ID.FM_DT1 && target <= TARGET_ID.FM_DT4: {
+        const { idx, op } = opFor(TARGET_ID.FM_DT1);
+        op.dt = value; // encode30 handles the sign→register mapping
+        this._ym(port, 0x30 + OP_ADDR_OFFSET[idx] + off, encode30(op));
+        return;
+      }
+      case target >= TARGET_ID.FM_SSG1 && target <= TARGET_ID.FM_SSG4: {
+        const { idx, op } = opFor(TARGET_ID.FM_SSG1);
+        op.ssg = clampReg(value, 0x0f);
+        this._ym(port, 0x90 + OP_ADDR_OFFSET[idx] + off, op.ssg);
+        return;
+      }
+      case target >= TARGET_ID.FM_AMEN1 && target <= TARGET_ID.FM_AMEN4: {
+        const { idx, op } = opFor(TARGET_ID.FM_AMEN1);
+        op.amen = clampReg(value, 0x01);
+        this._ym(port, 0x60 + OP_ADDR_OFFSET[idx] + off, encode60(op));
+        return;
+      }
+      default:
+        // A target with no register effect here is ignored, as in the C.
+        return;
+    }
+  }
+
+  // ── Sweep engine (driver.md §4 step 3) ───────────────────────────────────
+  // A channel's sweep bank: channels 0-9 are their own, the three PCM
+  // voices follow them, then FM3's four operators (ids 16-19) — a glide on an
+  // fm3-N track bends that operator alone. -1 = no bank.
+  _sweepBank(ch) {
+    if (ch < 10) return ch;
+    if (ch >= 20 && ch <= 22) return 10 + (ch - 20);
+    if (ch >= 16 && ch <= 19) return 13 + (ch - 16);
+    return -1;
+  }
+  _sweepBankCh(bank) {
+    if (bank < 10) return bank;
+    if (bank < 13) return 20 + (bank - 10);
+    return 16 + (bank - 13);
+  }
+
+  // A song-wide target's own sweep slot, or -1 for a channel's target.
+  _globalSweep(target) {
+    if (target === TARGET_ID.MASTER) return 0;
+    if (target === TARGET_ID.LFO_RATE) return 1;
+    if (VAL_TARGET_IDS.has(target)) return 2 + (target - TARGET_ID.VAL0);
+    return -1;
+  }
+
+  _startSweep(ch, target, curveId, loop, from, to, len) {
+    const g = this._globalSweep(target);
+    const bank = g >= 0 ? -1 : this._sweepBank(ch);
+    if (g < 0 && bank < 0) return;
+    const slot = {
+      target,
+      curveId,
+      loop: !!loop,
+      from,
+      to,
+      len: Math.max(1, len),
+      frame: 0,
+      phase16: 0,
+      step16: sweepStep(len, loop),
+    };
+    if (g >= 0) {
+      this._gsweeps[g] = slot;
+      return;
+    }
+    const slots = this._sweeps[bank];
+    let idx = slots.findIndex((x) => x && x.target === target);
+    if (idx < 0) idx = slots.findIndex((x) => x === null);
+    if (idx < 0) {
+      idx = 0;
+      this._diag("W_DRV_SWEEP_SLOTS", `sweep slot overflow on ch ${ch}; evicted slot 0`);
+    }
+    slots[idx] = slot;
+  }
+
+  _stopSweep(ch, target) {
+    const g = this._globalSweep(target);
+    if (g >= 0) {
+      this._gsweeps[g] = null;
+      return;
+    }
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] && slots[i].target === target) slots[i] = null;
+    }
+  }
+
+  // A VOICE_SET is the burst of PARAM_SETs it folds (driver.md §10): like each
+  // of them it ends the sweep on its target — the parameters a coalesced burst
+  // always carries, FB to DT4 (0x10..0x35), in the bank the stream's PARAM_SET
+  // would have used. SSG and AMEN are left alone: a voice may omit them, and
+  // then its burst wrote no PARAM_SET to end their sweep with. Not the ghost
+  // restore's _applyPatch: a restored part's sweeps come back. Mirrors
+  // mmlispseq.c stop_voice_sweeps.
+  _stopVoiceSweeps(ch) {
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i] && slots[i].target >= TARGET_ID.FM_FB && slots[i].target <= TARGET_ID.FM_DT4) slots[i] = null;
+    }
+  }
+
+  // CLAIMING A CHANNEL WIPES ITS MODULATORS (driver.md §2.2). Macro binds and
+  // sweeps are channel state, not track state, and nothing but the stream's own
+  // MACRO_CLEAR ever cleared them — so an evicted track's macro went on playing
+  // whoever took the channel, and so did its sweep. Stopping a track is
+  // deliberately NOT this: a release-region macro (`:off`) runs entirely after
+  // key-off and IS the decay tail. Claiming is the line, because the new owner
+  // is a different part.
+  _clearChannelModulators(ch) {
+    const mc = this._macroCh(ch);
+    if (mc >= 0) {
+      // A PSG :vel release was the channel's decay, and silenced it at its
+      // end: cut short, it would leave the tone at the level it had reached.
+      const p = ch - 6;
+      if (ch >= 6 && ch < 10 && !this._psg[p].keyed && this._psg[p].sounding &&
+          this._macroSlots[mc].length)
+        this._writePsgAtt(p, 15);
+      this._macroActive[mc].clear();
+      this._macroSlots[mc] = [];
+    }
+    const bank = this._sweepBank(ch);
+    if (bank < 0) return;
+    const slots = this._sweeps[bank];
+    for (let i = 0; i < slots.length; i++) slots[i] = null;
+  }
+
+  // ── Macro engine (driver.md §13) ─────────────────────────────────────────
+  // A channel's frame share of ticks for a tick-clocked macro (§13.2).
+  _chanFrameInc(mc) {
+    const k = this._mcSe[mc];
+    return k ? this._trk[k - 1].inc : this._frameInc;
+  }
+
+  _channelKeyed(ch) {
+    const op = this._fm3OpFor(ch);
+    if (op) return (this._fm3OpMask & (0x10 << (op - 1))) !== 0;
+    if (ch < 6) return this._fm[ch].keyed;
+    if (ch < 10) return this._psg[ch - 6].keyed;
+    if (ch >= 20 && ch <= 22) return this._pcmVoices[ch - 20].keyed;
+    return false;
+  }
+
+  // NOTE_ON re-instantiates every active macro into a fresh running slot
+  // (driver.md §13.1). Insertion order = MACRO_SET order (§13.3). `acc` is the
+  // note's track accumulator after its tick: a tick-clocked slot counts the
+  // track's ticks from there (§13.2).
+  _macroTrigger(ch, acc = 0, trk = null) {
+    const mc = this._macroCh(ch);
+    if (mc < 0) return;
+    // A ghost's note runs no macros: its binds come back at SE-end, and the
+    // restore re-instantiates them as the note-on it is (_restoreGhost).
+    if (this._ghostCh >= 0) return;
+    this._mcSe[mc] = trk && trk.flags & TRACK_FLAG.isSe ? trk.index + 1 : 0;
+    const active = this._macroActive[mc];
+    const slots = [];
+    for (const macroId of active.values()) {
+      // `fresh`: this slot's first sample lands in the note's own frame.
+      // An empty attack/sustain (`[#rel …]`) writes nothing until key-off.
+      const state = this._macros[macroId]?.release === 0 ? "hold" : "run";
+      slots.push({ descIdx: macroId, stepClock: 0, cursor: 0, state, fresh: true, acc, last: null });
+    }
+    this._macroSlots[mc] = slots;
+  }
+
+  // NOTE_SEMI macro apply: pitch register at (current note + semitones), cents 0,
+  // no change to the channel's sticky pitch offset (matches ir-player basePitchWrite).
+  // `add` (additive macro, driver.md §13.2): ride the live :pitch offset (cents) instead of
+  // overriding to 0 — for `:semi+` sharing a vibrato over a detuned base.
+  _writeNoteSemi(ch, semi, add = false) {
+    const op = this._fm3OpFor(ch);
+    if (op) {
+      this._writeFm3OpPitch(op, this._fm3OpNote[op - 1] + semi, add ? this._fm3OpCents[op - 1] : 0);
+    } else if (ch < 6) {
+      this._writeFmPitch(ch, this._fm[ch].currentNote + semi, add ? this._fm[ch].pitchCents : 0);
+    } else if (ch < 10) {
+      const p = ch - 6;
+      if (p < 3) this._writePsgPitch(p, this._psg[p].currentNote + semi, add ? this._psg[p].pitchCents : 0);
+    }
+  }
+
+  _processMacros() {
+    for (let mc = 0; mc < MACRO_CHANNELS; mc++) this._stepChannelMacros(this._macroChId(mc));
+  }
+
+  // One channel's running slots, one step. Split out of _processMacros because
+  // a note-on past sub-tick 0 has to step its own channel on the spot (§3.5).
+  _stepChannelMacros(ch) {
+    const mc = this._macroCh(ch);
+    if (mc < 0) return;
+    const slots = this._macroSlots[mc];
+    if (slots.length === 0) return;
+    const keyed = this._channelKeyed(ch);
+    let dead = false;
+    const pv = ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20] : null;
+    let started = false;
+    // The KEYON slots step first, so an envelope a retrigger restarts takes
+    // its first step in the retrigger's own frame, whatever the bind order.
+    for (const pass of [true, false]) {
+      // A PCM retrigger's START carries the level its frame's steps set: they
+      // compose as for a voice not yet started, and send no PCM_VOL of their own.
+      if (!pass && pv?.retrig) {
+        started = pv.started;
+        pv.started = false;
+      }
+      for (let i = 0; i < slots.length; i++) {
+        if (!slots[i]) continue;
+        const isKeyon = this._macros[slots[i].descIdx]?.target === TARGET_ID.KEYON;
+        if (isKeyon !== pass) continue;
+        if (this._stepMacro(ch, slots[i], keyed)) {
+          slots[i] = null;
+          dead = true;
+        }
+      }
+    }
+    if (pv?.retrig) {
+      pv.retrig = false;
+      pv.started = started;
+      this._pcm.restart(ch - 20);
+    }
+    if (dead) this._macroSlots[mc] = slots.filter(Boolean);
+  }
+
+  // One running slot, one frame. Returns true when the slot is finished.
+  // Regions (mmb.md §15): attack [0..loopStart), sustain [loopStart..release)
+  // cycled while keyed, release [release..count) once after key-off.
+  //
+  // The clock is frames, or (flags bit3) the ticks of the note's track: the
+  // slot runs its own copy of the track's accumulator from the note's tick, so
+  // its steps land on the track's beat grid whatever the tempo, and keep
+  // counting through a held note. stepClock is then ticks to the next step; a
+  // frame that crosses several steps takes each in turn.
+  _stepMacro(ch, slot, keyed) {
+    const d = this._macros[slot.descIdx];
+    if (!d) return true;
+    // Key-off: leave attack/sustain for the release region (or end).
+    if ((slot.state === "run" || slot.state === "hold") && !keyed) {
+      if (d.release !== 0xff && d.release < d.count) {
+        slot.state = "release";
+        slot.cursor = d.release;
+        slot.stepClock = 0; // release[0] fires on the key-off frame
+        // A release from where the macro is starts from its last value (none
+        // yet: from its end); `last` holds it through the release.
+        if (d.relTo !== null && slot.last === null) slot.last = d.relTo;
+        // ...and a tick clock restarts from the key-off's tick: this frame's
+        // ticks after it, less the share the next step adds back.
+        if (d.flags & 8)
+          slot.acc = (this._offAcc[this._macroCh(ch)] - this._chanFrameInc(this._macroCh(ch))) & 0xffff;
+      } else {
+        return true; // no release section
+      }
+    }
+    if (d.flags & 8) {
+      // The note's own frame already holds its ticks after the note.
+      if (!slot.fresh) slot.acc = (slot.acc + this._chanFrameInc(this._macroCh(ch))) & 0xffff;
+      const ticks = slot.acc >> 8;
+      slot.acc &= 0xff;
+      let n = 0;
+      if (slot.stepClock <= 0) {
+        n = 1; // due now: the note, a retrigger, the release
+        slot.stepClock = d.step;
+      }
+      slot.stepClock -= ticks;
+      while (slot.stepClock <= 0) {
+        n++;
+        slot.stepClock += d.step;
+      }
+      for (; n > 0; n--) if (this._macroSample(ch, slot, d, keyed)) return true;
+      return false;
+    }
+    if (slot.stepClock > 0) {
+      slot.stepClock--;
+      return false;
+    }
+    const held = slot.state === "hold" || slot.state === "tail";
+    if (this._macroSample(ch, slot, d, keyed)) return true;
+    if (!held) slot.stepClock = d.step - 1;
+    return false;
+  }
+
+  // One step's sample of a running slot: write values[cursor] (skipping the
+  // hold sentinel) and advance by the region rules. True when finished.
+  _macroSample(ch, slot, d, keyed) {
+    if (slot.state === "hold") return false; // one-shot: hold, wait for key-off
+    if (slot.state === "tail") {
+      if (d.target === TARGET_ID.KEYON) this._channelOff(ch); // the echo tail's last tap ends
+      else if (!keyed && ch >= 6 && ch < 10 && this._psg[ch - 6].sounding) this._writePsgAtt(ch - 6, 15);
+      else if (!keyed && this._fm3OpFor(ch)) { // a CSM operator's release was its decay (§9)
+        const op = this._fm3OpFor(ch);
+        this._fm3OpSound &= ~(0x10 << (op - 1));
+        this._writeFm3OpTl(op);
+      }
+      return true;
+    }
+    let v = d.values[slot.cursor];
+    if (v !== null && v !== undefined) {
+      // A release from where the macro is (flags bit4): the step is the share
+      // still to go of the way from that value to :to — r/128, or r/32768 on
+      // an i16 macro — toward zero.
+      if (slot.state === "release" && d.relTo !== null) {
+        const span = slot.last - d.relTo;
+        const mag = Math.floor((Math.abs(span) * v) / (d.flags & 1 ? 32768 : 128));
+        v = d.relTo + (span < 0 ? -mag : mag);
+      } else slot.last = v;
+      // Scaled macro (driver.md §13.2): a value slot is a per-frame depth knob.
+      // Multiply the sample by the slot low byte and shift 8 (toward-zero,
+      // signed by the sample) before it reaches the target.
+      if (d.scaleSlot != null) v = scaleMacroSample(v, this._readSlot(d.scaleSlot));
+      const add = (d.flags & 2) !== 0; // additive macro (§13.2): live offset + sample
+      // NOTE_SEMI is a key-on pitch offset (chiptune arpeggio): write the pitch
+      // register at note+semi without touching the sticky :pitch state.
+      if (d.target === TARGET_ID.NOTE_SEMI) this._writeNoteSemi(ch, v, add);
+      // KEYON retrigger: a nonzero step re-attacks the note (driver.md §13).
+      else if (d.target === TARGET_ID.KEYON) {
+        // The first sample lands in the note's own frame, where the note has
+        // just attacked — re-attacking there is a write with nothing behind
+        // it, so a leading nonzero step is a no-op (ir-player skips the t=0
+        // sample the same way). Later steps are the roll.
+        // After key-off (an echo tail) the envelopes play their release
+        // through the taps: only the EG re-keys.
+        if (v !== 0 && !slot.fresh)
+          this._keyonRetrigger(ch, slot.state !== "release", d.flags & 8 ? slot : null, d.step);
+      } else if (d.target === TARGET_ID.NOTE_PITCH) {
+        // Pitch macro: write the note pitch each frame WITHOUT storing back to
+        // the sticky pitchCents (which holds the :pitch directive base). An
+        // override macro that clobbered pitchCents would leave a residual
+        // detune on every following note once it ends or is cleared. Additive
+        // rides the live offset (`pitchCents + v`); override replaces it (base
+        // 0 → `v` alone), matching ir-player's basePitchWrite.
+        const op = this._fm3OpFor(ch);
+        if (op) {
+          const base = add ? this._fm3OpCents[op - 1] : 0;
+          this._writeFm3OpPitch(op, this._fm3OpNote[op - 1], base + v);
+        } else if (ch < 6) {
+          const base = add ? this._fm[ch].pitchCents : 0;
+          this._writeFmPitch(ch, this._fm[ch].currentNote, base + v);
+        } else if (ch - 6 < 3) {
+          const p = ch - 6;
+          const base = add ? this._psg[p].pitchCents : 0;
+          this._writePsgPitch(p, this._psg[p].currentNote, base + v);
+        }
+      } else this._paramSet(ch, d.target, v, true); // macro owns the envelope
+    }
+    slot.fresh = false;
+    if (slot.state === "run") {
+      slot.cursor++;
+      const sustainEnd = d.release === 0xff ? d.count : d.release;
+      if (slot.cursor >= sustainEnd) {
+        if (d.loopStart !== 0xff) slot.cursor = d.loopStart; // sustain loop
+        else slot.state = "hold"; // one-shot: hold last attack value
+      }
+    } else {
+      slot.cursor++;
+      if (slot.cursor >= d.count) {
+        // Release finished. A PSG :vel release was the decay: silence the
+        // channel a step on (the "tail" state).
+        // A KEYON release (an echo tail) re-keyed the channel: key it off a
+        // step after its last tap, as the note's gate would.
+        if (((d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL) && !keyed &&
+             ((ch >= 6 && ch < 10) || (this._fm3OpFor(ch) && this._reg27 & 0x80))) ||
+            d.target === TARGET_ID.KEYON) {
+          slot.state = "tail";
+          return false;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // KEYON retrigger (driver.md §13): re-attack the note. Restart the channel's
+  // envelope macros (level and timbre slots → attack; :pitch/:semi/:pan run on) and, on FM,
+  // re-key the hardware EG ($28). PSG has no hardware EG — the macro restart is
+  // the whole effect.
+  _keyonRetrigger(ch, restart = true, src = null, srcStep = 0) {
+    const mc = this._macroCh(ch);
+    for (const s of mc < 0 || !restart ? [] : this._macroSlots[mc]) {
+      if (!s) continue;
+      const sd = this._macros[s.descIdx];
+      // :pitch and :semi run on: a retriggered arp keeps its place; so does
+      // :pan, a place rather than an envelope.
+      if (!sd || sd.target === TARGET_ID.KEYON || sd.target === TARGET_ID.NOTE_SEMI ||
+          sd.target === TARGET_ID.NOTE_PITCH || sd.target === TARGET_ID.PAN) continue;
+      s.cursor = 0;
+      s.stepClock = 0;
+      s.state = "run";
+      // A tick clock restarts on the retrigger's tick: the KEYON slot (tick
+      // clocked, stepped first this frame) is that many ticks past it, which
+      // this slot's own step then takes up, less the frame's share it adds.
+      if (src && sd.flags & 8) {
+        const past = Math.max(0, srcStep - src.stepClock);
+        s.acc = (src.acc + (past << 8) - this._chanFrameInc(mc)) & 0xffff;
+      }
+    }
+    const op = this._fm3OpFor(ch);
+    if (op) {
+      this._fm3KeyOp(op, false);
+      this._fm3KeyOp(op, true);
+    } else if (ch < 6) {
+      this._keyOff(ch);
+      this._keyOn(ch);
+    } else if (ch >= 20 && ch <= 22) {
+      // PCM re-attacks by playing the blob from its start — once the frame's
+      // level steps are in, so the START carries the restarted envelope's
+      // level (_stepChannelMacros).
+      this._pcmVoices[ch - 20].retrig = true;
+    }
+  }
+
+  // One sweep slot, one frame. Returns true when a one-shot sweep completes
+  // (caller frees the slot). Loop sweeps never complete on their own.
+  _processSweep(ch, slot) {
+    if (!slot.loop && slot.frame >= slot.len - 1) {
+      this._paramSet(ch, slot.target, slot.to); // exact endpoint
+      return true;
+    }
+    const unit = curveUnit8(slot.curveId, slot.phase16 >> 8);
+    this._paramSet(ch, slot.target, sweepValue(slot.from, slot.to, unit));
+    slot.phase16 = (slot.phase16 + slot.step16) & 0xffff;
+    if (!slot.loop) slot.frame++;
+    return false;
+  }
+
+  _processTempoSweep() {
+    const ts = this._tempoSweep;
+    if (ts.frame >= ts.len - 1) {
+      this._increment = ts.to;
+      return true;
+    }
+    const unit = curveUnit8(ts.curveId, ts.phase16 >> 8);
+    this._increment = sweepValue(ts.from, ts.to, unit);
+    ts.phase16 = (ts.phase16 + ts.step16) & 0xffff;
+    ts.frame++;
+    return false;
+  }
+
+  // ── CSM (driver.md §9): reg $27 mode bit + Timer A period ($24/$25) ───────
+  _setReg27(value) {
+    // Timer A runs exactly while CSM is on: LOAD A (bit 0) makes the counter
+    // count, and the CSM key-on is its overflow (the C's set_reg27).
+    // A rate rest holds it stopped with CSM still on (_csmHold, §9); leaving
+    // CSM ends the hold.
+    const v = value & 0xff;
+    if (!(v & 0x80)) this._csmHold = false;
+    const next = (v & ~0x01) | (v & 0x80 && !this._csmHold ? 0x01 : 0);
+    // Leaving CSM with the operators as tracks silences them: their key was
+    // their level, and no key-off reaches an operator Timer A keyed — with a
+    // slow RR it would ring on at its last level (driver.md §9).
+    if (this._reg27 & 0x80 && !(next & 0x80) && this._fm3Ops) {
+      this._fm3OpSound = 0;
+      for (let op = 0; op < 4; op++) {
+        this._fm[2].ops[op].tl = 127;
+        this._ym(0, 0x40 + OP_ADDR_OFFSET[op] + 2, 127);
+      }
+    }
+    // With the operators as tracks, the hold is also the formants' silence
+    // (_fm3OpTl): their levels follow LOAD A up and down.
+    const breath = this._fm3Ops && next & 0x80 && (this._reg27 ^ next) & 0x01;
+    this._reg27 = next;
+    this._ym(0, 0x27, this._reg27);
+    if (breath) this._recomposeFm3Ops();
+  }
+
+  _writeTimerA(period) {
+    this._ym(0, 0x24, (period >> 2) & 0xff);
+    this._ym(0, 0x25, period & 0x03);
+  }
+
+  _processCsmRateSweep() {
+    const cs = this._csmRateSweep;
+    if (cs.frame >= cs.len - 1) {
+      this._writeTimerA(cs.to);
+      return true;
+    }
+    const unit = curveUnit8(cs.curveId, cs.phase16 >> 8);
+    this._writeTimerA(sweepValue(cs.from, cs.to, unit));
+    cs.phase16 = (cs.phase16 + cs.step16) & 0xffff;
+    cs.frame++;
+    return false;
+  }
+
+  // ── PCM (driver.md §14) ──────────────────────────────────────────────────
+  // The sample clock of the score's engine image: `periodMaster` master clocks
+  // a sample against its standard's `frameMaster` (NTSC 896,040, PAL
+  // 1,070,460), so a frame is an exact ratio of samples and each $2A byte
+  // gets its own instant. Stamping them all at the
+  // frame start would let a realtime consumer collapse ~200 of them to the last
+  // value — the waveform would come out as a click.
+  _whenSample(sampleIndex) {
+    if (!this._audioContext) return undefined;
+    const img = this._song?.pcmBanked ? bankedEngineImage(this._song.pcmVoices,this._frameHz) : engineImage(this._song?.pcmVoices ?? 1, this._frameHz);
+    if (img.multibank) return this._startAudioTime + sampleIndex / img.rateHz;
+    return this._startAudioTime + (sampleIndex * img.periodMaster) / (img.frameHz * img.frameMaster);
+  }
+
+  /** The window address a sample entry's blob sits at (the host maps the bank). */
+  _pcmSrc(s) {
+    const abs = this._sampleBankBase * 0x8000 + s.base;
+    return PCM_WINDOW + (abs & 0x7fff);
+  }
+
+  // `note` names the note the bank baked into this entry; its bit 7 says the
+  // NOTE loops (`:mode loop`, opcodes.md §6).
+  _pcmNoteOn(channelId, sampleId, note) {
+    const vi = channelId - 20; // pcm1–pcm3 → voice 0–2
+    if (vi < 0 || vi > 2) return;
+    const s = this._song.samples[sampleId];
+    if (!s || s.len === 0) return;
+    const v = this._pcmVoices[vi];
+    // Same per-note velocity restore as the FM/PSG note-on (driver.md §7.1).
+    // The level is composed as for a voice that never started: the START
+    // below carries it, so a PCM_VOL ahead of it would be spent for nothing.
+    this._restoreLevelBase(channelId, TARGET_ID.VEL);
+    this._restoreLevelBase(channelId, TARGET_ID.VOL);
+    v.started = false;
+    this._pcm.composeShift(vi, this._master);
+    // A PCM note takes fm6 as the DAC: $2B on where it is off (its first note,
+    // or after an fm6 note took it: _keyOn).
+    if (!this._pcmDacOn) {
+      this._pcmDacOn = true;
+      this._ym(0, 0x2b, 0x80);
+    }
+    v.sampleId = sampleId;
+    v.keyed = true;
+    v.retrig = false;
+    this._pcm.start(vi, s, this._pcmSrc(s), (note & 0x80) !== 0);
+  }
+
+
+
+  // ── Host commands (driver.md §6.5) — host → driver, applied at the top
+  //    of a frame. When the harness auto-starts every track (the default)
+  //    START/STOP never arrive; with auto-start off (the SE gates, driver.md
+  //    §2.5) the schedule drives START_TRACK / PLAY_SE / STOP_TRACK too.
+  _applyMailbox(cmd, a0, a1, a2) {
+    switch (cmd) {
+      case 0x01: // START_TRACK (track_id) — evict the channel's prior owner
+        this._startTrack(a0, false);
+        break;
+      case 0x02: // STOP_TRACK (track_id) — reclaim if it displaced a BGM owner
+        this._mailboxStop(a0);
+        break;
+      case 0x03: // KEY_OFF (channel_id)
+        this._mailboxKeyOff(a0);
+        break;
+      case 0x04: // SET_PARAM (channel_id, target_id, value i8)
+        this._hostParam(a0, a1, i8(a2));
+        break;
+      case 0x05: // FADE_TRACK (track_id, frames)
+        this._mailboxFade(a0, a1);
+        break;
+      case 0x06: // SET_VAL (slot, value low, value high)
+        if (a0 < 16) {
+          this._gsweeps[2 + a0] = null; // the latest write wins over a score sweep
+          this._valSlots[a0] = i16(a1 | (a2 << 8));
+        }
+        break;
+      case 0x08: // PRIME — every idle track's leading setup, now
+        this._prime();
+        break;
+      case 0x09: // PLAY_SE (se, priority, a2 = 1: use a1, else the effect's own)
+        this._playSe(a0, a2 ? a1 : null);
+        break;
+      case 0x0a: // STOP_SE (se)
+        this._stopSe(a0);
+        break;
+      default:
+        break; // 0x01/0x02 START/STOP auto-driven; others reserved
+    }
+  }
+
+  // Read a dynamic value source (driver.md §6.4): slot 0xFF is the built-in
+  // $time (frames since start, low 16 bits); 0x00–0x0F are VAL_TABLE slots.
+  _readSlot(slot) {
+    if (slot === 0xff) return this._frame & 0xffff;
+    return this._valSlots[slot & 0x0f];
+  }
+
+  _mailboxKeyOff(channelId) {
+    this._channelOff(channelId);
+    // Release a len=0 hold: the track's dispatcher resumes (driver.md §6.5).
+    for (const t of this._trk) {
+      if (t.channelId === channelId && t.held) t.held = false;
+    }
+  }
+
+  // PRIME (host command 0x08, mmlispseq.c mml_prime_tracks has the reasoning):
+  // start each idle track, run its leading setup up to the first note, and
+  // stop it again before it sounds — so the setup's writes leave early and the
+  // real start finds its registers already set. An effect's part is primed
+  // too when it is the first effect part on a channel no song track uses; the
+  // setup's sweeps are cleared after it.
+  _prime() {
+    this._trk.forEach((trk, i) => {
+      const ch = trk.channelId;
+      const se = trk.flags & TRACK_FLAG.isSe;
+      if (ch >= 10 || (trk.flags & TRACK_FLAG.isCsm) || trk.running) return;
+      if (this._trk.some((t, j) => t.channelId === ch &&
+          (t.running || (se && (j < i || !(t.flags & TRACK_FLAG.isSe)))))) return;
+      this._startTrack(trk.trackId, false);
+      this._dispatch(trk); // fresh: the leading setup, up to the first note
+      trk.fresh = false;
+      trk.running = false; // never keyed, so stopping writes nothing
+      this._clearChannelModulators(ch);
+    });
+  }
+
+  // A def-se by its number (mmb.md §16; mmlispseq.c mml_play_se): every part
+  // starts as an SE, at the effect's own priority or the host's.
+  _playSe(se, prio = null) {
+    const e = this._song?.seTable?.[se];
+    if (!e) return;
+    const p = prio ?? e.prio;
+    for (let k = 0; k < e.count; k++) {
+      const t = this._trk.find((x) => x.trackId === e.first + k);
+      if (!t) continue;
+      t.seIndex = se;
+      this._startTrack(t.trackId, true, p);
+    }
+  }
+
+  // CH3 — the shared channel 2 and the operator tracks 16-19 — is one channel
+  // its tracks share, so the ownership rule leaves it alone; an effect never
+  // plays there (the compiler refuses it, E_SE_PART).
+  _ch3Group(ch) {
+    return ch === 2 || (ch >= 16 && ch <= 19);
+  }
+  // The channels a track owns, which an effect displaces it from into a
+  // ghost (driver.md §2.5): the register channels but CH3, and the PCM
+  // voices. mmlispseq.c owned_ch.
+  _ownedCh(ch) {
+    return (ch < 10 && !this._ch3Group(ch)) || (ch >= 20 && ch <= 22);
+  }
+  // The host's KEY_OFF (driver.md §6.5) on every channel a hold keys — a
+  // `:len 0` note, whose track then resumes, or a `:gate 0` one — for the live
+  // app's Tools > Release holds. Nothing here that the mailbox does not.
+  releaseHolds() {
+    if (!this._playing) return;
+    const chans = new Set(
+      this._trk.filter((t) => t.running && (t.held || t.gateLeft === -1)).map((t) => t.channelId),
+    );
+    for (const ch of chans) this._mailboxKeyOff(ch);
+  }
+  /** The tracks stopped at a `:len 0` note, waiting for their key-off. */
+  heldTracks() {
+    return this._trk.map((t, i) => (t.running && t.held ? i : -1)).filter((i) => i >= 0);
+  }
+  // The host's PLAY_SE / STOP_SE (driver.md §6.5) while a run is on, for the
+  // live app's Sound Effects buttons: an effect over the running song, as
+  // the game plays one. Nothing here that the mailbox does not.
+  playSe(se, prio = null) {
+    if (this._playing) this._playSe(se, prio);
+  }
+  // Also after the run is done: a held effect played alone (play({ se })) is
+  // "done" at once — every track held — and still sounding until stopped.
+  stopSe(se) {
+    if (this._trk) this._stopSe(se);
+  }
+  sePlaying(se) {
+    return !!this._trk && this._sePlaying(se); // the tracks exist from the first run on
+  }
+
+  _stopSe(se) {
+    const e = this._song?.seTable?.[se];
+    if (!e) return;
+    for (let k = 0; k < e.count; k++) this._mailboxStop(e.first + k);
+  }
+  _sePlaying(se) {
+    const e = this._song?.seTable?.[se];
+    return !!e && this._trk.some((t) => t.running && t.trackId >= e.first && t.trackId < e.first + e.count);
+  }
+
+  _stopTrack(t) {
+    this._channelOff(t.channelId);
+    if (t.csmOn) this._setReg27(this._reg27 & ~0x80); // see END_OF_TRACK
+    t.running = false;
+    t.fading = false;
+  }
+
+  // ── Track lifecycle (driver.md §2.2, §2.5, §6.5) ─────────────────────────
+  // START_TRACK / an effect's part (PLAY_SE). The MMB tracks already exist in `_trk` (built at
+  // _reset); starting one re-inits its dispatch state and claims its channel.
+  // With `asSe`, the channel's current owner is *suspended* — it plays on into
+  // a ghost of the channel, so SE-end can restore it — instead of *evicted*:
+  // this is the whole SE story.
+  // The port is mmlispseq.c `start_track_ex`, branch for branch.
+  _startTrack(trackId, asSe, prio = 0) {
+    const trk = this._trk.find((t) => t.trackId === trackId);
+    if (!trk) return; // unknown track id
+    const ch = trk.channelId;
+    // What this track displaced LAST time is not what it displaces now. Both
+    // are cleared before the branches below so that a start which takes
+    // neither branch — an effect on a free channel, or a plain start — cannot
+    // inherit a stale one and hand a channel back to a part that no longer
+    // owns it.
+    trk.displaced = null;
+    if (!asSe) trk.seIndex = null;
+    // Channel ownership, on every channel a track owns (_ownedCh).
+    if (this._ownedCh(ch)) {
+      // The channel's current owner (running, not suspended). For a register SE
+      // it is either the BGM (fresh steal) or an already-playing SE (preempt).
+      const owner = this._trk.find(
+        (t) => t !== trk && t.running && !t.suspended && t.channelId === ch,
+      );
+      if (asSe) {
+        // Register-SE priority (N=1 — one SE_SNAP slot, one SE channel at a time).
+        if (owner && owner.isSe) {
+          // The channel already has an SE. Same-channel priority: a lower-priority
+          // SE is dropped; an equal/higher one preempts — stop the old SE and
+          // inherit the BGM it displaced (the ghost stays; only the last SE
+          // restores it).
+          if (prio < owner.sePrio) return; // dropped — leave the old SE playing
+          this._channelOff(ch); // silence the old SE for the new one's re-attack
+          trk.displaced = owner.displaced;
+          owner.displaced = null; // the duty moves; it is not shared
+          owner.running = false;
+          owner.isSe = false;
+        } else if (owner) {
+          // Fresh steal of the BGM owner: it is suspended and plays on into a
+          // ghost of the channel as it leaves it — taken before the note is
+          // silenced, so the ghost's note is still keyed, and before the reset
+          // below.
+          this._ghostCapture(ch);
+          this._channelOff(ch); // silence the owner's note before the SE keys
+          owner.suspended = true;
+          trk.displaced = owner.index;
+        }
+        trk.sePrio = prio;
+      } else if (owner) {
+        this._stopTrack(owner); // START_TRACK scene transition: evict
+      }
+      // Claiming a channel resets its level state to defaults (vel 15 / vol 31
+      // / gate 8, driver.md §6.5) — so a track that relies on the default
+      // velocity (no PARAM_SET) sounds right after stealing it. The BASE is what
+      // has to reset: every note-on copies base → live (§7.1), so resetting the
+      // live vel alone would hand the next note the previous owner's velocity.
+      // …and its :lfo-sync, the part's: an effect's key-ons never restart the
+      // song's LFO (the C's claim).
+      if (ch < 6) {
+        const r = this._fm[ch];
+        r.lfoSync = false;
+        r.velBase = VEL_FINE_MAX;
+        r.vel = VEL_FINE_MAX;
+        r.volBase = VOL_UNITY;
+        r.vol = VOL_UNITY;
+        r.gate = 8;
+      } else if (ch < 10) {
+        const p = this._psg[ch - 6];
+        p.velBase = VEL_FINE_MAX;
+        p.vel = VEL_FINE_MAX;
+        p.volBase = VOL_UNITY;
+        p.vol = VOL_UNITY;
+        p.gate = 8;
+      } else {
+        // A PCM voice's: its levels, and no points of the track's own.
+        const v = this._pcmVoices[ch - 20];
+        v.velBase = v.vel = VEL_FINE_MAX;
+        v.volBase = v.vol = VOL_UNITY;
+        v.oHasRs = v.oHasLs = false;
+        v.oRKind = v.oLKind = null;
+      }
+      // …and its modulators, for the same reason: they belong to the part that
+      // just lost the channel. An SE put the owner's in its ghost a few lines
+      // up, so this is also what stops the displaced BGM's macro from playing
+      // the SE through.
+      this._clearChannelModulators(ch);
+      // Any OTHER part still suspended on this channel loses it for good —
+      // everything except the one this start just took charge of, which is
+      // either the owner it suspended or the one it inherited by preempting.
+      for (const o of this._trk) {
+        if (o !== trk && o.suspended && o.channelId === ch && o.index !== trk.displaced) {
+          this._releaseSuspended(o);
+        }
+      }
+      // A plain start owns the channel outright; a part it restarts that was
+      // displaced plays from the top, not out of its ghost.
+      if (!asSe) this._ghost[ch] = null;
+    }
+    // Re-init the track's dispatch state.
+    trk.pc = trk.eventOffset;
+    trk.acc = 0;
+    trk.wait = 0;
+    trk.gateLeft = -1;
+    trk.pendingOff = false;
+    trk.keyedNow = trk.offNext = false;
+    trk.trigByte = 0;
+    trk.loops = [];
+    trk.held = false;
+    trk.csmOn = false;
+    trk.fading = false;
+    trk.running = true;
+    trk.fresh = true; // the leading setup runs at the next frame's head (§4.2)
+    trk.suspended = false;
+    trk.isSe = asSe;
+    // A PCM effect: the DAC's pan is its own from here, at centre.
+    if (asSe && ch >= 20 && ch <= 22) {
+      this._sePan = 0;
+      this._ym(1, 0xb6, this._b4Of(5));
+    }
+  }
+
+  // STOP_TRACK (mailbox cmd 2): stop the track; if it is an SE that displaced a
+  // BGM owner, restore the owner first (held/looping SEs end on STOP, not EOT).
+  _mailboxStop(trackId) {
+    const t = this._trk.find((x) => x.trackId === trackId);
+    if (!t) return;
+    if (t.suspended) {
+      // A part an effect displaced, and the game asked it to stop: it must not
+      // come back when that effect ends. Its channel is the effect's — nothing
+      // is written.
+      this._releaseSuspended(t);
+    } else if (t.running) {
+      this._stopTrack(t);
+      this._reclaimSe(t);
+    }
+  }
+
+  // A ghost's patch back on the chip: the entry change-only against the
+  // structured shadow, as VOICE_SET does it, then $B4 the same way. Mirrors
+  // mmlispseq.c restore_patch.
+  _restorePatch(ch, gr) {
+    const r = this._fm[ch];
+    this._applyPatch(ch, fmPatchOf(gr));
+    const old = this._b4Of(ch);
+    r.ams = gr.ams;
+    r.fms = gr.fms;
+    r.pan = gr.pan;
+    if (this._b4Of(ch) !== old) this._ym(ch >= 3 ? 1 : 0, 0xb4 + (ch % 3), this._b4Of(ch));
+  }
+
+  // ── SE: the displaced part plays on, unheard (driver.md §2.5) ────────────
+  // A part an effect displaced keeps its clock: it dispatches, its gates run
+  // out and its sweeps and fade move on, into a GHOST of its channel — the
+  // channel's state as the part left it — while every write addressed to the
+  // channel is dropped (_ghostMuted). The ghost and the live channel trade
+  // places only around what the part does to its channel (_ghostIn/_ghostOut),
+  // so in between the effect's own state is the live one. SE-end puts the
+  // ghost on the chip (_restoreGhost). mmlispseq.c ghost_capture / ghost_swap.
+  _ghostCapture(ch) {
+    const mc = this._macroCh(ch);
+    const g = {
+      sweeps: [...this._sweeps[this._sweepBank(ch)]],
+      binds: new Map(this._macroActive[mc]),
+      slots: [], // a ghost runs no macros (_macroTrigger)
+      offAcc: this._offAcc[mc],
+      mcSe: this._mcSe[mc],
+      noiseMode: this._noiseMode,
+    };
+    if (ch < 6) {
+      const r = this._fm[ch];
+      g.fm = { ...r, ops: r.ops.map((o) => ({ ...o })) };
+    } else if (ch < 10) g.psg = { ...this._psg[ch - 6] };
+    else g.pcm = { ...this._pcmVoices[ch - 20] };
+    this._ghost[ch] = g;
+  }
+  // Trade the live channel and its ghost; the same call trades them back.
+  _ghostSwap(ch) {
+    const g = this._ghost[ch];
+    if (ch < 6) [this._fm[ch], g.fm] = [g.fm, this._fm[ch]];
+    else if (ch >= 20) [this._pcmVoices[ch - 20], g.pcm] = [g.pcm, this._pcmVoices[ch - 20]];
+    else {
+      [this._psg[ch - 6], g.psg] = [g.psg, this._psg[ch - 6]];
+      if (ch === 9) [this._noiseMode, g.noiseMode] = [g.noiseMode, this._noiseMode];
+    }
+    const bank = this._sweepBank(ch), mc = this._macroCh(ch);
+    [this._sweeps[bank], g.sweeps] = [g.sweeps, this._sweeps[bank]];
+    [this._macroActive[mc], g.binds] = [g.binds, this._macroActive[mc]];
+    [this._macroSlots[mc], g.slots] = [g.slots, this._macroSlots[mc]];
+    [this._offAcc[mc], g.offAcc] = [g.offAcc, this._offAcc[mc]];
+    [this._mcSe[mc], g.mcSe] = [g.mcSe, this._mcSe[mc]];
+    this._ghostCh = this._ghostCh === ch ? -1 : ch;
+  }
+  // Around what a track does to its channel: a displaced one does it to its
+  // ghost. Returns the channel swapped in, or -1, for _ghostOut.
+  _ghostIn(t) {
+    if (!t.suspended || !this._ghost[t.channelId]) return -1;
+    this._ghostSwap(t.channelId);
+    return t.channelId;
+  }
+  _ghostOut(ch) {
+    if (ch >= 0) this._ghostSwap(ch);
+  }
+
+  // SE-end: the ghost's state back on the channel — the part's patch,
+  // levels, pitch, pan, noise mode, a PCM voice's points, its sweeps (which
+  // went on from where they were) and its macro binds — but not its sound: a
+  // note it held under the effect stays silent, and the part sounds again from
+  // its next note, which starts its macros as any note-on does (driver.md
+  // §2.5). An FM envelope, a PSG :vel macro or a sample's head would only be a
+  // new attack. mmlispseq.c ghost_restore.
+  _restoreGhost(ch) {
+    const g = this._ghost[ch];
+    this._ghost[ch] = null;
+    if (!g) return;
+    // Whatever the SE left bound or sweeping goes first — the channel is
+    // changing hands again, and the rule is the claim's.
+    this._clearChannelModulators(ch);
+    if (ch < 6) {
+      const r = this._fm[ch], gr = g.fm;
+      this._restorePatch(ch, gr);
+      r.velBase = gr.velBase;
+      r.vel = gr.vel;
+      r.volBase = gr.volBase;
+      r.vol = gr.vol;
+      r.gate = gr.gate;
+      r.pitchCents = gr.pitchCents;
+      r.currentNote = gr.currentNote;
+      r.snap = gr.snap;
+      r.lfoSync = gr.lfoSync; // the part's, which the claim left behind
+      // Carrier level as a note-on composes it, so a vel/vol below unity lands.
+      this._recomposeCarriers(ch);
+    } else if (ch < 10) {
+      const st = this._psg[ch - 6], gs = g.psg;
+      st.velBase = gs.velBase;
+      st.vel = gs.vel;
+      st.volBase = gs.volBase;
+      st.vol = gs.vol;
+      st.gate = gs.gate;
+      st.pitchCents = gs.pitchCents;
+      st.currentNote = gs.currentNote;
+      st.snap = gs.snap;
+      if (ch === 9) this._noiseMode = g.noiseMode; // the effect set its own
+    } else {
+      // A PCM voice's levels and the track's own points; what the engine
+      // plays (the effect's tail, if any) is left to it.
+      const v = this._pcmVoices[ch - 20], gv = g.pcm;
+      for (const k of ["velBase", "vel", "volBase", "vol", "oHasRs", "oRs", "oRKind", "oRBound", "oHasLs", "oLs", "oLKind", "oLBound"]) v[k] = gv[k];
+    }
+    const mc = this._macroCh(ch);
+    this._sweeps[this._sweepBank(ch)] = g.sweeps;
+    for (const [target, macroId] of g.binds) this._macroActive[mc].set(target, macroId);
+    this._offAcc[mc] = g.offAcc;
+  }
+
+  // A suspended track's only way back is the reclaim of the effect that
+  // displaced it. Anything that takes the channel away from that arrangement
+  // has to DISSOLVE it: otherwise the track is stranded — suspended forever,
+  // never dispatching — and the effect's own end would later restore it over
+  // whoever owns the channel by then.
+  _releaseSuspended(t) {
+    if (!t.suspended) return;
+    t.suspended = false;
+    t.running = false; // its ghost is all it had of the channel
+    t.fading = false;
+    this._ghost[t.channelId] = null;
+    for (const se of this._trk) if (se.isSe && se.displaced === t.index) se.displaced = null;
+  }
+
+  // Restore the BGM owner an SE displaced (SE-end reclaim). Hooked at the SE
+  // track's END_OF_TRACK, at STOP_TRACK and at a fade's terminal stop.
+  _reclaimSe(seTrk) {
+    if (!seTrk.isSe) return;
+    const d = seTrk.displaced;
+    seTrk.isSe = false;
+    seTrk.displaced = null;
+    // The DAC's pan the song's again (another effect's while one plays).
+    if (seTrk.channelId >= 20 && seTrk.channelId <= 22) this._ym(1, 0xb6, this._b4Of(5));
+    const owner = d == null ? null : this._trk[d];
+    if (!owner || !owner.suspended) return;
+    owner.suspended = false;
+    // A part that ended under the effect leaves the channel as the effect did.
+    if (owner.running) this._restoreGhost(owner.channelId);
+    else this._ghost[owner.channelId] = null;
+  }
+
+  _mailboxFade(trackId, frames) {
+    const t = this._trk.find((x) => x.trackId === trackId && x.running);
+    if (!t) return;
+    if (frames === 0) {
+      this._stopTrack(t);
+      this._reclaimSe(t);
+      return;
+    }
+    // Bresenham vol ramp from the channel's current vol down to 0 over `frames`
+    // frames, then STOP_TRACK (driver.md §6.5). Division-free.
+    t.fading = true;
+    t.fadeN = frames;
+    t.fadeErr = 0;
+    t.fadeVol = this._readParam(t.channelId, TARGET_ID.VOL);
+    t.fadeCur = t.fadeVol;
+    t.fadeFrame = 0;
+  }
+
+  _processFades() {
+    for (const t of this._trk) {
+      if (!t.fading) continue;
+      t.fadeFrame++;
+      t.fadeErr += t.fadeVol;
+      while (t.fadeErr >= t.fadeN) {
+        t.fadeErr -= t.fadeN;
+        t.fadeCur--;
+      }
+      const gh = this._ghostIn(t); // a displaced part fades in its ghost
+      this._paramSet(t.channelId, TARGET_ID.VOL, t.fadeCur < 0 ? 0 : t.fadeCur);
+      if (t.fadeFrame >= t.fadeN) {
+        this._stopTrack(t);
+        // A faded-out effect gives its channel back, exactly as one that ended
+        // or was stopped does. Without this the displaced part stays suspended
+        // for good and the channel keeps the effect's last registers.
+        this._reclaimSe(t);
+      }
+      this._ghostOut(gh);
+    }
+  }
+
+  // ── PCM command emission (driver.md §6.3) ────────────────────────────────
+  // Every field is resolved HERE, on the sequencer side: the host turns a
+  // command into state-store pairs and the engine does no per-note arithmetic.
+  _pcmCmd(bytes) {
+    // A displaced part's voice is its ghost (_ghostSwap): its commands are
+    // dropped, as its channel's register writes are (_ghostMuted).
+    if (this._ghostCh >= 20 && bytes[0] !== PCM_MASTER && bytes[1] === this._ghostCh - 20) return;
+    if (this._song?.pcmBanked && bytes[0] === PCM_START) {
+      const v = this._pcmVoices[bytes[1]], sample = this._song.samples[v.sampleId];
+      const bank = this._sampleBankBase + Math.floor((sample?.base ?? 0) / 0x8000);
+      bytes = [PCM_START_BANKED, ...bytes.slice(1), ...u16le(bank)];
+    }
+    if (this._slotSink) this._slotSink.pcm(bytes);
+    if (this._pcmModel) this._pcmModel.apply(bytes);
+  }
+
+  // The three voices' state (pcm-voices.js): the SE snapshot and the mute read it.
+  get _pcmVoices() {
+    return this._pcm.voices;
+  }
+
+  // One frame of the engine's DAC bytes, each written at its own instant.
+  _pcmFrame() {
+    if (!this._pcmModel) return;
+    const img = this._pcmModel.img;
+    this._pcmSampleRem += img.multibank ? img.masterHz / this._frameHz : img.frameMaster;
+    while (this._pcmSampleRem >= img.periodMaster) {
+      this._pcmSampleRem -= img.periodMaster;
+      const byte = this._pcmModel.next();
+      this._writeCb(0, 0x2a, byte, this._whenSample(this._pcmSampleIndex++));
+    }
+  }
+
+  // Logical current value of a target, for PARAM_ADD read-modify-write.
+  _readParam(ch, target) {
+    if (target === TARGET_ID.MASTER) return this._master;
+    if (target === TARGET_ID.LFO_RATE) return this._lfoRate ?? 0;
+    if (VAL_TARGET_IDS.has(target)) return this._valSlots[target - TARGET_ID.VAL0];
+    {
+      const op = this._fm3OpFor(ch);
+      if (op) {
+        if (target === TARGET_ID.NOTE_PITCH) return this._fm3OpCents[op - 1];
+        if (target === TARGET_ID.VEL) return (this._fm3OpVel[op - 1] + VEL_FINE / 2) >> 3;
+        if (target === TARGET_ID.VOL) return this._fm3OpVolBase[op - 1];
+      }
+    }
+    // vol reads the fader (a relative write or a sweep from "now" moves the
+    // fader), not a :vol macro's live level (driver.md §7.2).
+    if (target === TARGET_ID.VOL)
+      return ch < 6 ? this._fm[ch].volBase : ch < 10 ? this._psg[ch - 6].volBase
+        : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].volBase : 31;
+    if (target === TARGET_ID.VEL)
+      return ((ch < 6 ? this._fm[ch].vel : ch < 10 ? this._psg[ch - 6].vel
+        : ch >= 20 && ch <= 22 ? this._pcmVoices[ch - 20].vel : VEL_FINE_MAX)
+        + VEL_FINE / 2) >> 3;
+    if (target === TARGET_ID.GATE)
+      return ch < 6 ? this._fm[ch].gate : ch < 10 ? this._psg[ch - 6].gate : 8;
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) return this._sePan; // an effect's (_paramCh)
+    const fc = ch >= 16 && ch <= 19 ? 2 : ch; // an operator track's patch is CH3's
+    if (fc < 6) {
+      const regs = this._fm[fc];
+      if (target === TARGET_ID.NOTE_PITCH) return regs.pitchCents;
+      if (target === TARGET_ID.SNAP) return regs.snap;
+      if (target === TARGET_ID.FM_FB) return regs.feedback;
+      if (target === TARGET_ID.FM_ALG) return regs.algorithm;
+      if (target === TARGET_ID.PAN) return regs.pan ?? 0; // a sweep without :from, a + or a * starts from it
+      if (target >= TARGET_ID.FM_TL1 && target <= TARGET_ID.FM_TL4)
+        return regs.ops[target - TARGET_ID.FM_TL1].voicedTl;
+      // Op-param fields (AR/DR/SR/RR/SL/KS/ML/DT/SSG/AMEN, 0x16..0x3D), as
+      // mmlispseq.c read_param reads them: the family selects the field, the
+      // low 2 bits the operator, from the state the driver already keeps — so
+      // an op-param relative reads its real base (as ir-player does).
+      if (target >= TARGET_ID.FM_AR1 && target <= TARGET_ID.FM_AMEN4) {
+        const fam = (target - TARGET_ID.FM_AR1) >> 2;
+        const op = (target - TARGET_ID.FM_AR1) & 3;
+        return regs.ops[op][
+          ["ar", "dr", "d2r", "rr", "sl", "rs", "mul", "dt", "ssg", "amen"][fam]
+        ];
+      }
+    } else if (ch < 10 && target === TARGET_ID.NOTE_PITCH) {
+      return this._psg[ch - 6].pitchCents;
+    } else if (ch < 10 && target === TARGET_ID.SNAP) {
+      return this._psg[ch - 6].snap;
+    }
+    return 0;
+  }
+
+  // ── The vblank step (driver.md §4, normative order) ──────────────────────
+  // The frame is divided into SLOT_SUBS sub-ticks (§3.5). Note dispatch runs on
+  // every one of them; the engines run once a frame, at sub-tick 0. That split
+  // is what the measurement bought: note dispatch is under 1% of steady-state
+  // write traffic, so subdividing it costs nothing, while macro/sweep stepping
+  // is essentially all of it and would multiply the frame's writes by K.
+  stepFrame() {
+    // 1. Mailbox drain — stub in the reference (all tracks auto-started).
+    for (let sub = 0; sub < SLOT_SUBS; sub++) {
+      this._sub = sub;
+      // A started track's leading setup runs at the head of its first frame,
+      // before the tempo step below is taken: a head TEMPO_SET governs the
+      // frame the track starts in. The track then accumulates in this frame.
+      if (sub === 0) {
+        for (const trk of this._trk) {
+          // A key-off held over from a note keyed in the last frame (gate).
+          if (trk.offNext) {
+            this._curAcc = 0;
+            const gh = this._ghostIn(trk);
+            this._channelOff(trk.channelId);
+            this._ghostOut(gh);
+            trk.offNext = false;
+          }
+          trk.keyedNow = false;
+          if (trk.running && trk.fresh) {
+            const gh = this._ghostIn(trk);
+            this._dispatch(trk);
+            this._ghostOut(gh);
+            trk.fresh = false;
+          }
+        }
+      }
+      const step = subIncrement(this._increment, sub, SLOT_SUBS);
+      if (sub === 0) this._frameInc = step; // a tick-clocked macro's share (§13.2)
+      // 2. Per track, ascending index: accumulate and dispatch.
+      for (const trk of this._trk) {
+        if (!trk.running || trk.held) continue;
+        trk.acc += trk.flags & TRACK_FLAG.isSe ? subIncrement(trk.inc, sub, SLOT_SUBS) : step;
+        while (trk.acc >= 0x100) {
+          trk.acc -= 0x100;
+          this._curAcc = trk.acc; // the tick's place in the frame, for a key-off
+          // One tick: gate countdown, then wait countdown / dispatch.
+          if (trk.gateLeft > 0) {
+            trk.gateLeft--;
+            if (trk.gateLeft === 0) {
+              // A gate that runs out in its note-on's own frame keys off at
+              // the next frame's head: on and off in one frame never sound.
+              if (trk.keyedNow) trk.offNext = true;
+              else {
+                const gh = this._ghostIn(trk);
+                this._channelOff(trk.channelId);
+                this._ghostOut(gh);
+              }
+              trk.gateLeft = -1;
+            }
+          }
+          if (trk.wait > 0) trk.wait--;
+          if (trk.wait === 0) {
+            const gh = this._ghostIn(trk);
+            this._dispatch(trk);
+            this._ghostOut(gh);
+            if (!trk.running || trk.held) break;
+          }
+        }
+      }
+      if (sub === 0) {
+        // 3. Sweep engines (driver.md §4 step 3): ascending channel, ascending
+        //    slot, then the global tempo sweep. Each writes into the shadow.
+        for (let bank = 0; bank < this._sweeps.length; bank++) {
+          const ch = this._sweepBankCh(bank);
+          const slots = this._sweeps[bank];
+          for (let si = 0; si < slots.length; si++) {
+            if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
+          }
+        }
+        // A ghost's sweeps move on with it, unheard, after the live ones.
+        for (const ch of GHOST_CHS) {
+          const g = this._ghost[ch];
+          if (!g || !g.sweeps.some(Boolean)) continue;
+          this._ghostSwap(ch);
+          const slots = this._sweeps[this._sweepBank(ch)];
+          for (let si = 0; si < slots.length; si++) {
+            if (slots[si] && this._processSweep(ch, slots[si])) slots[si] = null;
+          }
+          this._ghostSwap(ch);
+        }
+        // The song-wide targets' sweeps, after every channel's, in slot order.
+        for (let g = 0; g < GLOBAL_SWEEPS; g++)
+          if (this._gsweeps[g] && this._processSweep(0, this._gsweeps[g])) this._gsweeps[g] = null;
+        this._processMacros(); // §13.3: macros after sweeps, same write path
+        if (this._tempoSweep && this._processTempoSweep()) this._tempoSweep = null;
+        if (this._csmRateSweep && this._processCsmRateSweep()) this._csmRateSweep = null;
+        this._processFades(); // FADE_TRACK vol ramps (driver.md §6.5)
+      }
+      // The live DAC feed, after the frame's commands (no-op in the gates).
+      if (sub === SLOT_SUBS - 1) this._pcmFrame();
+      // 4. Writes go out inline through the shadow (change-only) in dispatch
+      //    order; the sub-tick boundary is what buckets them into sub-slots.
+      this._slotSink?.endSub();
+    }
+    this._curAcc = 0; // a host key-off, between frames, lands on a frame's head
+    this._frame++;
+  }
+
+  // ── Public API (mirrors IRPlayer where the live page touches it) ─────────
+  isPlaying() {
+    return this._playing;
+  }
+
+  /** Same as IRPlayer.setOnRunStart: the reset is a power-on, so a UI mixer
+   *  re-applies itself here, before the first frame runs. */
+  setOnRunStart(fn) {
+    this._onRunStart = fn;
+  }
+
+  // `se` auditions one effect (def-se) alone: the song is not started, the
+  // effect is played as the game's PLAY_SE would.
+  play(audioContext, { se = null } = {}) {
+    if (!this._song) throw new Error("No MMB loaded");
+    this.stop();
+    this._audioContext = audioContext ?? null;
+    // Anchor the frame clock before _reset so the init writes carry the real
+    // start time instead of a stale anchor from a previous run.
+    this._startAudioTime = audioContext ? audioContext.currentTime + 0.05 : 0;
+    this._reset(se == null);
+    this._onRunStart?.();
+    if (se != null) this._playSe(se);
+    this._playing = true;
+    if (!audioContext) return;
+    const tick = () => {
+      if (!this._playing) return;
+      const now = audioContext.currentTime;
+      while (
+        this._startAudioTime + this._frame / this._frameHz <
+        now + this._lookahead
+      ) {
+        this.stepFrame();
+        if (this._done()) {
+          this._playing = false;
+          return;
+        }
+      }
+    };
+    tick();
+    this._timer = setInterval(tick, 25);
+  }
+
+  /** As IRPlayer.setLookahead: deeper while the page is hidden. */
+  setLookahead(sec) {
+    this._lookahead = Math.max(0.1, Number(sec) || 0.2);
+  }
+
+  stop() {
+    this._playing = false;
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+    if (!this._fm) return; // never reset — nothing was ever written
+    // Silence with IMMEDIATE (untimed) writes, every channel unconditionally.
+    // Two reasons this must not go through the normal timed path: the driver
+    // clock runs up to a lookahead ahead of the audible position, so
+    // frame-stamped key-offs would land in the future — and the page flushes
+    // the worklet's timed queues right after stop(), which would discard them
+    // (the untimed queue survives a flush). Mirrors IRPlayer.stop().
+    for (let ch = 0; ch < 6; ch++) {
+      const chKey = ((ch >= 3 ? 1 : 0) << 2) | (ch % 3);
+      this._writeCb(0, 0x28, chKey);
+      this._fm[ch].keyed = false;
+    }
+    for (let p = 0; p < 4; p++) {
+      this._writeCb(2, 0, 0x80 | ((p & 0x03) << 5) | 0x10 | 0x0f);
+      if (this._psg?.[p]) this._psg[p].sounding = false;
+    }
+  }
+
+  _done() {
+    // Every track idle or held, and no macro still playing a release — the
+    // decay tail after the last key-off (an echo tail, a PSG fade) is part of
+    // the song. The engine owns PCM playback, so a shot's tail is not the
+    // sequencer's to wait for; `mml_done` in the C reads the same.
+    // ...nor a one-shot sweep (a closing fade, a last glide); a loop curve
+    // never ends, so it does not hold the song open.
+    return (
+      this._trk.every((t) => !t.running || t.held) &&
+      !this._macroSlots.some((ss) => ss.some((s) => s && (s.state === "release" || s.state === "tail"))) &&
+      !this._sweeps.some((ss) => ss.some((s) => s && !s.loop)) &&
+      !this._gsweeps.some((s) => s && !s.loop) &&
+      !this._tempoSweep && !this._csmRateSweep
+    );
+  }
+
+  /**
+   * Deterministic offline run: step `maxFrames` vblanks (or until every track
+   * ends/holds), capturing every write as { frame, port, addr, data }.
+   * The same manual-clock idea as IRPlayer.captureRegisterLog, so the two
+   * logs can be diffed by ab-compare.js.
+   */
+  captureRegisterLog({ maxFrames = 36000, commands = [], autoStart = true } = {}) {
+    if (!this._song) throw new Error("No MMB loaded");
+    const writes = [];
+    const saved = this._writeCb;
+    this._writeCb = (port, addr, data) => {
+      writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
+    };
+    // Host command schedule (KEY_OFF/SET_PARAM/FADE_TRACK): applied at the top
+    // of the matching frame, before dispatch — where the sequencer drains its
+    // host command queue (driver.md §4 step 1).
+    const cmdByFrame = new Map();
+    for (const c of commands) {
+      if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
+      cmdByFrame.get(c.frame).push(c);
+    }
+    try {
+      this._audioContext = null;
+      this._reset(autoStart);
+      let frames = 0;
+      while (frames < maxFrames) {
+        for (const c of cmdByFrame.get(this._frame) ?? []) {
+          this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
+        }
+        this.stepFrame();
+        frames++;
+        if (this._done()) break;
+      }
+      return {
+        writes,
+        frames,
+        ended: this._done(),
+        diagnostics: this._diagnostics.slice(),
+      };
+    } finally {
+      this._writeCb = saved;
+    }
+  }
+
+  /**
+   * Deterministic offline run in the gates' form: one slot per frame — the
+   * frame's register writes and PCM commands — through the slot's
+   * cap-and-spill queue (SlotBuilder, driver.md §6.2).
+   *
+   * This is the surface c-gate compares (driver.md §12.2) — the C sequencer
+   * must produce the identical slot stream — and the one pairs-gate turns into
+   * pairs through mmlpairs.c and its JS twin (§12.3).
+   */
+  captureSlotLog({ maxFrames = 36000, commands = [], autoStart = true, prime = -1, builder } = {}) {
+    if (!this._song) throw new Error("No MMB loaded");
+    const b = builder ?? new SlotBuilder();
+    const slots = [];
+    const writes = [];
+    // One byte per track per frame — the trig status bytes (opcodes.md §0x42),
+    // sampled after the frame, which is where c-gate compares them.
+    const trigLog = [];
+    const saved = this._writeCb;
+    const savedSink = this._slotSink;
+    this._slotSink = b;
+    this._writeCb = (port, addr, data) => {
+      writes.push({ frame: this._frame, port, addr: addr & 0xff, data: data & 0xff });
+      // $2A (the DAC data) never crosses the bus: the engine writes it.
+      if (port === 0 && addr === 0x2a) return;
+      b.write(port, addr, data);
+    };
+    const cmdByFrame = new Map();
+    for (const c of commands) {
+      if (!cmdByFrame.has(c.frame)) cmdByFrame.set(c.frame, []);
+      cmdByFrame.get(c.frame).push(c);
+    }
+    try {
+      this._audioContext = null;
+      // prime >= 0: the SGDK host's load — nothing started, PRIME, `prime`
+      // idle frames, then START_TRACK for every track in order (gate_main
+      // --prime does the same).
+      this._reset(prime >= 0 ? false : autoStart);
+      if (prime >= 0) {
+        this._prime();
+        for (let k = 0; k < prime; k++) {
+          this.stepFrame();
+          slots.push(b.endFrame());
+          trigLog.push(this._trk.map((t) => t.trigByte));
+        }
+        // With a schedule, the schedule does the starting — a host that fires
+        // sound effects starts only its BGM tracks, and starting them all here
+        // would be different music. Without one, priming is followed by the
+        // song's start the SGDK example does (MMLisp_startSong: not the
+        // effects' parts).
+        if (!commands.length)
+          for (const t of this._trk) if (!(t.flags & TRACK_FLAG.isSe)) this._startTrack(t.trackId, false);
+      }
+      let frames = 0;
+      while (frames < maxFrames) {
+        for (const c of cmdByFrame.get(this._frame) ?? []) {
+          this._applyMailbox(c.cmd, c.a0 ?? 0, c.a1 ?? 0, c.a2 ?? 0);
+        }
+        this.stepFrame();
+        slots.push(b.endFrame());
+        trigLog.push(this._trk.map((t) => t.trigByte));
+        frames++;
+        if (this._done()) break;
+      }
+      // Drain whatever the cap held back, so the stream is complete.
+      while (b.pending) slots.push(b.endFrame());
+      return {
+        slots,
+        writes,
+        trigLog,
+        frames,
+        ended: this._done(),
+        spillPeak: b.spillPeak,
+        spillFrames: b.spillFrames,
+        diagnostics: this._diagnostics.slice(),
+      };
+    } finally {
+      this._writeCb = saved;
+      this._slotSink = savedSink;
+    }
+  }
+
+  /** The constant tables; drv/68k/tables.c holds the same values (driver.md §12.6). */
+  getLuts() {
+    return this._luts;
+  }
+
+  // ── Live-monitor surface (read-only views of driver state for the UI) ────
+  /** Current tempo, for the transport display. Derived from the 8.8 increment. */
+  getBpm() {
+    const inc = this._increment ?? bpmToTickIncrement(120, this._frameHz);
+    // The inverse of bpmToTickIncrement on THIS score's clock: a PAL-baked
+    // increment is 6/5 of the NTSC one for the same music, so reading it back
+    // on the wrong clock would report a tempo 20% too high.
+    return tickIncrementToBpm(inc, this._frameHz);
+  }
+  /** FM channel shadow state; same field shape as IRPlayer's chRegs. */
+  getChRegs(ch) {
+    return this._fm?.[ch] ?? freshFmChannel();
+  }
+  getOpMask(ch) {
+    return this._opMasks?.[ch] ?? 0xf0;
+  }
+  /** UI op-enable checkboxes; applied at the next key-on. */
+  setOpMask(ch, mask) {
+    if (this._opMasks && ch >= 0 && ch < 6) this._opMasks[ch] = mask & 0xf0;
+  }
+
+  // ── The panel's controls (IRPlayer has the same three calls) ───────────
+  // A control — { id, kind: "word" | "vol" | "reg" | "val", … } — is one
+  // thing the panel shows and can take in hand: its value sounds at once;
+  // while it is held the score's writes of it are skipped, and once let go
+  // it stays until the score next writes it. A run starts with the score's
+  // own values (_reset). Here every score write of a word goes through
+  // _paramSet (a value, a sweep's step, a macro's sample, a relative write)
+  // or the tempo opcodes, so one gate carries every hand: a control is the
+  // keys of the writes it stands for.
+
+  // The gate's keys for a control, each with the panel's write of it.
+  _handKeys(c, value) {
+    if (c.kind === "val") {
+      const slot = this._valNameToSlot?.get(c.name);
+      return slot === undefined ? [] : [[`val:${slot}`, () => this.setVal(c.name, value)]];
+    }
+    if (c.kind === "vol") {
+      const v = Math.max(0, Math.min(31, Math.round(value)));
+      return this._stripChannels(c.strip).map((id) => [`${id}:${TARGET_ID.VOL}`, () => this._paramSet(id, TARGET_ID.VOL, v)]);
+    }
+    if (c.kind === "reg") {
+      const id = TARGET_ID[c.word];
+      return id === undefined ? [] : [[`${c.ch}:${id}`, () => this.setParam(c.word, value, c.ch)]];
+    }
+    if (c.word === "tempo") {
+      return [["tempo", () => {
+        if (!Number.isFinite(value) || value <= 0) return;
+        this._tempoSweep = null;
+        this._increment = bpmToTickIncrement(value, this._frameHz);
+      }]];
+    }
+    return TARGET_ID[c.word] === undefined ? [] : [[c.word, () => this.setParam(c.word, value)]];
+  }
+
+  /** The panel takes `c` in hand at `value`. */
+  hold(c, value) {
+    this._hands ??= new Map();
+    for (const [key, write] of this._handKeys(c, value)) {
+      this._hands.set(key, { held: true });
+      this._panelWrite = true;
+      try {
+        write();
+      } finally {
+        this._panelWrite = false;
+      }
+    }
+  }
+
+  /** The panel lets go of `c`: its value stays until the score writes it. */
+  release(c) {
+    for (const [key] of this._handKeys(c)) {
+      const h = this._hands?.get(key);
+      if (h) h.held = false;
+    }
+  }
+
+  /**
+   * `c` now, as the panel shows it; `hand`: the panel's value is in force.
+   * @returns {{ v: number, hand: boolean } | null}
+   */
+  read(c) {
+    const key = this._handKeys(c)[0]?.[0];
+    if (key === undefined) return null;
+    const hand = !!this._hands?.has(key);
+    if (c.kind === "val") {
+      const v = this.getVal(c.name);
+      return v == null ? null : { v, hand };
+    }
+    if (!this._fm) return null; // never reset: nothing to read yet
+    if (c.kind === "vol") {
+      const id = this._stripChannels(c.strip)[0];
+      const op = this._fm3OpFor(id);
+      const v = op ? this._fm3OpVol[op - 1]
+        : id < 6 ? this._fm[id].vol : id < 10 ? this._psg[id - 6].vol
+        : id >= 20 && id <= 22 ? this._pcmVoices[id - 20]?.vol ?? VOL_UNITY : VOL_UNITY;
+      return { v, hand };
+    }
+    if (c.kind === "reg") return { v: this._readParam(c.ch, TARGET_ID[c.word]), hand };
+    if (c.word === "tempo") return { v: this.getBpm(), hand };
+    if (c.word === "MASTER") return { v: this._master ?? VOL_UNITY, hand };
+    return { v: this._lfoRate ?? 0, hand };
+  }
+
+  /** The value slots whose value is the panel's now, name → value. */
+  valsInHand() {
+    const out = {};
+    for (const [name, slot] of this._valNameToSlot ?? []) if (this._hands?.has(`val:${slot}`)) out[name] = this.getVal(name);
+    return out;
+  }
+
+  // A score write of `key`: skipped while held; let go, it takes it back.
+  _scoreWrites(key) {
+    const h = this._hands?.get(key);
+    if (!h) return true;
+    if (h.held) return false;
+    this._hands.delete(key);
+    return true;
+  }
+
+  // A strip's channels, as the MMB numbers them.
+  _stripChannels(strip) {
+    return (strip.heads ?? []).map(resolveChannelId).filter((id) => id != null);
+  }
+
+  /**
+   * Live parameter write from the UI (same interface as IRPlayer.setParam):
+   * a target *name* plus a channel index, routed through the driver's own
+   * per-target apply path — so MASTER/VOL/VEL recompose levels exactly as a
+   * PARAM_SET in the stream would.
+   * @param {string} target  TARGET_ID key, e.g. 'MASTER'
+   */
+  setParam(target, value, chIndex = 0) {
+    const id = TARGET_ID[target];
+    if (id === undefined) {
+      this._diag("W_DRV_UNKNOWN_TARGET", `setParam target ${target}`);
+      return;
+    }
+    if (!this._fm) return; // never reset — nothing to write yet
+    this._hostParam(chIndex, id, value);
+  }
+
+  // The host's write of a channel's word (SET_PARAM, setParam): its pan of
+  // a pcm channel is the song's, fm6's (mmlispseq.c mml_set_param).
+  _hostParam(ch, target, value) {
+    if (target === TARGET_ID.PAN && ch >= 20 && ch <= 22) ch = 5;
+    this._paramSet(ch, target, value);
+  }
+
+  /**
+   * Live `def-val` slot write (same name-keyed interface as IRPlayer.setVal).
+   * Names come from the MMB metadata (loadMMB); the slot itself is what the
+   * stream reads, so this is the same write SET_VAL performs — a $slot-fed
+   * sweep or scaled macro picks it up on its next read.
+   */
+  setVal(name, value) {
+    const slot = this._valNameToSlot?.get(name);
+    if (slot === undefined || !this._valSlots || slot >= this._valSlots.length) return;
+    const v = toSlotValue(value);
+    if (v === null) return;
+    this._gsweeps[2 + slot] = null; // the latest write wins over a score sweep
+    this._valSlots[slot] = v;
+  }
+
+  getVal(name) {
+    const slot = this._valNameToSlot?.get(name);
+    return slot === undefined ? undefined : this._valSlots?.[slot];
+  }
+
+  // ── Live mixer: mute / solo (same interface as IRPlayer) ─────────────────
+  // ti = track index (position in the MMB/IR track list). A muted (or, while any
+  // track is soloed, a non-soloed) track produces no sound: its notes don't key,
+  // so its macros don't run either (they gate on the keyed state, §13.3).
+  muteTrack(ti, muted) {
+    if (muted) this._mutedTracks.add(ti);
+    else this._mutedTracks.delete(ti);
+    this._applyAudibility();
+  }
+  soloTrack(ti, on) {
+    if (on) this._soloTracks.add(ti);
+    else this._soloTracks.delete(ti);
+    this._applyAudibility();
+  }
+  clearChannelStates() {
+    this._mutedTracks.clear();
+    this._soloTracks.clear();
+    this._applyAudibility();
+  }
+  _isTrackAudible(ti) {
+    if (this._soloTracks.size > 0) return this._soloTracks.has(ti);
+    return !this._mutedTracks.has(ti);
+  }
+  // Silence channels that just became inaudible; audible ones resume at their
+  // next note. (Live-only; never runs during the trace gate / A-B.)
+  _applyAudibility() {
+    if (!this._trk) return;
+    for (const trk of this._trk) {
+      if (this._isTrackAudible(trk.index)) continue;
+      // An FM3 operator track (16–19) keys off its operator alone.
+      if (trk.channelId < 10 || this._fm3OpFor(trk.channelId)) this._channelOff(trk.channelId);
+      else if (trk.channelId >= 20 && trk.channelId <= 22) {
+        // PCM has no key: muting parks the voice on the silence page.
+        const vi = trk.channelId - 20;
+        const v = this._pcmVoices[vi];
+        v.keyed = false;
+        this._macroSlots[this._macroCh(trk.channelId)] = []; // no :keyon re-START
+        if (v.started) {
+          v.looping = false;
+          this._pcmCmd([PCM_START, vi, 8, ...u16le(PCM_SILENCE_ADDR), ...u16le(0), ...u16le(PCM_SILENCE_ADDR)]);
+        }
+      }
+    }
+  }
+}

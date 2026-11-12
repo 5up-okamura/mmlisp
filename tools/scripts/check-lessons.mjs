@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// The tutorial (tutorial/lessons.json, live/src/lessons.js): every step's
+// The tutorial (tutorial/lessons.json, live/src/app/lessons.js): every step's
 // file is there and compiles clean, its exercise is not done before the
 // learner starts, and the step's answer compiles without an error and does it.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { parseStep, passes, stepKey, firstUndone, neighbor, stepState } from "../../live/src/lessons.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { parseStep, passes, stepKey, firstUndone, neighbor, stepState } from "../../live/src/app/lessons.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { TARGETS } from "../../live/src/targets.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lessons = JSON.parse(fs.readFileSync(path.join(root, "tutorial/lessons.json"), "utf8"));

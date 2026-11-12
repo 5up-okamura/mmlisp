@@ -1,12 +1,12 @@
 // Source-edit regressions: notation, target sound names and actual edit extent.
 import assert from 'node:assert/strict';
-import { compileMMLisp } from '../../live/src/mmlisp2ir.js';
-import { parse } from '../../live/src/mmlisp-parser.js';
+import { compileMMLisp } from '../../live/src/lang/mmlisp2ir.js';
+import { parse } from '../../live/src/lang/mmlisp-parser.js';
 import { readFileSync } from 'node:fs';
-import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/targets.js';
-import { IRPlayer } from '../../live/src/ir-player.js';
-import { macroFrames } from '../../live/src/ir-utils.js';
-import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from '../../live/src/edit-tools.js';
+import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/machine/targets.js';
+import { IRPlayer } from '../../live/src/player/ir-player.js';
+import { macroFrames } from '../../live/src/lang/ir-utils.js';
+import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from '../../live/src/editor/edit-tools.js';
 
 let count = 0;
 const check = (name, run) => { run(); count++; console.log(`ok ${name}`); };

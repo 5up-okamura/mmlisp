@@ -4,7 +4,7 @@
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const COMPILER_PATH = path.join(ROOT, "live", "src", "mmlisp2ir.js");
+const COMPILER_PATH = path.join(ROOT, "live", "src", "lang", "mmlisp2ir.js");
 
 async function compile(src, filename) {
   const { compileMMLisp } = await import(COMPILER_PATH);

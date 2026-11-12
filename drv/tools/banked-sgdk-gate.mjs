@@ -8,7 +8,7 @@ import {prioritizeFmNotes} from './pairs-model.mjs';
 import {buildMultibankImage} from './build-multibank.mjs';
 import {MultibankModel} from './multibank-model.mjs';
 import {readProbe} from './probe-analysis.mjs';
-import {DrvPlayer} from '../../live/src/drv-player.js';
+import {DrvPlayer} from '../../live/src/driver/drv-player.js';
 import {FrameRecorder,recordWrites,recordPcm} from './pairs-model.mjs';
 const args=process.argv.slice(2),opt=(k,d)=>args.includes(k)?args[args.indexOf(k)+1]:d;
 const file=resolve(args.find(s=>s.endsWith('.mmlisp'))??'tests/multibank.mmlisp');

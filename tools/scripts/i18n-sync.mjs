@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The translations of the Live app's reference and snippets, kept in step
-// with the English (live/src/i18n.js explains what is translated and why).
+// with the English (live/src/app/i18n.js explains what is translated and why).
 //
 //   node scripts/i18n-sync.mjs                   check: every pack complete and current
 //   node scripts/i18n-sync.mjs --todo ja         the texts ja still needs, as JSON on stdout
@@ -8,7 +8,7 @@
 //
 // The English texts are read from where the app reads them: reference.js,
 // the snippets' leading comments and the tutorial (tutorial/lessons.json and
-// its steps' leading comments). A pack (live/src/i18n/<lang>.js) holds, per
+// its steps' leading comments). A pack (live/src/app/i18n/<lang>.js) holds, per
 // text, [hash of the English, translation]; a text whose English changed is
 // stale and listed again by --todo. The translation itself is done by an AI
 // session from the --todo output, with tools/i18n/glossary.md in hand; the
@@ -17,12 +17,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { REFERENCE, REFERENCE_CATEGORIES } from "../../live/src/reference.js";
-import { parseStep, stepKey, textKeys } from "../../live/src/lessons.js";
-import { UI_TEXTS } from "../../live/src/ui-texts.js";
+import { REFERENCE, REFERENCE_CATEGORIES } from "../../live/src/lang/reference.js";
+import { parseStep, stepKey, textKeys } from "../../live/src/app/lessons.js";
+import { UI_TEXTS } from "../../live/src/app/ui-texts.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const packDir = path.join(root, "live/src/i18n");
+const packDir = path.join(root, "live/src/app/i18n");
 
 const hash = (text) => createHash("sha1").update(text).digest("hex").slice(0, 8);
 

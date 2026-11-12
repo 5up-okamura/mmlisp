@@ -297,7 +297,7 @@ export function buildConfig({
     throw new Error("the work targets are fractions of a slot");
   // THE CONFIGURATION IS THE IMAGE'S IDENTITY: `stamp` is a hash of this whole
   // object, and every host-side mirror carries it (build-engine.mjs
-  // lightDescriptor -> live/src/engine-images.js and sgdk/mmlispdrv_bin.h).
+  // lightDescriptor -> live/src/driver/engine-images.js and sgdk/mmlispdrv_bin.h).
   // The fields the engine does not vary are pinned here rather than dropped,
   // because a field that leaves the object renames every image built from it:
   // every image is the shipped one (`production`), no voice carries an octave

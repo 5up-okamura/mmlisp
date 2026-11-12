@@ -2,7 +2,7 @@
 //
 //   node tools/rate-mirrors.mjs
 //
-// 68k/mml_rate.h, sgdk/mmlispdrv_bin.h and live/src/engine-images.js are each
+// 68k/mml_rate.h, sgdk/mmlispdrv_bin.h and live/src/driver/engine-images.js are each
 // generated, and an SGDK project links the first two while the exporter bakes
 // sample banks from the third. If they drift apart the driver refuses its own
 // sample bank at load, or plays it at the wrong pitch. Nothing in the build
@@ -10,8 +10,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENGINE_IMAGES, ENGINE_IMAGES_PAL } from "../../live/src/engine-images.js";
-import { pcmBankStamp } from "../../live/src/mmb.js";
+import { ENGINE_IMAGES, ENGINE_IMAGES_PAL } from "../../live/src/driver/engine-images.js";
+import { pcmBankStamp } from "../../live/src/driver/mmb.js";
 
 const drv = join(dirname(fileURLToPath(import.meta.url)), "..");
 const rows = [
@@ -21,7 +21,7 @@ const rows = [
   const m = /RATE-STAMPS\s+(\d+)\s+(\d+)\s+(\d+)/.exec(readFileSync(join(drv, rel), "utf8"));
   return { rel, what, stamps: m ? m.slice(1).map(Number) : null };
 });
-rows.push({ rel: "live/src/engine-images.js", what: "what the exporter bakes at",
+rows.push({ rel: "live/src/driver/engine-images.js", what: "what the exporter bakes at",
   stamps: [1, 2, 3].map((v) => pcmBankStamp(ENGINE_IMAGES[v].rateHz)) });
 
 let bad = 0;

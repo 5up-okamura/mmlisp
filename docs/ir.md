@@ -3,7 +3,7 @@
 Describes the IR emitted by the current compiler (v0.7). The MMB
 binary encoding is specified in docs/mmb.md / docs/opcodes.md.
 
-Ground truth: `live/src/mmlisp2ir.js` (producer) and `live/src/ir-player.js`
+Ground truth: `live/src/lang/mmlisp2ir.js` (producer) and `live/src/player/ir-player.js`
 (consumer). Where the two disagree, a **Notes** line calls it out — these
 asymmetries matter for the Z80 driver.
 
@@ -50,7 +50,7 @@ track. The compiler injects two init events: the presence of any
 `fm3-1..fm3-4` track prepends a tick-0 `FM3_MODE { mode: "op" }` into
 `tracks[0]` (`"csm-op"` when a note-less `fm3-csm` track stands beside them) (and into an effect's first part when the effect has operator
 parts), and every SN76489 noise track (`md`'s `noise`) starts with a tick-0
-`PARAM_SET NOISE_MODE 4` (`white0`) — a part's `init` (`live/src/chips/`).
+`PARAM_SET NOISE_MODE 4` (`white0`) — a part's `init` (`live/src/machine/chips/`).
 
 The PARAM targets `RANGE_START` / `RANGE_END` / `RANGE_LEN` (written
 `:pcm-start` / `:pcm-end` / `:pcm-len`) and `LOOP_START` / `LOOP_END` /
@@ -71,9 +71,9 @@ never compiled for one standard and baked for the other (driver.md §3.3).
 language.md §19), present only when it is not the Mega Drive: `"pc88"`,
 `"x68k"`, `"msx"`, `"pce"`, `"fc"`, `"gb"`, `"midi"` (no chips: the IR player
 keeps its clock and writes nothing). A
-consumer reads its chips from its profile (`live/src/targets.js`). The MMB exporter refuses
+consumer reads its chips from its profile (`live/src/machine/targets.js`). The MMB exporter refuses
 any target but the Mega Drive, and the IR player one whose chips have no
-register encoder yet (`live/src/chips/`).
+register encoder yet (`live/src/machine/chips/`).
 
 `metadata.pcmVoices` is how many PCM voices the Mega Drive's driver plays,
 0–3, from `(def-score :pcm-voices N)` or the highest `pcmN` track the score
@@ -112,7 +112,7 @@ Notes: the player consumes `name`, `init`, `unit` and `slot`; `min`/`max`/
 | `offset`, `frames` | int\|null | Slice of `file` this sample is, in frames (a bank holds several). Null = whole file. |
 | `startSec`, `endSec` | number\|null | The range a note plays (`:pcm-start` / `:pcm-end` / `:pcm-len`). In SECONDS of the sample's own recording, resolved from the def's length tokens at the score's opening tempo. Both null: the whole sample; a null end is the sample's end. The exporter turns them into baked bytes per note; the driver rounds them to its 16-byte block. |
 | `loopStartSec`, `loopEndSec` | number\|null | The loop a held loop note repeats, inside the range (`:loop-start` / `:loop-end` / `:loop-len`), in the same seconds. A null point follows the range (its start, its end). The compiler has checked `startSec ≤ loopStartSec < loopEndSec ≤ endSec`. |
-| `fx`           | array       | The sample's whole chain — its imports' `:fx` (outermost first), then the def's own — resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the range), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `hpf {freq}`, `lpf {freq}` (Hz), `drive {db}`, `fade {at\|null, len, curve}`, `reverb {size, damp, mix, predelay, tail}`. `[]` when the def has none. The exporter runs it (`live/src/sample-fx.js`) before baking. |
+| `fx`           | array       | The sample's whole chain — its imports' `:fx` (outermost first), then the def's own — resolved: one `{type, …params}` per effect in order, every param filled in (defaults included), times in SECONDS (at the score's opening tempo, like the range), levels in dB. `gain {db}`, `normalize {peak}`, `comp {threshold, ratio, attack, release, knee, makeup}`, `limit {ceiling, release}`, `crush {bits}`, `hpf {freq}`, `lpf {freq}` (Hz), `drive {db}`, `fade {at\|null, len, curve}`, `reverb {size, damp, mix, predelay, tail}`. `[]` when the def has none. The exporter runs it (`live/src/audio/sample-fx.js`) before baking. |
 
 ### 2.3 `metadata.waves[]` — wave defs (`(def-wave name …)`)
 
@@ -151,7 +151,7 @@ Tracks have no `name` field; the player routes purely by `channel`.
 ### 3.1 Channel names and player routing
 
 The JSON IR addresses channels **by name**; the player maps names to hardware
-indices at load through the target's channel table (`live/src/targets/`,
+indices at load through the target's channel table (`live/src/machine/targets/`,
 each name's part and voice index). On the Mega Drive:
 
 | `channel`            | Route                                    | Index                    |
@@ -163,7 +163,7 @@ each name's part and voice index). On the Mega Drive:
 
 Unknown names fall back to `min(trackIndex, last FM channel)` on the FM side. The IR names
 channels; the numeric channel ids 0–5 / 6–9 / 16–19 / 20–22 belong to MMB
-(`live/src/mmb.js` `CHANNEL_ID`, docs/mmb.md §6.1).
+(`live/src/driver/mmb.js` `CHANNEL_ID`, docs/mmb.md §6.1).
 
 ## 4. Event encoding
 
@@ -302,7 +302,7 @@ targets are compile diagnostics (`E_MARKER_DUP`, `E_JUMP_UNRESOLVED`).
 Notes: voice defs (`(def-fm name :alg …)` etc.) compile to a burst of same-tick
 `PARAM_SET`s (each carrying `_voiceSet`, the voice's name, under
 `compileMMLisp`'s `voiceStamps: true` — the MIDI export follows a channel's
-voice by it; stripped otherwise) in a fixed key order, `live/src/chips/fm-words.js`'s (ALG, FB,
+voice by it; stripped otherwise) in a fixed key order, `live/src/machine/chips/fm-words.js`'s (ALG, FB,
 AMS, FMS, then op1–4 × AR,DR,SR,RR,SL,TL,KS,ML,DT,SSG,AMEN,DT2,WS,EG,KSL,VIB),
 of the words the track's FM part has. An unsupported target is a diagnostic,
 and no event is emitted.
@@ -687,7 +687,7 @@ write.
 | `ENV_SEMI`        | −48–48         | `pc88`, `msx`, `fc`'s 5B: semitones the period a channel gives (its notes', or a rate it writes) is moved. Inline only (`:env-semi`), a value; `none` is 0. |
 | `ENV_DETUNE`      | −1000–1000     | `pc88`, `msx`, `fc`'s 5B: register steps added to that period (+ lower). Inline only (`:env-detune`), a value; `none` is 0. |
 | `ENV_RATE`        | 0–8000         | `pc88`, `msx`, `fc`'s 5B: the envelope's period (regs 0x0B–0x0C) as one cycle's Hz of the writing track's shape then, a triangle's (shapes 10, 14) halved; 0 the writing track's pitch from its next note. Song-wide as `NOISE_RATE`. |
-| `WAVE`            | index          | `msx` / `pce` / `gb` / `fc`: a wave channel's wave, an entry of `metadata.waves` (§2.3, 32 or 64 steps), written whole to the channel's wave memory (a 64-step wave on a 32-step chip every other step, a 32-step one on the FDS each step twice). A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 or 64 steps; one shorter than the longest held step for step), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
+| `WAVE`            | index          | `msx` / `pce` / `gb` / `fc`: a wave channel's wave, an entry of `metadata.waves` (§2.3, 32 or 64 steps), written whole to the channel's wave memory (a 64-step wave on a 32-step chip every other step, a 32-step one on the FDS each step twice). A track naming a def-wave emits it; a folded `:wave` expression is an entry of its own, named `<channel>@<line>:<column>`. One with a `$slot` carries `expr` instead of `value`: a tree of `{n}` (a number), `{data}` (32 or 64 steps; one shorter than the longest held step for step), `{val}` (a slot's name) and `{op: "+"\|"-"\|"*"\|"/", args}`, taken step by step (`live/src/lang/ir-utils.js` waveEval); the player writes it at once and again in every frame a slot it reads has moved, rounded and kept in −128..127. |
 | `NOISE_MODE`      | 0–7            | SN76489 noise control (FB bit + NF bits); `fc`'s and `gb`'s noise read the FB bit alone, 4 white, 0 periodic. Persistent noise-channel state via `PARAM_SET` (inline `:mode` / `md`'s tick-0 default), re-asserted on each `NOTE_ON`; the NOTE_ON macro is a temporary override. |
 | `FM_TL1`–`FM_TL4` | 0–127          | 0x40+op. PARAM_SET also updates the voiced (timbre) TL base. |
 | `FM_AR1`–`FM_AR4` | 0–31           | 0x50+op bits 4–0 (shared byte with KS).                      |
@@ -704,7 +704,7 @@ write.
 | `FM_VEL1`–`FM_VEL4` | −1, 0–16     | No register: the operator's velocity sensitivity in sixteenths (`:vel1 0.5` → 8), composed into its TL; −1 is the role's own (16 on a carrier, 0 on a modulator). PARAM_SET only. A score that writes one anywhere has every voice emit all four after its other params, −1 where it sets none (language.md §6). |
 
 CSM rate is not a PARAM target (own `CSM_RATE` command; 52–53270 Hz). A
-track takes only the targets its channel's part has (`live/src/chips/parts.js`
+track takes only the targets its channel's part has (`live/src/machine/chips/parts.js`
 `words`; another is `E_UNSUPPORTED_TARGET`): on a PSG-routed track `VOL`,
 `NOTE_PITCH`, `SNAP` and the part's own (`NOISE_MODE`, `DUTY`, `WAVE`, `PAN`,
 the SSG's).

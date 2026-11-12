@@ -8,7 +8,7 @@
 //   WRITES  every FM register write the chip saw is the frames', per port,
 //           in order, and nothing else; the chip's settling table holds
 //   PSG     every PSG byte, in order
-//   VALUE   every DAC byte equals live/src/pcm-model.js driven by the pairs the
+//   VALUE   every DAC byte equals live/src/driver/pcm-model.js driven by the pairs the
 //           expander actually consumed, in the slots it consumed them
 //   TIME    every DAC interval is its slot's length: the clock did not move
 //   SYNC    on m3-pcm-sync, each PCM onset against the fm1 key-on it goes with
@@ -21,9 +21,9 @@ import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
 import { FrameRecorder, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites, recordWritesOnWire } from "./pairs-model.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { headerPcmVoices } from "../../live/src/mmb.js";
-import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { headerPcmVoices } from "../../live/src/driver/mmb.js";
+import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/driver/pcm-model.js";
 import { Machine, traceMeta } from "./machine.mjs";
 import { analyzeTime, analyzeWrites } from "../engine/analyze.mjs";
 

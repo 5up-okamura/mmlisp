@@ -102,8 +102,8 @@ supplies.
 - Upstream: https://github.com/corrscope/corrscope
 - Copyright (c) 2018-2020+, nyanpasu64.
 - License: BSD-2-Clause; the full license text is reproduced in the header of
-  `live/src/scope-trigger.js`.
-- Included: no upstream files. `live/src/scope-trigger.js` is a JavaScript port
+  `live/src/synth/scope-trigger.js`.
+- Included: no upstream files. `live/src/synth/scope-trigger.js` is a JavaScript port
   of corrscope's correlation trigger (`corrscope/triggers.py`,
   `corrscope/utils/trigger_util.py`, `corrscope/utils/windows.py`), adapted to
   take the wave period from the chip's pitch registers instead of estimating it
@@ -128,7 +128,7 @@ supplies.
   (public domain, or MIT) to WebAssembly.
 - License: Apache-2.0, preserved in `live/vendor/LICENSE-spessasynth.txt`.
 - Included: `live/vendor/spessasynth.js`, a minified bundle of the SoundFont
-  synthesizer the GM output runs in its worklet (`live/src/gm-worklet.js`),
+  synthesizer the GM output runs in its worklet (`live/src/midi/gm-worklet.js`),
   built by `live/scripts/vendor/build.mjs`. Not modified.
 
 ## FluidR3Mono GM SoundFont
@@ -141,7 +141,7 @@ supplies.
 - License: MIT; the notice and the license, with Debian's provenance, in
   `live/soundfonts/LICENSE-FluidR3Mono.txt`.
 - Included: `live/soundfonts/FluidR3Mono_GM.sf3`, unmodified — the GM output's
-  bank (`live/src/gm-output.js`), fetched when that output is first chosen.
+  bank (`live/src/midi/gm-output.js`), fetched when that output is first chosen.
 
 ## Open Sans
 

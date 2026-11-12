@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// A song import onto :target midi (live/src/import-to-midi.js): a chip
+// A song import onto :target midi (live/src/import/import-to-midi.js): a chip
 // song read as its own machine's score, then through its MIDI. On a VGM
 // written here (FM lead and bass, a square, the noise), a DefleMask module
 // written here (its instruments named), and the preset kits' samples:
@@ -14,17 +14,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderVgm } from "../../live/src/export-vgm.js";
-import { midiPlan } from "../../live/src/export-midi.js";
-import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
-import { parseDmf } from "../../live/src/import-dmf.js";
-import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import-tracker.js";
-import { decodeWav, resample } from "../../live/src/wav-decode.js";
-import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
-import { chipScoreToMidi, gmReading, programFor } from "../../live/src/import-to-midi.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderVgm } from "../../live/src/export/export-vgm.js";
+import { midiPlan } from "../../live/src/export/export-midi.js";
+import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import/import-vgm.js";
+import { parseDmf } from "../../live/src/import/import-dmf.js";
+import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp } from "../../live/src/import/import-tracker.js";
+import { decodeWav, resample } from "../../live/src/audio/wav-decode.js";
+import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
+import { chipScoreToMidi, gmReading, programFor } from "../../live/src/import/import-to-midi.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const compile = (src, opts = {}) => {

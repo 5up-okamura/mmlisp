@@ -5,7 +5,7 @@
 //
 // Two independent routes from one score to the engine's command stream:
 //
-//   A  IRPlayer (live/src/ir-player.js) dispatches the IR and sends the worklet
+//   A  IRPlayer (live/src/player/ir-player.js) dispatches the IR and sends the worklet
 //      its PCM events; they are applied here, in time order, through
 //      PcmIrVoices — the class the worklet itself runs — against the bank the
 //      exporter bakes.
@@ -20,11 +20,11 @@
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { SlotBuilder, decodeSlot } from "../../live/src/slot-builder.js";
-import { parsePcmBank } from "../../live/src/pcm-model.js";
-import { PcmIrVoices } from "../../live/src/pcm-voices.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { SlotBuilder, decodeSlot } from "../../live/src/driver/slot-builder.js";
+import { parsePcmBank } from "../../live/src/driver/pcm-model.js";
+import { PcmIrVoices } from "../../live/src/driver/pcm-voices.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");

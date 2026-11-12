@@ -1,6 +1,6 @@
 /* MMLispDRV sequencer — 68000 half of the split (docs/driver.md §4).
  *
- * Ported from live/src/drv-player.js, which is the normative spec: the gate
+ * Ported from live/src/driver/drv-player.js, which is the normative spec: the gate
  * (tools/c-gate.mjs) diffs the two slot streams at zero tolerance. Comments
  * here explain *why* a rule exists; the JS carries the same reasoning.
  */
@@ -152,7 +152,7 @@ static int target_point(int target) {
 }
 
 /* The i16 targets (mmb.md §7.4), mirroring WIDE_TARGET_IDS in
- * live/src/mmb.js: cents, the reserved tempo scale, the snap mask, and the
+ * live/src/driver/mmb.js: cents, the reserved tempo scale, the snap mask, and the
  * PCM points (byte offsets into a blob, up to the bank's 32 KB window). */
 static int target_wide(int target) {
   return target == T_NOTE_PITCH || target == T_TEMPO_SCALE || target == T_SNAP ||
@@ -561,7 +561,7 @@ static uint16_t psg_period_for(int note, int cents) {
  * channel's mask (bit 0 = C); mask 0 is off. Runs before fold_cents, so the
  * cents — a vibrato, a glide — ride the snapped note. At most 11 steps, each a
  * shift and a test; nothing on a channel with no mask. Mirrors snapNote in
- * live/src/ir-utils.js. */
+ * live/src/lang/ir-utils.js. */
 static int snap_note(int note, uint16_t mask) {
   if (!(mask & 0xfff)) return note;
   for (int n = note, i = 0; i < 12; n--, i++) {
@@ -1689,7 +1689,7 @@ static void process_macros(MMLSeq *s) {
  * arithmetic: where the blob is, where the voice wraps (END) and where it goes
  * then (WRAP). It never touches a sample byte and keeps no position — the
  * engine owns the pointer. The loop and shot contracts are
- * live/src/pcm-model.js, whose pcmNotePoints / pcmLoopPoints / pcmRangePoints
+ * live/src/driver/pcm-model.js, whose pcmNotePoints / pcmLoopPoints / pcmRangePoints
  * these twin.
  */
 static const uint8_t *find_sample(const MMLSeq *s, int id) {

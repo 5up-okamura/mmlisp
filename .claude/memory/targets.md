@@ -1,7 +1,7 @@
 # Targets beyond the Mega Drive — rulings and open items
 
 What each machine does is language.md §19; how a chip's encoder works is in
-its file's header (`live/src/chips/`). This file keeps only the rulings not
+its file's header (`live/src/machine/chips/`). This file keeps only the rulings not
 to re-propose, the traps the code does not explain, and what is open.
 
 The other machines have no driver on purpose: a score there is delivered as

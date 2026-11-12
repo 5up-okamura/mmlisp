@@ -14,7 +14,7 @@
 // that went away on the next launch. Anything cross-origin stays
 // stale-while-revalidate.
 //
-// The page fills this cache ahead of use on every launch (src/offline-cache.js),
+// The page fills this cache ahead of use on every launch (src/app/offline-cache.js),
 // so a preset, a snippet or the synth's worklet works offline before it was
 // ever opened.
 // Bump VERSION to drop the old cache on the next activation.
@@ -79,7 +79,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return; // let writes pass straight through
   // An event stream never ends: caching one would hold it forever (the AI
-  // bridge's link to 127.0.0.1, src/ai-bridge.js). Let it through untouched.
+  // bridge's link to 127.0.0.1, src/app/ai-bridge.js). Let it through untouched.
   if ((request.headers.get('accept') || '').includes('text/event-stream')) return;
 
   const url = new URL(request.url);

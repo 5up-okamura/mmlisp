@@ -7,7 +7,7 @@
 // its files' paths, sizes and CRCs, not the compressed bytes, which differ
 // between browsers' deflate — so sharing the same score twice gives the same
 // link from anywhere, and a stored link never changes what it plays.
-import { MAX_SHARE_FILES, bundleEntries } from '../src/share-files.js';
+import { MAX_SHARE_FILES, bundleEntries } from '../src/app/share-files.js';
 
 export const MAX_DATA = 96 * 1024; // base64url chars — ~72 KB compressed
 export const MAX_NAME = 200;

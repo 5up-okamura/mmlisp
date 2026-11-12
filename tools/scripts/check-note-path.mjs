@@ -1,4 +1,4 @@
-// The note path is one for every voice (live/src/ir-player-levels.js
+// The note path is one for every voice (live/src/player/ir-player-levels.js
 // _playNote): on every machine, every channel — its melodic ones, and its
 // sample ones on a sample (a rhythm channel its sound) — plays one phrase and
 // the path's own calls are held to one list — where each note closes and how
@@ -7,14 +7,14 @@
 // silences its voice (_silence) while its notes still close. A voice that
 // took a path of its own would part from the list on its channel.
 import assert from "node:assert/strict";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { fileURLToPath } from "node:url";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { TARGETS, targetProfile } from "../../live/src/targets.js";
-import { newScoreSource } from "../../live/src/new-score.js";
-import { CORE_OF_KIND } from "../../live/src/ir-player-shared.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { TARGETS, targetProfile } from "../../live/src/machine/targets.js";
+import { newScoreSource } from "../../live/src/app/new-score.js";
+import { CORE_OF_KIND } from "../../live/src/player/ir-player-shared.js";
 
 // At :tempo 120 a quarter is 0.5 s: a full gate (the next note closes it), a
 // half gate (its own end), a full gate, a hold (the rest ends it), a rest,

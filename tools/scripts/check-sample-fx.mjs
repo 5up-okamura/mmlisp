@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Checks the def :sample `:fx` chain (live/src/sample-fx.js): each effect
+// Checks the def :sample `:fx` chain (live/src/audio/sample-fx.js): each effect
 // does what its name says on a synthetic signal, the compiler resolves and
 // rejects `:fx` forms, an import's chain and an extending `(def-pcm name base …)` compose,
 // and the bank (and the keyboard audition's bank) bakes the processed signal.
-import { applySampleEffects } from "../../live/src/sample-fx.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb, bakeAuditionBank, bakeAuditionBlob } from "../../live/src/export-mmb.js";
+import { applySampleEffects } from "../../live/src/audio/sample-fx.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { encodeMmb, bakeAuditionBank, bakeAuditionBlob } from "../../live/src/driver/export-mmb.js";
 
 const RATE = 22050;
 let failed = 0;

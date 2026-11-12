@@ -1,10 +1,10 @@
 // The banked engine's arithmetic reference (engine/gen-multibank.mjs), used by
 // multibank-run.mjs, multibank:gate and banked-sgdk-gate. The generated schedule says WHEN work happens; no Z80 output or LUT is
 // used to determine WHAT the DAC should output.
-import { pcmOp, pcmRung } from "../../live/src/pcm-model.js";
+import { pcmOp, pcmRung } from "../../live/src/driver/pcm-model.js";
 import { MB } from "../engine/gen-multibank.mjs";
 
-export { MultibankModel } from "../../live/src/pcm-banked-model.js";
+export { MultibankModel } from "../../live/src/driver/pcm-banked-model.js";
 
 // The engine-level PCM converter for the banked image. It takes a PCM_START
 // frame command (opcode 1) with the u16 bank appended at bytes 9-10 — what

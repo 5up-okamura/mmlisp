@@ -295,7 +295,7 @@ bumping them.
 
 The installed app works offline: on every launch it caches, through its
 service worker (`live/sw.js`), every file it can fetch
-(`live/src/offline-cache.js`), found by following references from the page,
+(`live/src/app/offline-cache.js`), found by following references from the page,
 the worklet and the preset/snippet/example indexes — so a new file needs no
 list, only a reference from one of those. The console says when it is ready.
 
@@ -330,7 +330,7 @@ terms for those components. See `THIRD_PARTY_NOTICES.md` and each core's
 
 ### mucom88 import
 
-The `.muc` / `.dat` importer (`live/src/import-mucom.js`) is original code that
+The `.muc` / `.dat` importer (`live/src/import/import-mucom.js`) is original code that
 **interoperates with** the mucom88 file formats. It does not include any of
 mucom88's source code, sound driver, or bundled voice data, so it does not place
 MMLisp under mucom88's license. mucom88 itself is distributed under

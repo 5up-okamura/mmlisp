@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The GM output (live/src/gm-output.js, gm-worklet.js): a SoundFont played
+// The GM output (live/src/midi/gm-output.js, gm-worklet.js): a SoundFont played
 // in the page by spessasynth_core (live/vendor/spessasynth.js) on the bundled
 // FluidR3Mono (live/soundfonts/).
 //
@@ -25,12 +25,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { midiPlan } from "../../live/src/export-midi.js";
-import { planVoices, GmOutput } from "../../live/src/gm-output.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { GmSynth } from "../../live/src/gm-synth.js";
-import { renderWavSamples } from "../../live/src/export-wav.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { midiPlan } from "../../live/src/export/export-midi.js";
+import { planVoices, GmOutput } from "../../live/src/midi/gm-output.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { GmSynth } from "../../live/src/midi/gm-synth.js";
+import { renderWavSamples } from "../../live/src/export/export-wav.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 const near = (a, b, eps, what) => assert.ok(Math.abs(a - b) <= eps, `${what}: ${a.toFixed(3)} vs ${b}`);
@@ -62,7 +62,7 @@ globalThis.sampleRate = 48000;
 globalThis.currentTime = 0;
 globalThis.AudioWorkletProcessor = class { constructor() { this.port = { postMessage: (m) => posted.push(m), onmessage: null }; } };
 globalThis.registerProcessor = (name, C) => { assert.equal(name, "mmlisp-gm"); Processor = C; };
-await import("../../live/src/gm-worklet.js");
+await import("../../live/src/midi/gm-worklet.js");
 const gm = new Processor();
 const tell = (data) => gm.port.onmessage({ data });
 const replied = async (type) => { for (let i = 0; i < 200 && !posted.some((m) => m.type === type || m.type === "error"); i++) await new Promise((r) => setTimeout(r, 10)); const m = posted.find((x) => x.type === type || x.type === "error"); posted.length = 0; return m; };

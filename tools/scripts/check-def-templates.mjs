@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// The editor's def templates (live/src/def-templates.js) are written out from
+// The editor's def templates (live/src/editor/def-templates.js) are written out from
 // each machine's parts: every one must compile clean on its machine, played
 // by a channel of the part it was written for — and a def-fm must hold the
 // part's own init-fm, the voice it starts from.
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { TARGETS } from "../../live/src/targets.js";
-import { defTemplates } from "../../live/src/def-templates.js";
-import { fmInitVoice } from "../../live/src/chips/fm-words.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
+import { defTemplates } from "../../live/src/editor/def-templates.js";
+import { fmInitVoice } from "../../live/src/machine/chips/fm-words.js";
 
 let n = 0;
 for (const [name, target] of Object.entries(TARGETS)) {

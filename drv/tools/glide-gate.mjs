@@ -17,10 +17,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb } from "../../live/src/export-mmb.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { midiToFnumBlock, pitchToMidi, csmTimerPeriod } from "../../live/src/ir-utils.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { encodeMmb } from "../../live/src/driver/export-mmb.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { midiToFnumBlock, pitchToMidi, csmTimerPeriod } from "../../live/src/lang/ir-utils.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tests = join(here, "..", "tests");

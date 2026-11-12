@@ -1,4 +1,4 @@
-import { bankedEngineImage } from "./src/engine-banked-images.js";
+import { bankedEngineImage } from "./src/driver/engine-banked-images.js";
 /**
  * AudioWorkletProcessor for YM2612 playback.
  *
@@ -23,19 +23,19 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
  *   { type: 'pcm-ev', when, kind: 'on', voice, sample, midi, vel, vol, track }
  *   { type: 'pcm-ev', when, kind: 'off' | 'vol' | 'vel' | 'point' | 'master', … }
  *       — the IR's PCM events, applied in time order to the sequencer's voice
- *         model (src/pcm-voices.js) — see _applyPcmEvent
+ *         model (src/driver/pcm-voices.js) — see _applyPcmEvent
  *   { type: 'set-analog-lpf', on: boolean, cutoffHz?: number }
  *   { type: 'scope-enable', on: boolean }
  *   { type: 'scope-return', ch: [ArrayBuffer, ...] }  — recycle scope buffers
  *   { type: 'flush' }  — discard all pending timed writes (used before hot-swap)
  *   { type: 'set-machine', name: 'md'|'pc88'|'x68k'|'msx'|'pce'|'fc' }  — the synth the
- *       writes play on (src/synth-md.js, src/synth-pc88.js, src/synth-x68k.js,
- *       src/synth-msx.js); a pc88's ports 0/1 are the YM2608's two address
+ *       writes play on (src/synth/synth-md.js, src/synth/synth-pc88.js, src/synth/synth-x68k.js,
+ *       src/synth/synth-msx.js); a pc88's ports 0/1 are the YM2608's two address
  *       spaces, an x68k's port 0 the YM2151's one, an msx's the AY-3-8910's.
  *       Answered with { type: 'machine', name } once that synth plays (its
  *       core may still be loading)
  *   { type: 'adpcm-ram', image: Uint8Array|null }  — the YM2608's ADPCM-B RAM
- *   { type: 'pcm8-bank', bank }  — the X68000's PCM8 samples (src/chips/msm6258.js bakePcm8)
+ *   { type: 'pcm8-bank', bank }  — the X68000's PCM8 samples (src/machine/chips/msm6258.js bakePcm8)
  *   { type: 'pcm8', when, kind: 'on' | 'gain' | 'step' | 'off' | 'cut', voice, … }
  *       — PCM8's events, mixed, encoded and decoded as the MSM6258 plays them
  *   { type: 'rhythm-rom', rom: Uint8Array|null }  — the YM2608's rhythm ROM
@@ -52,28 +52,28 @@ import { bankedEngineImage } from "./src/engine-banked-images.js";
 
 // The Mega Drive chip-synthesis DSP (FM resample, PSG decimate + DC block, mix,
 // analog LPF) lives in the shared MegaDriveSynth core so this realtime worklet
-// and the offline WAV renderer (src/export-wav.js) stay in lockstep.
+// and the offline WAV renderer (src/export/export-wav.js) stay in lockstep.
 // Path is relative to the worklet file's URL.
 import {
   NUKED_NATIVE_SAMPLE_RATE,
   MD_LPF_DEFAULT_CUTOFF,
   SCOPE_CHANNELS,
   SCOPE_PCM_CHANNELS,
-} from "./src/synth-md.js";
-import { Pcm8Live } from "./src/synth-x68k.js";
-// The machines' synth cores, by target name (src/synths.js). Everything a
+} from "./src/synth/synth-md.js";
+import { Pcm8Live } from "./src/synth/synth-x68k.js";
+// The machines' synth cores, by target name (src/synth/synths.js). Everything a
 // machine has of its own is its synth's (synth-md.js, the contract): this
 // file names none. SCOPE_MAX sizes the pitch latches.
-import { SYNTHS, SCOPE_MAX } from "./src/synths.js";
+import { SYNTHS, SCOPE_MAX } from "./src/synth/synths.js";
 
 // PCM in the IR preview is THE DRIVER'S ENGINE (docs/driver.md §14.3 — the
 // preview must sound like the driver): the same voice model the 68000
 // runs, the same engine model the gates grade the Z80 against, the same baked
 // bank an export ships — 8-bit, at the image's rate, with its 6 dB rungs, its
 // 16-byte loop rounding and its loop-point moves.
-import { PcmLiveEngine, parsePcmBank } from "./src/pcm-model.js";
-import { PcmIrVoices } from "./src/pcm-voices.js";
-import { engineImage } from "./src/engine-images.js";
+import { PcmLiveEngine, parsePcmBank } from "./src/driver/pcm-model.js";
+import { PcmIrVoices } from "./src/driver/pcm-voices.js";
+import { engineImage } from "./src/driver/engine-images.js";
 
 const WORKLET_BLOCK = 128; // AudioWorklet block size
 const SCOPE_FLUSH = 1024; // scope samples per batch posted to the main thread
@@ -404,7 +404,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._synth.writePSG(data);
   }
 
-  // The scope's pitch, from the synth's chips' latches (src/scope-pitch.js).
+  // The scope's pitch, from the synth's chips' latches (src/synth/scope-pitch.js).
   _latchYmPitch(port, addr, data) {
     this._synth.pitch.write(port, addr, data, this._scopeFreq);
   }
@@ -465,7 +465,7 @@ class YM2612Processor extends AudioWorkletProcessor {
     this._pcmSeq = new PcmIrVoices((c) => live.apply(c), this._pcmBank);
   }
 
-  // One IR PCM event, in time order (src/pcm-voices.js PcmIrVoices).
+  // One IR PCM event, in time order (src/driver/pcm-voices.js PcmIrVoices).
   _applyPcmEvent(ev) {
     if (!this._pcmSeq) return;
     if (this._pcmSeq.apply(ev)) {

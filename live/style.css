@@ -1091,7 +1091,7 @@
     }
     /* The editor slot holds one editor: the other is away. */
     .rack-section.editor-away { display: none; }
-    /* The vector editor: a step vector drawn as bars (src/vector-editor.js). */
+    /* The vector editor: a step vector drawn as bars (src/editor/vector-editor.js). */
     .vec-canvas { width: 100%; height: 120px; display: block; cursor: crosshair; touch-action: none;
       border: 1px solid var(--mid); }
     .vec-axis { display: flex; justify-content: space-between; font-size: var(--label); color: var(--sub); }

@@ -17,9 +17,9 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildMmb } from "./mmb-build.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { planVoiceRepeats, planVoiceHoists } from "../../live/src/export-mmb.js";
-import { planVoices } from "../../live/src/mmb-voices.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { planVoiceRepeats, planVoiceHoists } from "../../live/src/driver/export-mmb.js";
+import { planVoices } from "../../live/src/driver/mmb-voices.js";
 
 const MAX_FRAMES = 3600;
 const files = [...readdirSync("tests").filter((f) => f.endsWith(".mmlisp")).sort().map((f) => join("tests", f)),

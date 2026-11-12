@@ -21,7 +21,7 @@
 //   * every FM register write the Z80 made is the score's slot stream, per
 //     port, in order (the reference driver renders the same score here)
 //   * every PSG byte the 68000 wrote is the stream's, in order
-//   * every DAC byte matches live/src/pcm-model.js — the same engine model the
+//   * every DAC byte matches live/src/driver/pcm-model.js — the same engine model the
 //     host gates use — driven by the engine's OWN state-block writes as BlastEm
 //     logged them, against the score's own 32 KB bank
 //   * the DAC clock. Bus stops are not repaid, so the rate is checked against
@@ -33,11 +33,11 @@ import { fileURLToPath } from "node:url";
 import { buildMmb, seListOf } from "./mmb-build.mjs";
 import { sgdkEnv, makeProject, runRom, dropProject } from "./sgdk-project.mjs";
 import { buildLightImage } from "./build-engine.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
 import { FrameRecorder, recordWritesOnWire } from "./pairs-model.mjs";
 import { readProbe } from "./probe-analysis.mjs";
-import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/pcm-model.js";
-import { scorePcmVoices } from "../../live/src/export-mmb.js";
+import { PcmEngineModel, PCM_SILENCE_BYTE } from "../../live/src/driver/pcm-model.js";
+import { scorePcmVoices } from "../../live/src/driver/export-mmb.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const drv = join(here, "..");
@@ -182,7 +182,7 @@ if (!readyAt) errors.push("the engine never wrote its ready mark");
 if (L.grabs.length < SECONDS * 50) errors.push(`only ${L.grabs.length} bus grabs in ${SECONDS}s — the host is not pumping once a frame`);
 if (L.psgZ80.length) errors.push(`${L.psgZ80.length} PSG writes came from the Z80`);
 if (L.ym68k.filter((e) => e.time >= dac0).length) errors.push(`${L.ym68k.length} YM accesses came from the 68000 while the engine ran`);
-// DAC: the engine model (live/src/pcm-model.js), stepped one slot per DAC
+// DAC: the engine model (live/src/driver/pcm-model.js), stepped one slot per DAC
 // write and fed the STORES the engine's own expander made — the 68000-writable
 // half of the state block, as BlastEm logged the Z80 writing it. Nothing about
 // the score is assumed here: if the wire dropped a pair or wrote it late, the

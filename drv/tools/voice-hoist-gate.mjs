@@ -1,4 +1,4 @@
-// THE VOICE-HOIST PASS (live/src/voice-hoist.js) moves time, never notes.
+// THE VOICE-HOIST PASS (live/src/lang/voice-hoist.js) moves time, never notes.
 // Over every score in tests/ and the SGDK example, compiled with and without
 // it, through the preview's own loop expansion:
 //
@@ -16,9 +16,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { hoistVoiceChanges, VOICE_TARGETS } from "../../live/src/voice-hoist.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { hoistVoiceChanges, VOICE_TARGETS } from "../../live/src/lang/voice-hoist.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
 
 const expand = (events) => new IRPlayer(() => {})._expandLoops(events);
 const onsets = (events) => expand(events).filter((e) => e.cmd === "NOTE_ON" || e.cmd === "PCM_NOTE_ON")

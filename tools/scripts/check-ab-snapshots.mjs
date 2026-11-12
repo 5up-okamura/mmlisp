@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { ABSnapshots } from '../../live/src/ab-snapshots.js';
-import { IRPlayer } from '../../live/src/ir-player.js';
+import { ABSnapshots } from '../../live/src/app/ab-snapshots.js';
+import { IRPlayer } from '../../live/src/player/ir-player.js';
 
 const snapshot = (text, cue = 0) => Object.freeze({ state: Object.freeze({ text }), cue });
 const ab = new ABSnapshots();

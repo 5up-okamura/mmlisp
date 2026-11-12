@@ -49,10 +49,10 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb, MACRO_ARG_KEYS } from "../../live/src/export-mmb.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../../live/src/ir-utils.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { encodeMmb, MACRO_ARG_KEYS } from "../../live/src/driver/export-mmb.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../../live/src/lang/ir-utils.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const testDir = join(here, "..", "tests");

@@ -4,9 +4,9 @@
 // write compiles clean for its target. The files are made up — real songs
 // are their composers', and stay out of the repo.
 import assert from "node:assert/strict";
-import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
-import { parseMgs, analyzeMgs, mgsToMmlisp } from "../../live/src/import-mgs.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
+import { parseMgs, analyzeMgs, mgsToMmlisp } from "../../live/src/import/import-mgs.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 
 const clean = (source, what) => {
   const { diagnostics } = compileMMLisp(source, `${what}.mmlisp`);

@@ -9,10 +9,10 @@
 // Each case plays a score on a player stepped by hand, moves a control as
 // Live's panel does and reads the control and the chip's writes back.
 import assert from "node:assert/strict";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { encodeMmb } from "../../live/src/export-mmb.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { encodeMmb } from "../../live/src/driver/export-mmb.js";
 
 const compile = (src) => {
   const { ir, diagnostics } = compileMMLisp(src, "panel.mmlisp", {});

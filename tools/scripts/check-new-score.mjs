@@ -2,10 +2,10 @@
 // each track it should, and imports only what the machine plays.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { TARGETS } from "../../live/src/targets.js";
-import { newScoreSource, machineSummary } from "../../live/src/new-score.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
+import { newScoreSource, machineSummary } from "../../live/src/app/new-score.js";
 
 const heads = (src) => [...src.matchAll(/^\(([^\s()]+)(?: [a-z0-9]+)?(?: :tempo \d+)?\n  #top\n  \(go top\)\n\)$/gm)].map((m) => m[1]);
 const TRACKS = {

@@ -13,7 +13,7 @@
 //   vgm   File > Export > VGM's bytes (renderVgm, with the PCM)
 //   mid   File > Export > MIDI's bytes (exportMidi), on every target
 //
-// — each where the score's target has it (live/src/targets/): the MMB on a
+// — each where the score's target has it (live/src/machine/targets/): the MMB on a
 // target with MMLispDRV, the register log and the VGM once its chips have
 // encoders; a target still being built holds its IR and diagnostics, and
 // gains the rest as they arrive (each a --update, after review). Fails when
@@ -32,12 +32,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb, compileScoreFile } from "../../drv/tools/mmb-build.mjs";
-import { targetProfile } from "../../live/src/targets.js";
+import { targetProfile } from "../../live/src/machine/targets.js";
 import { bakedChipSamples } from "../../drv/tools/wav.mjs";
-import { sampleBankKind } from "../../live/src/sample-bank.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderVgm } from "../../live/src/export-vgm.js";
-import { exportMidi } from "../../live/src/export-midi.js";
+import { sampleBankKind } from "../../live/src/audio/sample-bank.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderVgm } from "../../live/src/export/export-vgm.js";
+import { exportMidi } from "../../live/src/export/export-midi.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE = join(ROOT, "tools", "snapshot-baseline.json");

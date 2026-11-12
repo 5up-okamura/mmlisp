@@ -51,4 +51,8 @@ Rules for every phase:
 
 ## Where it stands
 
-- Phase 0: done (uncommitted at the time of writing).
+- Phase 0: done (60580a3a). HEAD's `verify:all` was red on an unused
+  `enc_b4` (-Werror); dropped in f9c880a7.
+- Phase 1: done — the move script is the commit's own record (see its
+  message); CLAUDE.md's map is one row a directory.
+- Next: phase 2.

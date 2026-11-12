@@ -11,10 +11,10 @@
 // Each case plays six seconds on both (the preview on a clock stepped by
 // hand, as Live runs it) and compares a register's value frame by frame,
 // a frame's slack either way.
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { encodeMmb } from "../../live/src/export-mmb.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { encodeMmb } from "../../live/src/driver/export-mmb.js";
 
 const SECS = 6;
 function parts(src, port, addr) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Thin CLI wrapper — all compilation logic lives in live/src/mmlisp2ir.js.
+// Thin CLI wrapper — all compilation logic lives in live/src/lang/mmlisp2ir.js.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -12,7 +12,7 @@ function usage() {
 }
 
 async function main() {
-  const { compileMMLisp } = await import("../../live/src/mmlisp2ir.js");
+  const { compileMMLisp } = await import("../../live/src/lang/mmlisp2ir.js");
 
   const args = process.argv.slice(2);
   if (args.length === 0) {

@@ -1,0 +1,436 @@
+// ---------------------------------------------------------------------------
+// Mega Drive synth core (YM2612 FM + SN76489 PSG)
+//
+// The single home for the Mega Drive chip-synthesis DSP — FM resample, PSG
+// box-decimate + DC block, mix, and the optional Model-1 analog low-pass. Both
+// the realtime worklet (live/worklet.js) and the offline WAV renderer
+// (src/export/export-wav.js) drive this so the math lives in exactly one place.
+//
+// This is one system module; sibling systems (synth-nes.js, synth-pce.js,
+// synth-msx.js, …) are expected to follow the same small contract:
+//   create(outputSR) -> instance
+//   writeYM/writePSG (or the system's register buses)
+//   setLpf / setDacEnabled / reset
+//   renderInto(outL, outR, count, onFrame?, getDacByte?, scope?)
+//   pitch     the chips' scope pitch latches (scope-pitch.js)
+//   bus       the FM's hold bus (chips/opn-fm.js opnHoldBus), or none
+// and, where the machine has them, what the worklet hands it beside the
+// writes: takeWrite / isDacWrite (a register that is not the chip's own —
+// the Mega Drive's DAC pair), setAdpcmRam / setRhythmRom (the YM2608's
+// memories), pcm8 (the X68000's PCM8 source).
+//
+// renderInto serves both timing models via onFrame:
+//   - onFrame == null : writes were already applied for the whole block
+//                       (the worklet's block-quantized path).
+//   - onFrame(i)      : called before sample i so the caller can apply writes
+//                       scheduled at that exact frame (sample-accurate; the
+//                       offline renderer drains its event list here).
+// getDacByte() supplies the 0-255 DAC value per FM native sample when the DAC
+// is enabled (worklet PCM); the offline path passes null (FM + PSG only).
+// ---------------------------------------------------------------------------
+
+import createNukedModule from "../../nuked-opn2.js";
+import createPsgModule from "../../nuked-psg.js";
+import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "../lang/ir-utils.js";
+import { opnHoldBus } from "../machine/chips/opn-fm.js";
+import { pitchLatches, opnPitch, snPitch } from "./scope-pitch.js";
+
+// NTSC Mega Drive native rates (master 53.693175 MHz; YM2612 /144).
+export const NUKED_NATIVE_SAMPLE_RATE = YM2612_MASTER_CLOCK / 144;
+// Mega Drive Model 1 analog output low-pass default cutoff (Hz).
+export const MD_LPF_DEFAULT_CUTOFF = 3000;
+
+// PSG is a unipolar sum of 4 channels; scale to match the FM:PSG balance of the
+// reference emulators, and DC-block to remove the offset (and the thumps when
+// notes change it). Calibrated so one max PSG square sits ~-6 dB below one max
+// FM channel — the Genesis-Plus-GX default (fm_preamp 100 / psg_preamp 150 →
+// PSG ~0.51x FM, -5.8 dB) and MAME's classic 2:1 route ratio. Measured through
+// this full path (Nuked cores + decimation/DC block): a max FM channel peaks at
+// ~0.066 and a max PSG square at ~0.278, so 0.5 left PSG ~+12 dB too hot; 0.06
+// brings it to the ~-6 dB consensus.
+const PSG_OUTPUT_GAIN = 0.06;
+const PSG_DC_R = 0.9995; // one-pole DC blocker (~5 Hz high-pass at output rate)
+const FM_SAMPLE_SCALE = 512; // int16 chip output -> float
+const NOPN_MAX_RENDER = 4096; // nuked adapter caps _nopn_render() at this
+// Master output gain. FM/PSG sit well below 0 dBFS (a max FM channel peaks
+// ~0.066, 6 channels ~0.379), far quieter than Furnace. Lift the final mix and
+// hard-clip the rare peaks (authentic "amp saturates" — the WAV encoder and the
+// Web Audio destination already clamp at the edges). Tunable by ear; ~2.5-4 is
+// the useful range (higher = louder but clips dense passages more).
+const MASTER_OUTPUT_GAIN = 4.0;
+
+// Oscilloscope taps: 13 per-channel streams at the output rate, scaled to each
+// channel's contribution to the mix. FM: the chip time-multiplexes channels on
+// its 9-bit DAC, so one channel's share of the 24-cycle-averaged output is
+// ch_out / 4096 — measured against this path (least-squares fit of a solo
+// full-scale channel vs the mix; the ~9% residual is the DAC ladder offsets
+// from other channels' bus slots, which a clean per-channel tap excludes).
+// PSG: one DC-blocked term of the 4-channel sum times PSG_OUTPUT_GAIN.
+// PCM: each voice's term of the DAC byte (pcmTaps, set by the caller as its
+// engine steps), on FM6's scale — the chip's DAC latch is (byte - 0x80) * 2 —
+// so the voices add up to the FM6 tap wherever the engine's sum does not
+// saturate.
+const SCOPE_FM_CHANNELS = 6; // scope indices 0-5 (FM6 = DAC when on)
+const SCOPE_PSG_CHANNELS = 4; // scope indices 6-9 (tone 1-3, noise)
+export const SCOPE_PCM_CHANNELS = 3; // scope indices 10-12 (PCM voices 1-3)
+export const SCOPE_CHANNELS = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS + SCOPE_PCM_CHANNELS;
+const SCOPE_PCM_BASE = SCOPE_FM_CHANNELS + SCOPE_PSG_CHANNELS;
+const FM_CH_SCALE = 1 / 4096;
+const PCM_TAP_SCALE = 2 * FM_CH_SCALE;
+
+export class MegaDriveSynth {
+  /** Instantiate both cores and return a ready synth. */
+  static async create(outputSR) {
+    const [ym, psg] = await Promise.all([
+      createNukedModule(),
+      createPsgModule(),
+    ]);
+    return new MegaDriveSynth(ym, psg, outputSR);
+  }
+
+  constructor(ym, psg, outputSR) {
+    this._ym = ym;
+    this._psg = psg;
+    this._outputSR = outputSR;
+    this.pitch = pitchLatches(opnPitch(NUKED_NATIVE_SAMPLE_RATE), snPitch(PSG_MASTER_CLOCK));
+    this.bus = opnHoldBus;
+
+    ym._nopn_init();
+    psg._psg_init();
+    this._ymBufferPtr = ym._nopn_get_buffer_ptr();
+    this._psgBufferPtr = psg._psg_get_buffer_ptr();
+    this._ymChPtr = ym._nopn_get_channel_buffer_ptr();
+    this._psgChPtr = psg._psg_get_channel_buffer_ptr();
+
+    // Scope tap state: FM current/next native samples per channel (mirrors the
+    // stereo lerp window) + per-channel PSG DC blockers.
+    this._ymChCur = new Float32Array(SCOPE_FM_CHANNELS);
+    this._ymChNext = new Float32Array(SCOPE_FM_CHANNELS);
+    this._psgChDcX = new Float32Array(SCOPE_PSG_CHANNELS);
+    this._psgChDcY = new Float32Array(SCOPE_PSG_CHANNELS);
+    this._resampleRatio = ym._nopn_get_native_sample_rate() / outputSR;
+    this._psgRatio = psg._psg_get_native_sample_rate() / outputSR;
+
+    this._dacEnabled = false;
+    /** The PCM voices' terms of the current DAC byte (signed, one a voice),
+     * kept by the caller as its engine steps; read for the PCM scope taps. */
+    this.pcmTaps = null;
+
+    this._lpfOn = false;
+    this._lpfCutoff = MD_LPF_DEFAULT_CUTOFF;
+    this._lpfA = 0;
+    this._lpfYL = 0;
+    this._lpfYR = 0;
+    this._updateLpfCoeff();
+
+    this._resetResampleState();
+  }
+
+  // FM resample window + PSG decimation/DC state. Primes one FM native sample
+  // (DAC off) so the first interpolation has a valid _ymNext, matching playback.
+  _resetResampleState() {
+    this._ymFrac = 0;
+    this._ymCurrent = [0, 0];
+    this._ymNext = this._renderYmOne(null, [0, 0]);
+    this._psgTickFrac = 0;
+    this._psgDcX = 0;
+    this._psgDcY = 0;
+    this._ymChCur.fill(0);
+    this._ymChNext.fill(0);
+    this._psgChDcX.fill(0);
+    this._psgChDcY.fill(0);
+  }
+
+  /** Reset both chips and all DSP state to silence. */
+  reset() {
+    this._ym._nopn_reset();
+    this._psg._psg_reset();
+    this.setDacEnabled(false);
+    this._lpfYL = 0;
+    this._lpfYR = 0;
+    this._resetResampleState();
+  }
+
+  // The DAC pair never goes through the register path. A backend that streams
+  // the DAC itself (MMLispDRV replays the driver's ~175 bytes a frame) would
+  // otherwise spend 48 chip cycles per byte and run the chip far too fast;
+  // set_dac_sample folds the byte into the next render's own clock budget.
+  // Tracking 0x2b through setDacEnabled also keeps the synth's notion of the
+  // DAC in step with the backend's, which decides the FM batch path.
+  isDacWrite(port, addr) {
+    return port === 0 && addr === 0x2a;
+  }
+  takeWrite(port, addr, data) {
+    if (port !== 0 || (addr !== 0x2a && addr !== 0x2b)) return false;
+    if (addr === 0x2a) this.setDacSample(data);
+    else this.setDacEnabled(!!(data & 0x80));
+    return true;
+  }
+
+  writeYM(port, addr, data) {
+    this._ym._nopn_write_reg(port ?? 0, addr & 0xff, data & 0xff);
+  }
+
+  writePSG(byte) {
+    this._psg._psg_write(byte & 0xff);
+  }
+
+  setDacEnabled(on) {
+    const next = !!on;
+    if (next === this._dacEnabled) return;
+    this._dacEnabled = next;
+    this._ym._nopn_set_dac_enabled(next ? 1 : 0);
+  }
+
+  /**
+   * Stage the 8-bit DAC value (0x80 = centre) for the next rendered sample.
+   * For callers that stream register 0x2a themselves (the MMLispDRV backend
+   * replays the driver's own DAC feed) — going through writeYM would spend the
+   * register path's 48 chip cycles on every byte, and at the driver's ~175
+   * bytes a frame that would race the chip well past its real rate.
+   */
+  setDacSample(value) {
+    this._ym._nopn_set_dac_sample(value & 0xff);
+  }
+
+  setLpf(on, cutoffHz) {
+    this._lpfOn = !!on;
+    if (Number.isFinite(cutoffHz) && cutoffHz > 0) this._lpfCutoff = cutoffHz;
+    this._updateLpfCoeff();
+  }
+
+  _updateLpfCoeff() {
+    // One-pole low-pass: y += a * (x - y), a = 1 - exp(-2*pi*fc/fs).
+    const a = 1 - Math.exp((-2 * Math.PI * this._lpfCutoff) / this._outputSR);
+    this._lpfA = Math.max(0, Math.min(1, a));
+  }
+
+  // Render one FM native stereo sample into `out` — reused, never allocated:
+  // at the native rate a fresh pair is megabytes of garbage a second, and the
+  // audio thread's GC pauses outlast a render quantum. When the DAC is
+  // enabled, getDacByte() supplies the 0-255 value streamed into register
+  // 0x2a first.
+  _renderYmOne(getDacByte, out) {
+    if (this._dacEnabled && getDacByte) {
+      this._ym._nopn_set_dac_sample(getDacByte());
+    }
+    this._ym._nopn_render(1);
+    const base = this._ymBufferPtr >> 1;
+    const heap = this._ym.HEAP16;
+    out[0] = heap[base] / FM_SAMPLE_SCALE;
+    out[1] = heap[base + 1] / FM_SAMPLE_SCALE;
+    return out;
+  }
+
+  // Read the next FM native sample from a block pre-rendered by one
+  // _nopn_render(N) call (see renderInto's batch path). Values are identical to
+  // calling _renderYmOne() that many times — the chip clocks the same either
+  // way — but with a single WASM crossing instead of one per native sample.
+  _fmNextNative(out) {
+    const base = this._ymBufferPtr >> 1;
+    const heap = this._ym.HEAP16;
+    const k = this._ymBatchPos++;
+    out[0] = heap[base + 2 * k] / FM_SAMPLE_SCALE;
+    out[1] = heap[base + 2 * k + 1] / FM_SAMPLE_SCALE;
+    return out;
+  }
+
+  // Read the FM per-channel taps for native sample k of the current render
+  // buffer into dst, scaled to each channel's mix contribution.
+  _readFmChTaps(k, dst) {
+    const heap = this._ym.HEAP16;
+    let p = (this._ymChPtr >> 1) + k * SCOPE_FM_CHANNELS;
+    for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
+      dst[c] = heap[p++] * FM_CH_SCALE;
+    }
+  }
+
+  // One-pole DC blocker step (removes the PSG's unipolar offset + thumps).
+  _dcBlock(s) {
+    const y = s - this._psgDcX + PSG_DC_R * this._psgDcY;
+    this._psgDcX = s;
+    this._psgDcY = y;
+    return y;
+  }
+
+  // Per-channel variant of _dcBlock for the PSG scope taps.
+  _dcBlockCh(c, s) {
+    const y = s - this._psgChDcX[c] + PSG_DC_R * this._psgChDcY[c];
+    this._psgChDcX[c] = s;
+    this._psgChDcY[c] = y;
+    return y;
+  }
+
+  // Box-average + DC-block the per-channel PSG taps for the n native ticks
+  // starting at tickOffset (within the block rendered by the last
+  // _psg_render call), writing output sample i of the scope's PSG streams.
+  _psgScopeTaps(scope, i, tickOffset, n) {
+    const heap = this._psg.HEAPF32;
+    let p = (this._psgChPtr >> 2) + tickOffset * SCOPE_PSG_CHANNELS;
+    let a0 = 0,
+      a1 = 0,
+      a2 = 0,
+      a3 = 0;
+    for (let t = 0; t < n; t++) {
+      a0 += heap[p];
+      a1 += heap[p + 1];
+      a2 += heap[p + 2];
+      a3 += heap[p + 3];
+      p += SCOPE_PSG_CHANNELS;
+    }
+    scope[6][i] = this._dcBlockCh(0, (a0 / n) * PSG_OUTPUT_GAIN);
+    scope[7][i] = this._dcBlockCh(1, (a1 / n) * PSG_OUTPUT_GAIN);
+    scope[8][i] = this._dcBlockCh(2, (a2 / n) * PSG_OUTPUT_GAIN);
+    scope[9][i] = this._dcBlockCh(3, (a3 / n) * PSG_OUTPUT_GAIN);
+  }
+
+  // Render one PSG output sample: box-decimate this sample's native ticks, then
+  // DC-block. Numerically identical to rendering the ticks in a single block;
+  // used on the sample-accurate path where PSG writes land between samples.
+  _renderPsgSample(scope, i) {
+    let n = Math.round(this._psgTickFrac + this._psgRatio);
+    if (n < 1) n = 1;
+    this._psgTickFrac += this._psgRatio - n;
+    this._psg._psg_render(n);
+    const heap = this._psg.HEAPF32;
+    const base = this._psgBufferPtr >> 2;
+    let acc = 0;
+    for (let t = 0; t < n; t++) acc += heap[base + t];
+    if (scope) this._psgScopeTaps(scope, i, 0, n);
+    return this._dcBlock((acc / n) * PSG_OUTPUT_GAIN);
+  }
+
+  // Render `count` PSG output samples with a single _psg_render(total) call.
+  // Valid only when no PSG write occurs between samples (the worklet's
+  // block-quantized path) — fewer WASM boundary crossings than per-sample.
+  _renderPsgBlockInto(out, count, scope) {
+    if (!this._psgCounts || this._psgCounts.length < count) {
+      this._psgCounts = new Int32Array(count);
+    }
+    const counts = this._psgCounts;
+    let frac = this._psgTickFrac;
+    let total = 0;
+    for (let i = 0; i < count; i++) {
+      let ticks = Math.round(frac + this._psgRatio);
+      if (ticks < 1) ticks = 1;
+      frac += this._psgRatio - ticks;
+      counts[i] = ticks;
+      total += ticks;
+    }
+    this._psgTickFrac = frac;
+    this._psg._psg_render(total);
+    const heap = this._psg.HEAPF32;
+    let k = this._psgBufferPtr >> 2;
+    let tick = 0;
+    for (let i = 0; i < count; i++) {
+      const n = counts[i];
+      let acc = 0;
+      for (let t = 0; t < n; t++) acc += heap[k++];
+      if (scope) this._psgScopeTaps(scope, i, tick, n);
+      tick += n;
+      out[i] = this._dcBlock((acc / n) * PSG_OUTPUT_GAIN);
+    }
+  }
+
+  // scope: optional array of SCOPE_CHANNELS Float32Arrays (length >= count).
+  // When given, per-channel waveforms land in scope[0..5] (FM 1-6),
+  // scope[6..9] (PSG tone 1-3, noise) and scope[10..12] (PCM voices, from
+  // this.pcmTaps while the DAC plays) on the same output-rate time axis as the
+  // mix. Null-cost when omitted.
+  renderInto(
+    outL,
+    outR,
+    count,
+    onFrame = null,
+    getDacByte = null,
+    scope = null,
+  ) {
+    // Block-quantized callers (onFrame == null) have already applied every PSG
+    // write, so the whole PSG block can render in one call. Sample-accurate
+    // callers render PSG per sample as writes interleave.
+    let psgBlock = null;
+    if (!onFrame) {
+      if (!this._psgScratch || this._psgScratch.length < count) {
+        this._psgScratch = new Float32Array(count);
+      }
+      psgBlock = this._psgScratch;
+      this._renderPsgBlockInto(psgBlock, count, scope);
+    }
+
+    // FM batch path: with no interleaved writes (onFrame == null) and the DAC
+    // off, this block's FM native samples can be generated in a single
+    // _nopn_render(N) call instead of one call per native sample — the dominant
+    // realtime cost. The block consumes exactly floor(frac + count*ratio)
+    // native samples. With the DAC on, each native sample needs its own DAC
+    // byte, so fall back to per-sample rendering.
+    const fmNeed =
+      !onFrame && !this._dacEnabled
+        ? Math.floor(this._ymFrac + count * this._resampleRatio)
+        : -1;
+    const batchFM = fmNeed >= 0 && fmNeed <= NOPN_MAX_RENDER;
+    if (batchFM) {
+      this._ymBatchPos = 0;
+      if (fmNeed > 0) this._ym._nopn_render(fmNeed);
+    }
+
+    for (let i = 0; i < count; i++) {
+      if (onFrame) onFrame(i);
+
+      const psgS = onFrame ? this._renderPsgSample(scope, i) : psgBlock[i];
+
+      // FM: linear-interpolate between the current and next native samples.
+      const t = this._ymFrac;
+      let mixL = this._ymCurrent[0] * (1 - t) + this._ymNext[0] * t + psgS;
+      let mixR = this._ymCurrent[1] * (1 - t) + this._ymNext[1] * t + psgS;
+      if (scope) {
+        // Same lerp window per channel, so taps stay aligned with the mix.
+        const cur = this._ymChCur;
+        const next = this._ymChNext;
+        for (let c = 0; c < SCOPE_FM_CHANNELS; c++) {
+          scope[c][i] = cur[c] * (1 - t) + next[c] * t;
+        }
+        // Only while the caller's engine feeds the DAC: a DAC streamed by
+        // register writes (a VGM) has no voices behind it.
+        const pcm = getDacByte && this._dacEnabled ? this.pcmTaps : null;
+        for (let v = 0; v < SCOPE_PCM_CHANNELS; v++) {
+          scope[SCOPE_PCM_BASE + v][i] = pcm ? pcm[v] * PCM_TAP_SCALE : 0;
+        }
+      }
+      this._ymFrac += this._resampleRatio;
+      while (this._ymFrac >= 1) {
+        this._ymFrac -= 1;
+        const done = this._ymCurrent;
+        this._ymCurrent = this._ymNext;
+        this._ymNext = batchFM
+          ? this._fmNextNative(done)
+          : this._renderYmOne(getDacByte, done);
+        if (scope) {
+          const tmp = this._ymChCur;
+          this._ymChCur = this._ymChNext;
+          this._ymChNext = tmp;
+          this._readFmChTaps(
+            batchFM ? this._ymBatchPos - 1 : 0,
+            this._ymChNext,
+          );
+        }
+      }
+
+      if (this._lpfOn) {
+        this._lpfYL += this._lpfA * (mixL - this._lpfYL);
+        this._lpfYR += this._lpfA * (mixR - this._lpfYR);
+        mixL = this._lpfYL;
+        mixR = this._lpfYR;
+      }
+      // Master gain + hard clip (final stage; the analog LPF above is linear so
+      // the boost after it is equivalent, and the clip stays last).
+      mixL *= MASTER_OUTPUT_GAIN;
+      mixR *= MASTER_OUTPUT_GAIN;
+      if (mixL > 1) mixL = 1;
+      else if (mixL < -1) mixL = -1;
+      if (mixR > 1) mixR = 1;
+      else if (mixR < -1) mixR = -1;
+      outL[i] = mixL;
+      outR[i] = mixR;
+    }
+  }
+}

@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { Apu } from "../../live/src/synth-gb.js";
-import { lr35902 } from "../../live/src/chips/lr35902.js";
-import { gbPitch } from "../../live/src/scope-pitch.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { Apu } from "../../live/src/synth/synth-gb.js";
+import { lr35902 } from "../../live/src/machine/chips/lr35902.js";
+import { gbPitch } from "../../live/src/synth/scope-pitch.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const logOf = (file) => {

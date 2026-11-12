@@ -1,14 +1,14 @@
 # MMB v0.4 Opcode & Target Tables
 
-The opcode, target and curve vocabulary of MMB v0.4 (`live/src/mmb.js`,
+The opcode, target and curve vocabulary of MMB v0.4 (`live/src/driver/mmb.js`,
 `VERSION_MINOR = 4`). Ids, payload layouts and semantics defined here are
 stable: a later minor version may *add* opcodes and targets, it does not change
 these. Stream framing (duration operands, per-track termination) is defined in
 `docs/mmb.md` §7; event semantics come from the IR (`docs/ir.md`).
 
-`live/src/mmb.js` holds the tables themselves — `OPCODE`, `TARGET_ID`,
+`live/src/driver/mmb.js` holds the tables themselves — `OPCODE`, `TARGET_ID`,
 `CURVE_ID`, the duration helpers and the curve evaluator. Both the writer
-(`live/src/export-mmb.js`) and the reference decoder (`live/src/drv-player.js`)
+(`live/src/driver/export-mmb.js`) and the reference decoder (`live/src/driver/drv-player.js`)
 import them, so the two cannot drift; the 68000 sequencer
 (`drv/68k/mmlispseq.c`) carries the same ids as C enums and is byte-diffed
 against the reference on every gate score (`cd drv && npm run c-gate`).
@@ -329,11 +329,11 @@ Notes:
 
 ## 7. Target ID Table
 
-Ids are `TARGET_ID` in `live/src/mmb.js` (and `TARGET_NAME`, its inverse); the
+Ids are `TARGET_ID` in `live/src/driver/mmb.js` (and `TARGET_NAME`, its inverse); the
 68000 sequencer mirrors them as the `T_*` enum in `drv/68k/mmlispseq.c`. Width
 1 = i8/u8 payload, 2 = i16; the wide set is `WIDE_TARGET_IDS` in `mmb.js`,
 mirrored by `target_wide()` in the C. Clamp ranges are `MACRO_TARGET_RANGE` in
-`live/src/ir-utils.js`, and the driver clamps at the register write with the
+`live/src/lang/ir-utils.js`, and the driver clamps at the register write with the
 same bounds.
 
 | Id   | IR name     | Width | Clamp range    | Register family                    |
@@ -420,7 +420,7 @@ range's end still moves it.
 carries: an i8 in target units like every other operator param, clamped to
 `MACRO_TARGET_RANGE.FM_DT`. The chip's 3-bit field is sign-magnitude, and the
 conversion happens at the register write, not in the encoder —
-`detuneToReg()` in `live/src/ir-utils.js` and `dt_to_reg()` in
+`detuneToReg()` in `live/src/lang/ir-utils.js` and `dt_to_reg()` in
 `drv/68k/mmlispseq.c` both map `d < 0 ? 4 | (−d & 3) : d & 3` into bits 6–4 of
 `$30+op`. So the byte on the wire is a signed detune, and only the register
 byte holds 0..7.
@@ -429,7 +429,7 @@ byte holds 0..7.
 
 The driver evaluates a small curve set; the exporter lowers the language's full
 easing vocabulary onto it (output-side minimalism — the driver carries four
-easing shapes, not thirty). The mapping is `curveId()` in `live/src/mmb.js`:
+easing shapes, not thirty). The mapping is `curveId()` in `live/src/driver/mmb.js`:
 each `ease-in-*` / `ease-out-*` / `ease-inout-*` family name collapses onto its
 base quad shape, `ramp` aliases `saw`, and an unknown
 name falls back to linear.
@@ -448,7 +448,7 @@ name falls back to linear.
 | 12–255 | —       | reserved                                                  |
 
 Curve shapes are **computed**, not tabulated. `curveUnit8(id, t)` in
-`live/src/mmb.js` maps an 8-bit phase to an 8-bit unit with a multiply or a
+`live/src/driver/mmb.js` maps an 8-bit phase to an 8-bit unit with a multiply or a
 fold; `sin` is the one shape that needs a table (`SIN_LUT`, 256 u8 entries,
 emitted to C as `MML_SIN_LUT` by `drv/tools/gen-c-tables.mjs`). The reference
 driver imports `curveUnit8` directly, and `curve_unit8()` in
@@ -470,6 +470,6 @@ TEMPO_SWEEP or CSM_RATE (`E_CURVE_MACRO_ONLY`, language.md §11), and these ids
 never reach a sweep.
 
 In a **macro** the curve names are exact: the exporter samples them
-through `sampleCurveUnit()` (`live/src/ir-utils.js`, seeded LUTs) and MACRO_TABLE
+through `sampleCurveUnit()` (`live/src/lang/ir-utils.js`, seeded LUTs) and MACRO_TABLE
 stores the sampled values, so what the driver steps is the shape itself, not an
 id it has to evaluate.

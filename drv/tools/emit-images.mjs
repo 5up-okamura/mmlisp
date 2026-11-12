@@ -1,4 +1,4 @@
-// Write live/src/engine-images.js — the light engine images' descriptors, the
+// Write live/src/driver/engine-images.js — the light engine images' descriptors, the
 // one copy the browser, the exporter and the reference driver read
 // (docs/driver.md §5).
 //
@@ -14,7 +14,7 @@ import { buildLightImage } from "./build-engine.mjs";
 import { NTSC, PAL } from "../engine/config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const OUT = join(here, "..", "..", "live", "src", "engine-images.js");
+const OUT = join(here, "..", "..", "live", "src", "driver", "engine-images.js");
 
 export function imagesSource() {
   const rows = [1, 2, 3].map((v) => buildLightImage(v).descriptor);
@@ -53,10 +53,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     let committed = "";
     try { committed = readFileSync(OUT, "utf8"); } catch { /* missing */ }
     if (committed !== text) {
-      console.log("FAIL  live/src/engine-images.js is not what the images build to now — run node tools/emit-images.mjs");
+      console.log("FAIL  live/src/driver/engine-images.js is not what the images build to now — run node tools/emit-images.mjs");
       process.exit(1);
     }
-    console.log("ok    live/src/engine-images.js matches the three light images");
+    console.log("ok    live/src/driver/engine-images.js matches the three light images");
   } else {
     writeFileSync(OUT, text);
     console.log(`wrote ${OUT}`);

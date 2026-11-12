@@ -1,15 +1,15 @@
-// The FM voice estimate (live/src/voice-estimate.js) on a sound whose patch is
+// The FM voice estimate (live/src/import/voice-estimate.js) on a sound whose patch is
 // known: a brass-like alg 2 voice rendered on the model. The search must read
 // its pitch, come within a few dB of it on a short budget, and write a def-fm
 // that compiles. The model itself is held to Nuked by the A/B of a sine and a
 // feedback saw (exact rules, so near-zero error). No recording is kept in the
 // repository. A hiss must be read as a noise and come out with its note as
 // :key.
-import { renderModel, RATE } from "../../live/src/fm-model.js";
-import { estimateVoice, features, distance, patchToDef, patchToRegs } from "../../live/src/voice-estimate.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { renderModel, RATE } from "../../live/src/import/fm-model.js";
+import { estimateVoice, features, distance, patchToDef, patchToRegs } from "../../live/src/import/voice-estimate.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import createNukedModule from "../../live/nuked-opn2.js";
-import { midiToFnumBlock, OP_ADDR_OFFSET } from "../../live/src/ir-utils.js";
+import { midiToFnumBlock, OP_ADDR_OFFSET } from "../../live/src/lang/ir-utils.js";
 
 const op = (o) => ({ ar: 31, dr: 0, sr: 0, sl: 0, rr: 7, tl: 0, ml: 1, dt: 0, ks: 0, ...o });
 const fails = [];

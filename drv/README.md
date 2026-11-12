@@ -50,16 +50,16 @@ npm run verify:all
 
 | gate | what it proves |
 | --- | --- |
-| `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/engine-images.js` carry the same single-bank images, and every generated artifact — those three and the banked ones (`sgdk/mmlispdrv_banked_bin.h`, `68k/mml_banked_rate.h`, `live/src/engine-banked-images.js`) — is what the generators build now |
+| `mirrors` | `68k/mml_rate.h`, `sgdk/mmlispdrv_bin.h` and `live/src/driver/engine-images.js` carry the same single-bank images, and every generated artifact — those three and the banked ones (`sgdk/mmlispdrv_banked_bin.h`, `68k/mml_banked_rate.h`, `live/src/driver/engine-banked-images.js`) — is what the generators build now |
 | `selftest` | the assembler and the emulator against their own cases |
 | `voice-hoist` | the voice-hoist pass moves time, never notes: every onset stays put and every moved voice write lands in silence, over the corpus and the SGDK example |
 | `voice-repeat` | the exporter's two VOICE_SET elisions move no register write: every test score's trace with and without the repeat drop (driver.md §10.2) and with and without the loop-head hoist (§10.1), `m4-voice-repeat`'s per-track drops, `m4-loop-hoist-tail`'s hoists beside a macro tail and a sweep |
-| `c-gate` | the C sequencer ≡ `live/src/drv-player.js`, byte for byte, over the corpus — every `tests/*.mmlisp` but the claim-gate twins (`corpus()` in `c-gate.mjs`) — and the SGDK example's bundle; the gate prints the count it ran |
+| `c-gate` | the C sequencer ≡ `live/src/driver/drv-player.js`, byte for byte, over the corpus — every `tests/*.mmlisp` but the claim-gate twins (`corpus()` in `c-gate.mjs`) — and the SGDK example's bundle; the gate prints the count it ran |
 | `c-gate:pal` | the same corpus on PAL-baked streams — the sequencer reads no frame rate, and this is what keeps it that way |
 | `claim-gate` (and `:pal`) | a channel changes hands cleanly: modulators do not outlive their owner, and a part an effect displaced comes back exactly when the effect ends, in time with the song as if the effect had never fired (driver.md §2.2, §2.5) |
 | `pairs-gate` | over c-gate's corpus: the C sequencer's frames in write order ≡ the reference's; `mmlpairs.c` ≡ `tools/pairs-model.mjs`, late grabs, released as rendered and at leads 1–2, one/two grabs a frame (a banked score's pairs are `banked:gate`'s); the SGDK host's frame-view path ≡ the record path |
 | `sgdk:lint` | the SGDK glue and example compile against a shim of SGDK |
-| `engine:gate` | the three single-bank engine images (one per PCM voice count): intervals, every DAC byte against `live/src/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
+| `engine:gate` | the three single-bank engine images (one per PCM voice count): intervals, every DAC byte against `live/src/driver/pcm-model.js`, what each start and retarget applied, the chip's settling table, the expander's pairs |
 | `engine:score` | real scores through the image each names, driven by the host model: FM writes per port, PSG bytes, DAC bytes, the clock, PCM-vs-FM sync |
 | `verify:ab` | the drv-player ↔ ir-player A/B signatures (`tests/ab-baseline.json`) |
 | `glide-gate` | a glide longer than its note slides on from where the pitch (or CSM rate) is — no jump at any key-on — and a note that does not glide starts at its own pitch (`tests/m4-glide-lag`, `tests/m4-csm-glide`; language.md §14) |
@@ -67,7 +67,7 @@ npm run verify:all
 | `pcm-ab` | the browser's IR preview sends the driver's PCM commands, each within a frame |
 | `pcm-loop` | each note plays the loop the score says (`tests/m4-pcm-loop-mode.mmlisp`): the note's `:mode` decides, track loop writes before a note are the note's and stay |
 | `banked:gate` | multi-bank PCM (docs/pcm-multibank.md): the `.smp` format (directory bank, whole 32 KiB banks, silence pages, relocation that keeps ids and aliases), the C sequencer ≡ `drv-player.js` on banked scores at 60 and 50 Hz, the banked converter's grab reservation and fences (`tests/banked-pairs.c`), auto-expansion, the bundle, corrupt banks refused |
-| `multibank:gate` | the banked engine images on the JS machine with the real nine-bit bank latch: intervals, every DAC byte against `live/src/pcm-banked-model.js`, what each start and retarget applied, the pair schedule, and that its own faults are caught |
+| `multibank:gate` | the banked engine images on the JS machine with the real nine-bit bank latch: intervals, every DAC byte against `live/src/driver/pcm-banked-model.js`, what each start and retarget applied, the pair schedule, and that its own faults are caught |
 
 On the machine (needs SGDK, the m68k toolchain, and `sh blastem/setup.sh`):
 
@@ -77,7 +77,7 @@ npm run sgdk:profile -- <score.mmlisp> [--pc] [--peak N]       # where the 68000
 ```
 
 Other tools: `npm run engine:gate:negatives` (the light gate's own faults
-must fail), `npm run emit-images` (regenerate `live/src/engine-images.js`),
+must fail), `npm run emit-images` (regenerate `live/src/driver/engine-images.js`),
 `npm run pcm-render -- <score> [--seconds N] [--out F.wav]` (the score's PCM as
 the DAC plays it, for listening; into `out/pcm-render/`), `npm run pcm-trace --
 <score> [--frames N] [--list N]` (what both sequencers tell the PCM voices,
@@ -99,7 +99,7 @@ the images' periods come from).
 | `gen-test-sample.mjs` | writes `tests/pcmbank.wav`, the synthesized PCM fixture the loop gates play |
 | `pcm-trace.mjs` | the PCM commands from both sequencers for one score, decoded and checked (`npm run pcm-trace`) |
 | `bundle.mjs` | several scores against one sample bank (a game's songs) |
-| `emit-images.mjs` | the light images' descriptors into `live/src/engine-images.js` |
+| `emit-images.mjs` | the light images' descriptors into `live/src/driver/engine-images.js` |
 | `gen-c-tables.mjs`, `c-tables.mjs` | the sequencer's tables — into the tree, or into a gate's temp directory |
 | `mmb-build.mjs`, `wav.mjs` | `.mmlisp` → MMB (+ sample bank) through the live toolchain |
 | `pairs-model.mjs` | the JS twin of `mmlpairs.c` |

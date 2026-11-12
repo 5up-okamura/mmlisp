@@ -39,7 +39,7 @@ await build({
 });
 copyFileSync(mod('@codemirror/view/LICENSE'), join(out, 'LICENSE-codemirror.txt'));
 
-// The SoundFont synthesizer the GM output runs in its worklet (src/gm-worklet.js):
+// The SoundFont synthesizer the GM output runs in its worklet (src/midi/gm-worklet.js):
 // only what that worklet imports, so the bundle carries no MIDI-file tools.
 const SPESSA = ['SoundBankLoader', 'SpessaSynthProcessor', 'SpessaLog'];
 await build({

@@ -123,7 +123,7 @@ WIDE_OFFSETS header flag (§4) is where a larger file would be signalled.
 
 ### 6.1 Channel id map
 
-`live/src/mmb.js` `CHANNEL_ID` / `resolveChannelId`. Ids are frozen:
+`live/src/driver/mmb.js` `CHANNEL_ID` / `resolveChannelId`. Ids are frozen:
 
 | Id    | Channel        | Hardware                              |
 | ----- | -------------- | ------------------------------------- |
@@ -175,7 +175,7 @@ Pitch is a **u8 MIDI note number**, resolved at compile time (note names,
 registers with ROM tables, both 128 entries indexed by the note number:
 
 - FM: `MML_FNUM_BLOCK[128]`, each entry `(block << 11) | fnum` as
-  `midiToFnumBlock` in `live/src/ir-utils.js` returns it for that note.
+  `midiToFnumBlock` in `live/src/lang/ir-utils.js` returns it for that note.
 - PSG: `MML_PSG_PERIOD[128]`, the SN76489 tone period (clamped to 1023).
 
 Both tables **must match the `ir-utils.js` math** (`midiToFnumBlock`,
@@ -190,7 +190,7 @@ driver's sweep engine.
 Targets are u8 ids (opcodes.md §7). A parameter value is **i8 when the
 target's clamp range fits in i8, i16 otherwise**; the width is a fixed
 per-target property listed in the target table, known to both encoder and
-decoder (`targetWidth` in `live/src/mmb.js`, `target_wide` in the C). The
+decoder (`targetWidth` in `live/src/driver/mmb.js`, `target_wide` in the C). The
 i16 targets are `NOTE_PITCH` (cents), the reserved `TEMPO_SCALE`, `SNAP` (a
 12-bit pitch-class mask), the six PCM points (byte offsets) and the value
 slots `VAL0`–`VAL15`; every other target is i8.
@@ -416,7 +416,7 @@ limits, not hardware ones; relaxing them needs no driver change beyond
 
 ## 14. Validation Rules
 
-These are **the encoder's obligations** (`live/src/export-mmb.js`): every MMB
+These are **the encoder's obligations** (`live/src/driver/export-mmb.js`): every MMB
 it writes satisfies them, and the players trust it: validation lives in the
 toolchain, not in the ROM driver. What the loaders do check:
 

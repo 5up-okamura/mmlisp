@@ -25,10 +25,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { SlotBuilder, decodeSlot, PCM_START, PCM_RETARGET, PCM_VOL, PCM_MASTER } from "../../live/src/slot-builder.js";
-import { parsePcmBank, PCM_WINDOW, PCM_SILENCE_ADDR } from "../../live/src/pcm-model.js";
-import { engineImage } from "../../live/src/engine-images.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { SlotBuilder, decodeSlot, PCM_START, PCM_RETARGET, PCM_VOL, PCM_MASTER } from "../../live/src/driver/slot-builder.js";
+import { parsePcmBank, PCM_WINDOW, PCM_SILENCE_ADDR } from "../../live/src/driver/pcm-model.js";
+import { engineImage } from "../../live/src/driver/engine-images.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);

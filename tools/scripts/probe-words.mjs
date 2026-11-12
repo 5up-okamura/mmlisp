@@ -9,7 +9,7 @@
 //   node scripts/probe-words.mjs           # the same
 //   node scripts/probe-words.mjs --only vol            # one word
 //   node scripts/probe-words.mjs --show pan:sqr1:sweep # one case's mismatches
-import { abCompare, formatAbReport } from "../../live/src/ab-compare.js";
+import { abCompare, formatAbReport } from "../../live/src/driver/ab-compare.js";
 import { loadSamplesForIr } from "../../drv/tools/wav.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

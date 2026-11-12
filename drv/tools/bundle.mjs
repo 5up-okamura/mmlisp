@@ -1,4 +1,4 @@
-import { bankedEngineImage } from "../../live/src/engine-banked-images.js";
+import { bankedEngineImage } from "../../live/src/driver/engine-banked-images.js";
 // Build several scores against ONE sample bank — how a game with many songs
 // ships its PCM once.
 //
@@ -33,9 +33,9 @@ import { bankedEngineImage } from "../../live/src/engine-banked-images.js";
 // The songs never name the effects: the set is the game's, written once.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb, createSampleBankBuilder, packBankedSamples } from "../../live/src/export-mmb.js";
-import { engineImage } from "../../live/src/engine-images.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { encodeMmb, createSampleBankBuilder, packBankedSamples } from "../../live/src/driver/export-mmb.js";
+import { engineImage } from "../../live/src/driver/engine-images.js";
 import { loadSamplesForIr } from "./wav.mjs";
 import { readImportSources, seListOf, seHeader, withSeImport } from "./mmb-build.mjs";
 

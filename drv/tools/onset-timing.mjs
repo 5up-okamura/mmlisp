@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { buildLightImage } from "./build-engine.mjs";
 import { FrameRecorder, PairsModel, inTime, pairsCfgForImage, recordPcm, recordWrites } from "./pairs-model.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { headerPcmVoices } from "../../live/src/mmb.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { headerPcmVoices } from "../../live/src/driver/mmb.js";
 import { Machine } from "./machine.mjs";
 
 

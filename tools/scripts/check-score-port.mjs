@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// A score on another 4-operator FM machine (live/src/score-port.js), at the
+// A score on another 4-operator FM machine (live/src/port/score-port.js), at the
 // words' level:
 //   - every md score (drv/tests) and every pc88 and x68k test score
 //     (tools/tests) onto the other two compiles clean, and each track a
@@ -16,21 +16,21 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { pitchToMidi } from "../../live/src/ir-utils.js";
-import { midiPlan } from "../../live/src/export-midi.js";
-import { TARGETS } from "../../live/src/targets.js";
-import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import-mdx.js";
-import { importMucom, MUCOM_TARGETS } from "../../live/src/import-mucom.js";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderVgm } from "../../live/src/export-vgm.js";
-import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
-import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/score-port.js";
-import { WAVEFORM_WORDS, waveformOf, carrierOctave, opnAs2op } from "../../live/src/voice-port.js";
-import { shapeOf, envelopeOf } from "../../live/src/wave-port.js";
-import { parse } from "../../live/src/mmlisp-parser.js";
-import { canonicalTarget } from "../../live/src/mmlisp2ir.js";
+import { pitchToMidi } from "../../live/src/lang/ir-utils.js";
+import { midiPlan } from "../../live/src/export/export-midi.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
+import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";
+import { importMucom, MUCOM_TARGETS } from "../../live/src/import/import-mucom.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderVgm } from "../../live/src/export/export-vgm.js";
+import { parseVgm, analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import/import-vgm.js";
+import { portScore, portRows, scoreTargetOf, PORT_TARGETS } from "../../live/src/port/score-port.js";
+import { WAVEFORM_WORDS, waveformOf, carrierOctave, opnAs2op } from "../../live/src/port/voice-port.js";
+import { shapeOf, envelopeOf } from "../../live/src/port/wave-port.js";
+import { parse } from "../../live/src/lang/mmlisp-parser.js";
+import { canonicalTarget } from "../../live/src/lang/mmlisp2ir.js";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const compile = (src, file) => {
@@ -648,7 +648,7 @@ const port = (src, to, rows, options) => {
 (def-pcm smp-k :file "a.wav")
 (fm1 lead :len 4 c e g c)
 (pcm1 smp-k :len 4 c c c c)`;
-  const LV = (await import("../../live/src/part-levels.js")).PART_LEVELS;
+  const LV = (await import("../../live/src/machine/part-levels.js")).PART_LEVELS;
   const want = (to, room = 0) => (LV.x68k.fm - LV.x68k.sample - room) - (LV[to].fm - LV[to].sample);
   const louder = (to) => Math.max(0, LV[to].fm - LV.x68k.fm);
   assert.ok(want("md") < -louder("md"), "the Mega Drive cannot reach the balance by lowering alone");

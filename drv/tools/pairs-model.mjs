@@ -20,7 +20,7 @@ export const levelPage = (cfg, shift, masterShift) =>
 // a grab, 960 pairs a second.
 export const SGDK_PAIRS_PER_GRAB = 16;
 
-/** The converter's configuration for an engine image descriptor (live/src/engine-images.js). */
+/** The converter's configuration for an engine image descriptor (live/src/driver/engine-images.js). */
 export function pairsCfgForImage(img, { pairsPerGrab = SGDK_PAIRS_PER_GRAB } = {}) {
   return { fifo: img.fifo, fifoPairs: img.fifoPairs, pairsPerGrab, lutPage: img.lutPage,
     opStride: img.opStride, opPort: OP_PORT, voices: img.voices, idleAfterGen: img.idleAfterGen };

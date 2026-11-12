@@ -20,7 +20,7 @@ leading comment says what it shows, and the panel displays it.
 
 Snippets are written with the Mega Drive's channel names; the Library plays,
 inserts and opens one on the score's machine by moving its tracks to that
-machine's channels (`live/src/snippet-port.js`). A track keeps its kind of
+machine's channels (`live/src/port/snippet-port.js`). A track keeps its kind of
 sound — FM on FM, a sample on a sample channel, noise on noise — when the
 kind is what the snippet shows; when it shows only the language (a tuplet, a
 def, a delay, a curve) any melodic channel will do, FM, then tone, then wave,

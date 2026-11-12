@@ -7,11 +7,11 @@
 // that stops), the rows each chip's channels land on, and that every score
 // compiles clean for fc.
 import assert from "node:assert/strict";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { parseNsf, runNsf } from "../../live/src/import-nsf.js";
-import { analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import-vgm.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { parseNsf, runNsf } from "../../live/src/import/import-nsf.js";
+import { analyzeVgm, defaultVgmOptions, vgmToMmlisp } from "../../live/src/import/import-vgm.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
 
 const CLOCK = 1789773;
 const FRAMES = 15; // a step

@@ -1,6 +1,6 @@
 /* MMLispDRV sequencer — the 68000 half of the split (docs/driver.md §4, §6).
  *
- * This is the port of live/src/drv-player.js, which is its normative spec: the
+ * This is the port of live/src/driver/drv-player.js, which is its normative spec: the
  * gate (tools/c-gate.mjs, driver.md §12.2) runs both over the same MMB and
  * diffs the slot streams at zero tolerance. Where this file and the prose
  * disagree, drv-player.js wins.
@@ -43,11 +43,11 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 #define MML_SLOT_MAX_WRITES 95 /* the slot's cap (driver.md §6.2) — the gates' form; the SGDK host takes frames uncapped */
 /* Sub-ticks per frame (driver.md §3.5). ONE: note onsets are on the frame,
  * as in most game drivers — a frame's writes leave the pair engine together,
- * so finer onsets would not be heard. Must equal live/src/slot-builder.js
+ * so finer onsets would not be heard. Must equal live/src/driver/slot-builder.js
  * SLOT_SUBS. */
 #define MML_SLOT_SUBS 1
 /* A song's tracks — one a channel, 16 at most — and as many sound-effect
- * parts again (def-se, driver.md §2.5). live/src/mmb.js MAX_TRACKS. */
+ * parts again (def-se, driver.md §2.5). live/src/driver/mmb.js MAX_TRACKS. */
 #define MML_MAX_TRACKS 32
 #define MML_LOOP_DEPTH 4
 #define MML_WRITE_QUEUE 1024 /* spill headroom; a score head peaks near 150 */
@@ -59,16 +59,16 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 #define MML_PCM_VOICES 3
 /* How far a PCM voice is attenuated by vel + vol, in 6 dB steps. Above this
  * the level CLAMPS; `vol 0`, `master 0` and MML_PCM_TOTAL_MAX_SHIFT are the
- * hard mutes. Mirrors PCM_MAX_SHIFT in live/src/mmb.js. */
+ * hard mutes. Mirrors PCM_MAX_SHIFT in live/src/driver/mmb.js. */
 #define MML_PCM_MAX_SHIFT 4
 /* Master's own ceiling (driver.md §14.1): the host folds it into each voice's
  * level page, so it may reach deeper than a voice's own. Mirrors
- * PCM_MASTER_MAX_SHIFT / PCM_TOTAL_MAX_SHIFT in live/src/mmb.js. */
+ * PCM_MASTER_MAX_SHIFT / PCM_TOTAL_MAX_SHIFT in live/src/driver/mmb.js. */
 #define MML_PCM_MASTER_MAX_SHIFT 6
 /* Voice shift + master shift at which the voice is muted. */
 #define MML_PCM_TOTAL_MAX_SHIFT 7
 /* The engine images' rate stamps (MML_PCM_STAMP_1..3), which a sample bank
- * baked for the image must carry. Generated from live/src/engine-images.js. */
+ * baked for the image must carry. Generated from live/src/driver/engine-images.js. */
 #include "mml_rate.h"
 #include "mml_banked_rate.h"
 /* One sample-bank entry (mmb.md §10). */

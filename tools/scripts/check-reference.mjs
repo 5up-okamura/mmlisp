@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// live/src/reference.js is the Library panel's language reference: every
+// live/src/lang/reference.js is the Library panel's language reference: every
 // example must compile clean and play something (▶ plays it), every insert
 // must parse, every entry must sit in a known category, and every word the
 // editor's completion offers (completion-names.js) must have an entry.
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
-import { parse } from "../../live/src/mmlisp-parser.js";
-import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from "../../live/src/reference.js";
-import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from "../../live/src/completion-names.js";
+import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { parse } from "../../live/src/lang/mmlisp-parser.js";
+import { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } from "../../live/src/lang/reference.js";
+import { AC_FORMS, AC_TRACKS, AC_PARAMS, AC_MODE_VALUES } from "../../live/src/editor/completion-names.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const cats = new Set(REFERENCE_CATEGORIES.map(([id]) => id));

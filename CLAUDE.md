@@ -10,78 +10,35 @@ API evolve from practical composition needs.
 
 ## Codebase map
 
-The toolchain lives in `live/src/` and follows a single pipeline:
+The toolchain lives in `live/src/`, one directory a layer, and follows a
+single pipeline:
 
 ```
 Source (.mmlisp) → AST → IR (JSON) → Player
 ```
 
-| File                            | Role                                                                    |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| `mmlisp-parser.js`              | Tokenize + parse source into a generic list/atom AST                    |
-| `mmlisp2ir.js`                  | Compile AST → IR: voice resolution, macro parsing, event emit           |
-| `ir-utils.js`                   | Shared: pitch/MIDI conversion, target ranges, curve sampling            |
-| `targets.js` (+ `targets/`, `chips/`, `chips/fm-words.js`) | `:target md`/`pc88`/`x68k`/`msx`/`pce`/`fc`/`gb`/`midi`: a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound |
-| `ir-player.js` (+ `ir-player-*.js`) | Runtime: schedule IR events, run macros, write chip registers; its parts mixed into the class — `-work` (the frame-ordered work queue), `-macros` (a macro a step at a time), `-levels` (a note's one path for every voice — its gate, close, retriggers — a voice's level and pitch, and `VOICE_KINDS`: what a level, pitch, pan and silence are on each kind of voice), `-words` (a word's event, :vol and :pan for every track), `-samples` (the sample voices), `-panel` (hold / release / read), `-keys` (the keys' surface), `-shared` (constants) |
-| `mmlisp-eval.js`                | Eval: `let`, expressions, curves, `$slot` chains (runtime values)       |
-| `sample-fx.js`                  | A sample def's `:fx` chain, run on float when the bank is baked     |
-| `sample-bank.js`                | A score's samples baked as its machine's sample part says (`bank`: the ADPCM-B's RAM, PCM8's mix, the DDA's / DMC's frames, the Mega Drive's bank), for Live's play and exports and the MCP render alike |
-| `mmlisp-formatter.js`           | Source formatter                                                        |
-| `edit-tools.js`                 | Edit > Loop Selection, the Logical Editor, the vector editor's subject (`vectorAt`), the sample editor's points and Trim to Range, and a def's text for Copy and the Library's Insert (`ownDefText`): score-text edits, testable in node |
-| `snippet-port.js`               | A snippet on the score's machine: its tracks moved to that machine's channels, by kind or onto any melodic one (`tools npm run gen:snippet-targets` writes where each compiles) |
-| `score-port.js` (+ `voice-port.js`, `wave-port.js`) | Edit > Convert to Machine… and a driver song's Target: a score of md, pc88, x68k, msx, pce, fc or gb on another at the words' level — rows (each channel → the other's, or drop; short of channels, the most notes kept), the words read in its terms, dropped ones said; `voice-port.js` a voice across the FM families (a role the machine's own voice, any other its nearest waveform, an OPLL user voice read as 4-op); `wave-port.js` the wave memories' (a wave's shape by its harmonics, a voice's envelope as a macro, the FDS's modulation ↔ the PC Engine's LFO) (`tools npm run check:score-port`) |
-| `vector-editor.js`              | The panel's vector editor: a def-wave's or a macro's steps drawn as bars, as Max/Pd arrays are |
-| `pcm-editor.js`                 | The panel's sample editor: a def-pcm's wave, its range and loop points as handles |
-| `synths.js`, `synth-md.js`, `synth-pc88.js`, `synth-x68k.js`, `synth-msx.js`, `synth-pce.js`, `synth-fc.js`, `synth-gb.js`, `scope-pitch.js`, `scope-trigger.js` | Chip wiring for the browser, registered by target in `synths.js` — the Mega Drive's, the PC-8801's (ymfm's YM2608), the X68000's (ymfm's YM2151), the MSX's (ymfm's SSG as the AY-3-8910, its own SCC, and ymfm's YM2413 as the FM-PAC), the PC Engine's (its own HuC6280), the Famicom's (its own 2A03, VRC6, FDS, MMC5 and N163, ymfm's SSG as the Sunsoft 5B and YM2413 as the VRC7), the Game Boy's (its own APU), the MIDI target's (`synth-midi.js`, silence: its sound is a MIDI output's); everything a machine has of its own is its synth's, so the worklet names none — and the oscilloscope's pitch latches and trigger |
-| `import-fm-voices.js`, `import-mucom.js`, `mucom-pcm.js` | DMP/FUI/TFI/VGI/OPNI patches and `.opm` banks, mucom88 `.muc`/`.dat` |
-| `import-sf2.js`                 | A SoundFont 2 drum kit as a sample library under the kit roles' names |
-| `import-midi.js`, `import-vgm.js`, `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`) | Song imports: MIDI, VGM (with the YM2612 DAC, SegaPCM, YM2610 ADPCM, the OKIM6258, OKIM6295, K053260 and C140; `tools npm run check:import-vgm`), DefleMask / Furnace; MIDI on any target (`tools npm run check:import-midi`) |
-| `import-timing.js`              | Edit > Tap Tempo: a VGM's or NSF's times read against a beat the user taps, held to its onsets (`fitBeat`), with snap, shuffle and bar lines (`vgmToMmlisp`'s `timing`) |
-| `import-nsf.js` (+ `cpu6502.js`) | NSF / NSFe: each song run on a 6502, its chip writes read by import-vgm.js's models (`nesChips`), its loop where the state comes round (`tools npm run check:import-nsf`) |
-| `import-mdx.js`, `import-mgs.js` | Driver songs played clock-exact: MDX (MXDRV, + its PDX) as `:target x68k`, MGS (MGSDRV) as `:target msx` (`tools npm run check:import-mdx-mgs`) |
-| `import-to-midi.js`             | A chip song imported onto `:target midi` (every song import's last Target, mucom88's too): read as its own machine's score, given GM programs and kit roles by name or sound, then through its MIDI and the MIDI import (`tools npm run check:import-to-midi`) |
-| `import-song.js`                | Their shared back end: tempo estimation, the score writer, repeats folded into `(x …)` / defs, vibrato and bend shapes |
-| `import-shapes.js`              | What the importers share before the writer: the score's defs keyed by what they hold (`defTable`), frame vectors, a moving level as lines and holds on its coarsest `:step` (`lineItems`, `levelMacro`: every import's envelopes), notes' level shapes as shared `env-NN` defs (`assignEnvelopes`), Shift-JIS |
-| `import-resynth.js`             | File > Import > Audio as Formants: a recording's four spectral peaks as fm3-N tracks, under CSM or as sine waves (x68k: fm1's operators; msx, pce: wave1–4) (`tools npm run check:resynth`) |
-| `voice-estimate.js` (+ `voice-estimate-worker.js`, `fm-model.js`) | File > Import > Audio as FM Voice: a patch searched for one recorded note, on a fast model of one YM2612 channel held to Nuked (`tools npm run check:voice-estimate`) |
-| `wav-decode.js`                 | WAV → mono float at the file's own rate (browser and node alike) |
-| `export-vgm.js`, `export-wav.js` | Render the preview out                                                 |
-| `export-midi.js` (+ `gm-names.js`) | File > Export > MIDI: the score's portable core as a Standard MIDI File, on every target (`tools npm run check:export-midi`); `gm-names.js` General MIDI's names as the language has them — the programs, the voices named for one, the drum keys' roles — read by the MIDI chip, the export and the imports |
-| `stems.js`                      | The mixer's strips (`mixerStrips`, the panel's model without its look, and its S / M rules), and File > Export > Stems: a WAV a strip, soloed and rendered as the WAV export, the chip's floor taken out, each into the ZIP as it is made (`tools npm run check:stems`) |
-| `ab-snapshots.js`               | Edit > A/B Compare: two working copies of the score, each with its own undo history (`tools npm run check:ab-snapshots`) |
-| `mp4-mux.js`                    | File > Export > Video: the WebCodecs recorder's H.264 + AAC into an MP4 |
-| `new-score.js`                 | File > New: an empty score for a target, read off its channel table (`tools npm run check:new-score`) |
-| `recent-files.js`              | File > Open Recent: score (+ folder) handles kept in IndexedDB, and the YM2608 rhythm ROM the user brings |
-| `source-folder.js`, `archive.js` | The source folder `:file` and imports resolve against and File > Files in Folder lists: a granted directory, or a `.zip` / `.lzh` read in memory (`tools npm run check:archive`) |
-| `lessons.js` (+ `tutorial/`)    | Tools > Guide: the tutorial, the machines' tours and the app's tools (a `group` in `lessons.json`), a score per step (its leading comment the text, a `Try:` its exercise) and `tutorial/lessons.json`'s checks, each step in a working copy of its own (`tools npm run check:lessons`) |
-| `catalog-list.js`              | The side panel's Library list: search, filters, groups, keys, for every source |
-| `reference.js`                 | The language reference's entries (Library's Ref, completion info, hover, MCP) |
-| `completion-names.js`          | The words the editor's completion offers, each held to a reference entry |
-| `def-templates.js`             | The defs the completion writes out whole — def-fm / def-wave / def-pcm — read off the built machine's parts (`tools npm run check:def-templates`) |
-| `i18n.js` (+ `i18n/<lang>.js`)   | MMLisp > Language: the reference's, snippets', lessons' and dialogs' (`ui-texts.js`) texts in ja / es; packs generated by `tools/scripts/i18n-sync.mjs` |
-| `midi-input.js`                | Web MIDI: keys play/step-input the preview, CCs drive panel sliders (MIDI Learn) |
-| `midi-output.js`               | MMLisp > MIDI > Output: the MIDI export's plan (`midiPlan`, made in the compile worker) sent ahead on the preview's clock, each track on its IR track's (`tools npm run check:midi-out`) |
-| `gm-output.js` (+ `gm-worklet.js`, `gm-synth.js`, `gm-render.js`) | The GM output: a SoundFont (`live/soundfonts/` FluidR3Mono, or the user's SF2 / SF3) played in an AudioWorklet of its own by spessasynth_core (`live/vendor/spessasynth.js`), MidiOutRun's bytes stamped with audio time, a plan's voices decoded ahead; `:target midi`'s WAV, stems and MCP render the same synth on a clock from the plan's tempo map (`tools npm run check:gm-output`) |
-| `ai-bridge.js`                  | Tools > Connect to AI: the page's end of the link to the MCP server (`tools/mcp/`) |
-| `live/worker/` (Cloudflare Worker) | Short share links: `/api/share` stores a score and the files it carries, `/s/<id>` opens it, `/api/share/<id>/files` serves the files (Workers KV); `live/wrangler.jsonc` deploys the app to mmlisp.com |
-| `share-files.js`                | A share link's files: the folder's wavs and imports as one ZIP (wavs mono 16-bit at ≤ 22.05 kHz unless a def counts frames), opened by the viewer as the score's folder (`tools npm run check:share`) |
-| `voice-hoist.js`               | The IR pass that moves a voice change's register burst ahead of its note |
-| `offline-cache.js`             | Fills the service worker's cache so the installed app runs offline |
-| `time-worker.js`               | TIME's bar length, measured off the page's thread (`IRPlayer.captureRegisterLog`) |
-| `compile-worker.js`            | The score's compile (`compileMMLisp`) off the page's thread, for Build, Play and a drag's hot-swap |
-| `../nuked-opn2.js`, `../nuked-psg.js`, `../ymfm-ym2608.js`, `../ymfm-ym2151.js`, `../ymfm-ay8910.js`, `../ymfm-ym2413.js` | YM2612 / PSG / YM2608 / YM2151 / AY-3-8910 / YM2413 cores in `live/` (WASM, built from `third_party/` via `wasm/`) |
+| Directory | What is there |
+| --------- | ------------- |
+| `lang/` | The language. `mmlisp-parser.js` (source → list/atom AST), `mmlisp2ir.js` (AST → IR: voice resolution, macro parsing, event emit), `mmlisp-eval.js` (`let`, expressions, curves, `$slot` chains), `voice-hoist.js` (the IR pass that moves a voice change's register burst ahead of its note), `ir-utils.js` (pitch/MIDI conversion, target ranges, curve sampling), `mmlisp-formatter.js`, `reference.js` (the reference's entries: Library's Ref, completion info, hover, MCP) |
+| `machine/` | `targets.js` (+ `targets/`, `chips/`, `chips/fm-words.js`): `:target md`/`pc88`/`x68k`/`msx`/`pce`/`fc`/`gb`/`midi` — a target is its chips and a channel table (name → chip, part, voice); a chip (`chips/ym2612.js` …) its clock, parts and encoders; a part (`chips/parts.js`) the words, `:mode` symbols and rules of one kind of sound. `part-levels.js` (generated: each machine's parts at full level, which a conversion keeps samples beside melody by; `gen:part-levels`) |
+| `synth/` | Chip wiring for the browser, registered by target in `synths.js`: `synth-md.js`, `synth-pc88.js` (ymfm's YM2608), `synth-x68k.js` (ymfm's YM2151), `synth-msx.js` (ymfm's SSG as the AY-3-8910, its own SCC, ymfm's YM2413 as the FM-PAC), `synth-pce.js` (its own HuC6280), `synth-fc.js` (its own 2A03, VRC6, FDS, MMC5, N163; ymfm's SSG as the 5B, YM2413 as the VRC7), `synth-gb.js` (its own APU), `synth-midi.js` (silence: its sound is a MIDI output's); everything a machine has of its own is its synth's, so the worklet names none. `scope-pitch.js` / `scope-trigger.js`: the oscilloscope's pitch latches and trigger |
+| `player/` | `ir-player.js` (+ `ir-player-*.js`): schedule IR events, run macros, write chip registers; its parts mixed into the class — `-work` (the frame-ordered work queue), `-macros` (a macro a step at a time), `-levels` (a note's one path for every voice — its gate, close, retriggers — a voice's level and pitch, and `VOICE_KINDS`), `-words` (a word's event, :vol and :pan for every track), `-samples` (the sample voices), `-panel` (hold / release / read), `-keys` (the keys' surface), `-shared` (constants). `time-worker.js`: TIME's bar length off the page's thread |
+| `driver/` | The MMB/driver side: `mmb.js` (shared binary tables), `export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` / `mmb-dedup.js` (voice entries, stream dedup), `slot-builder.js` (the per-frame slot stream), `engine-images.js` / `engine-banked-images.js` (generated by drv/tools: the engine images, single- and multi-bank), `drv-player.js` (the JS reference driver), `ab-compare.js` (register-log A/B). PCM has one model for every consumer: `pcm-voices.js` (the sequencer's voice model), `pcm-model.js` (the Z80 engine; `pcm-banked-model.js` the multi-bank one) — drv-player, the worklet's IR preview and the engine gates all run them |
+| `audio/` | `wav-decode.js` (WAV → mono float at the file's rate), `sample-fx.js` (a sample def's `:fx` chain, run on float when the bank is baked), `sample-bank.js` (a score's samples baked as its machine's sample part says — the ADPCM-B's RAM, PCM8's mix, the DDA's / DMC's frames, the Mega Drive's bank — for Live, the exports and the MCP render alike) |
+| `import/` | Patches: `import-fm-voices.js` (DMP/FUI/TFI/VGI/OPNI, `.opm`), `import-sf2.js` (a SoundFont 2 kit as a sample library). Songs: `import-mucom.js` (+ `mucom-pcm.js`; `.muc`/`.dat`), `import-midi.js` (any target), `import-vgm.js` (with the YM2612 DAC, SegaPCM, YM2610 ADPCM, OKIM6258/6295, K053260, C140), `import-tracker.js` (+ `import-dmf.js`, `import-fur.js`: DefleMask / Furnace), `import-nsf.js` (+ `cpu6502.js`: each song run on a 6502, its writes read by import-vgm's `nesChips`), `import-mdx.js` / `import-mgs.js` (MXDRV + PDX as x68k, MGSDRV as msx, clock-exact), `import-to-midi.js` (a chip song onto `:target midi`), `import-timing.js` (Edit > Tap Tempo, `fitBeat`). Shared: `import-shapes.js` (defs keyed by content, frame vectors, level macros, `env-NN` envelopes, Shift-JIS) before `import-song.js` (tempo estimation, the score writer, repeats folded into `(x …)` / defs). Audio: `import-resynth.js` (Audio as Formants), `voice-estimate.js` (+ `-worker.js`, `fm-model.js`: Audio as FM Voice, on a fast YM2612 model held to Nuked). Checks: `check:import-vgm`, `-nsf`, `-midi`, `-mdx-mgs`, `-to-midi`, `-tracker`, `check:resynth`, `check:voice-estimate` |
+| `export/` | `export-vgm.js`, `export-wav.js` (render the preview out), `export-midi.js` (the score's portable core as an SMF on every target; `check:export-midi`), `stems.js` (the mixer's strips — `mixerStrips`, its S / M rules — and File > Export > Stems; `check:stems`), `mp4-mux.js` (File > Export > Video: WebCodecs H.264 + AAC into an MP4) |
+| `port/` | `score-port.js` (+ `voice-port.js`, `wave-port.js`): Edit > Convert to Machine… and a driver song's Target — a score of md, pc88, x68k, msx, pce, fc or gb on another at the words' level; `voice-port.js` a voice across the FM families, `wave-port.js` the wave memories' (`check:score-port`). `snippet-port.js`: a snippet on the score's machine (`gen:snippet-targets`) |
+| `midi/` | `midi-input.js` (Web MIDI keys and CCs, MIDI Learn), `midi-output.js` (MMLisp > MIDI > Output: the export's plan sent ahead on the preview's clock; `check:midi-out`), `gm-names.js` (General MIDI's names as the language has them), `gm-output.js` (+ `gm-worklet.js`, `gm-synth.js`, `gm-render.js`): a SoundFont (`live/soundfonts/` FluidR3Mono, or the user's) played by spessasynth_core (`live/vendor/spessasynth.js`) in a worklet of its own; `:target midi`'s WAV, stems and MCP render the same synth (`check:gm-output`) |
+| `editor/` | `edit-tools.js` (Loop Selection, the Logical Editor, `vectorAt`, the sample editor's points and Trim to Range, `ownDefText`: score-text edits, testable in node), `vector-editor.js` (a def-wave's or a macro's steps as bars), `pcm-editor.js` (a def-pcm's wave, range and loop points), `completion-names.js` (the completion's words, each held to a reference entry), `def-templates.js` (def-fm / def-wave / def-pcm written out from the machine's parts; `check:def-templates`), `catalog-list.js` (the Library list: search, filters, groups, keys) |
+| `app/` | The page's other modules: `lessons.js` (+ `tutorial/`: Tools > Guide, a score per step; `check:lessons`), `i18n.js` (+ `i18n/<lang>.js`, `ui-texts.js`: ja / es packs generated by `tools/scripts/i18n-sync.mjs`), `recent-files.js` (Open Recent's handles in IndexedDB, the YM2608 rhythm ROM), `source-folder.js` / `archive.js` (the folder `:file` and imports resolve against: a granted directory, or a `.zip` / `.lzh` in memory; `check:archive`), `share-files.js` (a share link's files as one ZIP; `check:share`), `ai-bridge.js` (Tools > Connect to AI, the page's end of `tools/mcp/`), `ab-snapshots.js` (Edit > A/B Compare), `new-score.js` (File > New), `offline-cache.js` (fills the service worker's cache), `compile-worker.js` (the compile off the page's thread, for Build, Play and a drag's hot-swap) |
 
-The MMB/driver side of the pipeline is `mmb.js` (shared binary tables),
-`export-mmb.js` (IR → MMB v0.4 + the sample bank), `mmb-voices.js` and
-`mmb-dedup.js` (voice entries, stream dedup), `slot-builder.js` and
-`engine-images.js` (the per-frame slot stream and the engine images;
-`engine-banked-images.js` and `pcm-banked-model.js` are the multi-bank
-engine's images and its PCM model),
-`drv-player.js` (JS reference driver), and `ab-compare.js` (register-log A/B)
-in the same directory. PCM has
-one model for every consumer: `pcm-voices.js` (the sequencer's voice model)
-and `pcm-model.js` (the Z80 engine) — drv-player, the browser worklet's IR
-preview and the engine gates all run them.
+Beside `src/` in `live/`: `index.html` (the page and its UI), `style.css`,
+`worklet.js` (the chips' AudioWorklet), `sw.js` (the service worker),
+`worker/` (the Cloudflare Worker for short share links: `/api/share`,
+`/s/<id>`, `/api/share/<id>/files` on Workers KV; `wrangler.jsonc` deploys
+the app to mmlisp.com), and the WASM cores `nuked-opn2.js`, `nuked-psg.js`,
+`ymfm-ym2608.js`, `ymfm-ym2151.js`, `ymfm-ay8910.js`, `ymfm-ym2413.js`
+(built from `third_party/` via `wasm/`).
 
 The driver lives in `drv/`, with a first-party node toolchain in `drv/tools/`
 (Z80 assembler, Z80 CPU emulator, machine model, gates — no external binaries).
@@ -105,7 +62,7 @@ Docs: `docs/language.md` is the canonical language reference;
 `docs/guide.md` is the tutorial; `docs/cheatsheet.md` condenses the language
 for people and for AI (the MCP server hands it out first) — a language change
 updates it too (`cd tools && npm run check:cheatsheet` keeps its examples
-compiling), and so does `live/src/reference.js`, the Live Library's
+compiling), and so does `live/src/lang/reference.js`, the Live Library's
 reference entries (`npm run check:reference`), and their translations
 (`npm run check:i18n`; `tools/README.md` § i18n says how a changed summary or
 a new snippet gets translated). Driver/format design: `docs/driver.md`,
@@ -131,7 +88,7 @@ The driver has gates — `cd drv && npm run verify:all` must be green — and
 `check:reference` and `check:sample-fx`) checks the compiler.
 `check:wavetable` and `check:fm-roles` hold the generated preset sets to their
 scripts (`gen:wavetable`, `gen:fm-roles`); `check:part-levels` holds
-`live/src/part-levels.js` (each machine's parts at full level, which a
+`live/src/machine/part-levels.js` (each machine's parts at full level, which a
 conversion keeps a score's samples beside its melody by) to the renders
 (`gen:part-levels`).
 `npm run check:snapshot` holds the toolchain's whole output (IR, the

@@ -4,8 +4,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectImports, compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { encodeMmb } from "../../live/src/export-mmb.js";
+import { collectImports, compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { encodeMmb } from "../../live/src/driver/export-mmb.js";
 import { loadSamplesForIr } from "./wav.mjs";
 
 /* The repository root: where a path not found next to its importer is read

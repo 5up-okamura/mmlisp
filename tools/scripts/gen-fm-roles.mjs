@@ -8,9 +8,9 @@
 //   node scripts/gen-fm-roles.mjs --check   fail if it is not what this writes
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { formatMMLisp } from "../../live/src/mmlisp-formatter.js";
-import { parse } from "../../live/src/mmlisp-parser.js";
-import { voiceTable, soundOf, FM_ROLE_SOUND } from "../../live/src/voice-port.js";
+import { formatMMLisp } from "../../live/src/lang/mmlisp-formatter.js";
+import { parse } from "../../live/src/lang/mmlisp-parser.js";
+import { voiceTable, soundOf, FM_ROLE_SOUND } from "../../live/src/port/voice-port.js";
 
 const ROLES = {
   piano: "gm-piano",

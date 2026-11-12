@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { buildMultibankImage } from "./build-multibank.mjs";
 import { MultibankPairs } from "./multibank-model.mjs";
 import { runMultibank } from "./multibank-run.mjs";
-import { pcmLoopPoints, pcmShotPoints } from "../../live/src/pcm-model.js";
+import { pcmLoopPoints, pcmShotPoints } from "../../live/src/driver/pcm-model.js";
 import { buildMultibankScore, packMultibank, fenceMultibankItems } from "./multibank-score.mjs";
 import { prioritizeFmNotes } from "./pairs-model.mjs";
 import { buildMmb } from "./mmb-build.mjs";

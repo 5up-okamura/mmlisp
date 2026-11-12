@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// File > Export > MIDI (live/src/export-midi.js), held three ways:
+// File > Export > MIDI (live/src/export/export-midi.js), held three ways:
 //
 //   the corpus  every test score (drv/tests, examples, tools/tests/<target>)
 //               exports, the file reads back (import-midi.js parseMidi) as
@@ -25,13 +25,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { exportMidi, midiPlan } from "../../live/src/export-midi.js";
-import { GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/gm-names.js";
-import { OPLL_ROM_NAMES } from "../../live/src/chips/ym2413.js";
-import { VRC7_ROM_NAMES } from "../../live/src/chips/vrc7.js";
-import { parseMidi, analyzeMidi } from "../../live/src/import-midi.js";
-import { expandLoops, pitchToMidi } from "../../live/src/ir-utils.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { exportMidi, midiPlan } from "../../live/src/export/export-midi.js";
+import { GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/src/midi/gm-names.js";
+import { OPLL_ROM_NAMES } from "../../live/src/machine/chips/ym2413.js";
+import { VRC7_ROM_NAMES } from "../../live/src/machine/chips/vrc7.js";
+import { parseMidi, analyzeMidi } from "../../live/src/import/import-midi.js";
+import { expandLoops, pitchToMidi } from "../../live/src/lang/ir-utils.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 process.chdir(ROOT);

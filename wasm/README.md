@@ -106,10 +106,10 @@ Integration notes:
    `build-ay8910.sh` / `build-ym2413.sh` build single-file ES modules for
    AudioWorklet loading, and sync copies to `live/` for static deploys
    that only publish the `live/` directory.
-3. `live/src/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
-   `../nuked-psg.js`), `live/src/synth-pc88.js` imports
-   `../ymfm-ym2608.js`, `live/src/synth-x68k.js` `../ymfm-ym2151.js` and
-   `live/src/synth-msx.js` and `live/src/synth-fc.js` (the 5B, the VRC7 with
+3. `live/src/synth/synth-md.js` imports the generated modules (`../nuked-opn2.js`,
+   `../nuked-psg.js`), `live/src/synth/synth-pc88.js` imports
+   `../ymfm-ym2608.js`, `live/src/synth/synth-x68k.js` `../ymfm-ym2151.js` and
+   `live/src/synth/synth-msx.js` and `live/src/synth/synth-fc.js` (the 5B, the VRC7 with
    its ROM) `../ymfm-ay8910.js` and `../ymfm-ym2413.js`; the
    worklet and the WAV export both run the chips
    through them, the score's target picking which.

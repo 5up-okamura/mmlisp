@@ -22,18 +22,18 @@ console.log = console.info = console.debug = (...a) => console.error(...a);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SRC = path.join(ROOT, "live", "src");
 const load = (file) => import(path.join(SRC, file));
-const { compileMMLisp, collectImports } = await load("mmlisp2ir.js");
-const { parse } = await load("mmlisp-parser.js");
-const { formatMMLisp } = await load("mmlisp-formatter.js");
-const { IRPlayer } = await load("ir-player.js");
-const { renderWav } = await load("export-wav.js");
-const { targetProfile, assetMark, builtinNames } = await load("targets.js");
-const { bakeSampleBank, hasSampleBank, sampleBankKind } = await load("sample-bank.js");
-const { bakeRhythmStandIn } = await load("chips/rhythm-rom.js");
+const { compileMMLisp, collectImports } = await load("lang/mmlisp2ir.js");
+const { parse } = await load("lang/mmlisp-parser.js");
+const { formatMMLisp } = await load("lang/mmlisp-formatter.js");
+const { IRPlayer } = await load("player/ir-player.js");
+const { renderWav } = await load("export/export-wav.js");
+const { targetProfile, assetMark, builtinNames } = await load("machine/targets.js");
+const { bakeSampleBank, hasSampleBank, sampleBankKind } = await load("audio/sample-bank.js");
+const { bakeRhythmStandIn } = await load("machine/chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
-const { pitchToMidi, playedTicks } = await load("ir-utils.js");
-const { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } = await load("reference.js");
-const { portSnippet, portMode, fmVoiceNames } = await load("snippet-port.js");
+const { pitchToMidi, playedTicks } = await load("lang/ir-utils.js");
+const { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } = await load("lang/reference.js");
+const { portSnippet, portMode, fmVoiceNames } = await load("port/snippet-port.js");
 
 const DOCS = {
   cheatsheet: "docs/cheatsheet.md",
@@ -222,7 +222,7 @@ function docSections(text) {
   return { lines, heads };
 }
 
-// The Live Library's reference (live/src/reference.js): one short entry per
+// The Live Library's reference (live/src/lang/reference.js): one short entry per
 // feature. A query matches names and aliases first, then the summaries; a
 // section is a category; neither lists the categories with their entries.
 function formatEntry(e) {
@@ -393,7 +393,7 @@ function openBrowser(url) {
 // ---------------------------------------------------------------------------
 // The MMLisp Live bridge: MMLisp Live (Tools > Connect to AI) connects to this
 // server on 127.0.0.1, so the AI edits the score open in the user's editor and
-// plays it (live/src/ai-bridge.js is the page's end). Requests go down one
+// plays it (live/src/app/ai-bridge.js is the page's end). Requests go down one
 // Server-Sent Events stream, answers come back on POST /reply. Only the pages
 // of MMLisp Live may connect — the published app and local dev servers, by
 // Origin, and only through a 127.0.0.1/localhost Host (no DNS rebinding) — and

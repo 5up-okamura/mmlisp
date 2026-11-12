@@ -5,10 +5,10 @@
 // plays, 08xy as a pan between the sides, 11xx's noise on noise5 at
 // DefleMask's rates — and the score compiles clean as pce, and as md.
 import assert from "node:assert/strict";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { parseDmf } from "../../live/src/import-dmf.js";
-import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, readArp, trackerDests } from "../../live/src/import-tracker.js";
+import { parseDmf } from "../../live/src/import/import-dmf.js";
+import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, readArp, trackerDests } from "../../live/src/import/import-tracker.js";
 
 // A DefleMask 0x17 module for the PC Engine (system 0x05): one order of four
 // rows. CH1 plays C-4 with instrument 0 (no wave macro) and 1000 (wave 0),

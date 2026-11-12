@@ -12,8 +12,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pcmBankStamp } from "../../live/src/mmb.js";
-import { ENGINE_IMAGES } from "../../live/src/engine-images.js";
+import { pcmBankStamp } from "../../live/src/driver/mmb.js";
+import { ENGINE_IMAGES } from "../../live/src/driver/engine-images.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 

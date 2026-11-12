@@ -359,7 +359,7 @@ What moves an onset off its frame is the pair wire: the Z80 sends a frame's
 writes one by one, so a key-on waits behind the writes queued before it (16
 pairs a frame on the single-bank host, §6.6). The largest burst is a voice
 change, ~30 writes a channel, so the compiler sends a voice ahead of its note,
-in the silence before it (`live/src/voice-hoist.js`, language.md §9), on the
+in the silence before it (`live/src/lang/voice-hoist.js`, language.md §9), on the
 first frame of its window that has no other channel's voice and no FM key-on:
 the note's frame keeps its pitch, key-on and level writes, and several
 channels changing voice before one beat cost the 68000 one voice a frame, not
@@ -490,7 +490,7 @@ the A/B gate compares like with like.
 Ordinary C structs; what follows is the model, not a memory map. Constant
 tables (F-number, PSG period, level ladders, carrier masks, operator offsets,
 the sin curve unit — §7, §8) are ROM data: `tools/gen-c-tables.mjs` generates
-`drv/68k/tables.c` from the same `live/src/ir-utils.js` functions
+`drv/68k/tables.c` from the same `live/src/lang/ir-utils.js` functions
 `drv-player.js` builds its tables from, so the two cannot disagree (§12.6).
 
 **Channel state**, one per channel 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1).
@@ -540,7 +540,7 @@ generates it and `drv/tools/build-engine.mjs` assembles one image per PCM voice
 count; `drv/engine/gen-multibank.mjs` generates the block-banked images (§5.4).
 `drv/sgdk/mmlispdrv_bin.h` carries the three single-bank images and every
 address below as an ABI constant, `drv/sgdk/mmlispdrv_banked_bin.h` the six
-banked ones; `live/src/engine-images.js` and `engine-banked-images.js` carry
+banked ones; `live/src/driver/engine-images.js` and `engine-banked-images.js` carry
 the same descriptors for the exporter and the browser. The images share the
 RAM map (banked additions below), the state block and the op layout; they
 differ in voice count, rate, lap, expander steps, where in the lap the voices'
@@ -853,7 +853,7 @@ the live velocity **in eighths of a step** (0…120, §7.1).
 
 Offset tables in 68k ROM, **generated from the `ir-utils.js` constants**
 (`VEL_DB_PER_STEP` 2, `VOL_STEP_DB` 2, `VOL_UNITY` 31, `VEL_FINE` 8) on the
-Mega Drive's parts' ladders (`level.stepDb` in `live/src/chips/`: the YM2612's
+Mega Drive's parts' ladders (`level.stepDb` in `live/src/machine/chips/`: the YM2612's
 TL 0.75, the SN76489's attenuator 2):
 
 - `vel_tl4[121]` = round(4 × (15 − v/8) × 2 / 0.75) (v = 0…120, eighths)
@@ -1062,7 +1062,7 @@ The rate of overflows is the pitch; where the operators ring is the formant.
 A full FM voice is a **VOICE_TABLE entry + `VOICE_SET` (0x14)**; the 29-byte
 entry layout is in mmb.md §11 (`$30,$40,$50,$60,$70,$80,$90` × 4 ops + `$B0`).
 The IR keeps per-parameter PARAM_SETs; the exporter's coalescing pass
-(`live/src/mmb-voices.js`) folds a same-tick group covering the full voice
+(`live/src/driver/mmb-voices.js`) folds a same-tick group covering the full voice
 parameter set (28 operator params + ALG/FB) into a deduplicated VOICE_TABLE
 entry + `VOICE_SET`; partial groups stay PARAM_SETs. A voice change is 2 stream
 bytes instead of ~90.
@@ -1089,7 +1089,7 @@ per-frame final value, which makes the A/B baseline coalescing-invariant.
 
 ### 10.1 Loop-invariant VOICE_SET (encode-time hoist)
 
-`planVoiceHoists` (`live/src/export-mmb.js`) emits a loop head's VOICE_SET
+`planVoiceHoists` (`live/src/driver/export-mmb.js`) emits a loop head's VOICE_SET
 **before** the loop's jump target, so pass 1 applies it and the backward JUMP
 lands past it. The target is an offset a label resolved to and the label emits
 no bytes (opcodes.md §0x42), so the hoist moves the VOICE_SET across nothing
@@ -1111,7 +1111,7 @@ sweep from before.
 ### 10.2 Repeated VOICE_SET (encode-time elision)
 
 A snippet that carries its voice — `(def hh lead c)` played `hh hh hh` —
-names the voice at every note. `planVoiceRepeats` (`live/src/export-mmb.js`)
+names the voice at every note. `planVoiceRepeats` (`live/src/driver/export-mmb.js`)
 drops a VOICE_SET when the channel already holds that entry: the same track
 set the same voice last, and nothing between could have moved a voiced
 register (the same test as §10.1's: an op param / ALG / FB write, sweep, slot
@@ -1230,7 +1230,7 @@ grabs a frame, and through the frame-view path the SGDK host uses.
 The images run in `tools/machine.mjs` — a Z80 emulator plus the Mega Drive
 slice it talks to: the YM2612's ports with a timer model written from the chip,
 the bank register, the PSG port, and the 68000's bus grab as injected stopped
-time. The reference for every DAC byte is `live/src/pcm-model.js`, the engine
+time. The reference for every DAC byte is `live/src/driver/pcm-model.js`, the engine
 as a state machine, driven by the pairs the expander actually consumed.
 
 - `npm run engine:gate` — each image with a host writing pairs once a frame:
@@ -1291,8 +1291,8 @@ slightly different frame in each. Frozen in the A/B baseline, so it is watched.
 
 **PCM is not in that gate — it has its own, and it is exact.** The browser's
 IR preview does not approximate the driver's PCM: the worklet runs the
-sequencer's voice model (`live/src/pcm-voices.js`, the same class
-`drv-player.js` uses) and the engine model (`live/src/pcm-model.js`
+sequencer's voice model (`live/src/driver/pcm-voices.js`, the same class
+`drv-player.js` uses) and the engine model (`live/src/driver/pcm-model.js`
 `PcmLiveEngine`) on the bank an export ships, stepped at the image's rate —
 8-bit, with the driver's 6 dB rungs, its 16-byte loop rounding and its loop-point
 moves. `ir-player.js` only forwards the score's PCM events (note, release,
@@ -1308,12 +1308,12 @@ the driver does not have.
 ### 12.6 Tables
 
 The reference computes every constant table (F-number, PSG period, level
-offsets on the parts' ladders in `live/src/chips/`, curve units) from
-`live/src/ir-utils.js`, and
+offsets on the parts' ladders in `live/src/machine/chips/`, curve units) from
+`live/src/lang/ir-utils.js`, and
 `tools/gen-c-tables.mjs` emits the same tables as C for the 68k
 (`drv/68k/tables.c`, and the images' rate stamps in `drv/68k/mml_rate.h`).
 Neither side re-derives a table. `npm run mirrors` checks that `mml_rate.h`, the
-engine header and `live/src/engine-images.js` describe the same single-bank
+engine header and `live/src/driver/engine-images.js` describe the same single-bank
 images, and that every generated artifact — those, and the banked images'
 `mmlispdrv_banked_bin.h`, `mml_banked_rate.h` and `engine-banked-images.js` —
 is what the generators build now.
@@ -1327,7 +1327,7 @@ log: every FM write per port and every PSG byte in the score's order (`$2B`
 graded apart: it rides the PCM lane, ahead of the frame's FM; the reference is
 given the example host's own SET_VAL of its knob slot before the song starts),
 **every
-DAC byte against `live/src/pcm-model.js` driven by the engine's own state-block
+DAC byte against `live/src/driver/pcm-model.js` driven by the engine's own state-block
 writes**, the bus stops, PCM-vs-FM sync, and whether the FM's lag behind the
 reference's frames climbs (a lost frame). Grading starts at the LAST ready mark
 — `MMLisp_init` boots `pcm1` and `MMLisp_loadScore` boots the score's image
@@ -1662,7 +1662,7 @@ channel's PAN is the song's. Gates: `m4-pcm-pan`, `p3-se-pcm-pan`
 `:loop-start` / `:loop-end` / `:loop-len` (the range when the def sets none) —
 mapped to baked bytes by the exporter, with the track's own writes laid over
 them, clamped to `rs ≤ ls ≤ le ≤ re` within the blob, and rounded to whole
-blocks by the sequencer (`pcm_points`, twin of `live/src/pcm-model.js`
+blocks by the sequencer (`pcm_points`, twin of `live/src/driver/pcm-model.js`
 `pcmNotePoints`). A shot, and a loop note once released, widen the range to
 whole blocks — the start down, the end up — so they play at least what was
 given, and the whole blob when the range is the whole sample
@@ -1779,7 +1779,7 @@ image.
 ### 14.3 Where the layers disagree
 
 - **The browser.** The live player's IR preview plays PCM through the driver's
-  own voice model and engine (`live/src/pcm-voices.js`, `pcm-model.js`) on the
+  own voice model and engine (`live/src/driver/pcm-voices.js`, `pcm-model.js`) on the
   bank an export ships, so rate, 8-bit output, levels and loop rounding match;
   `npm run pcm-ab` checks it sends the driver's commands. What differs is the
   timing: its events land on the audio clock, not on 60 Hz frames.

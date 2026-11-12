@@ -4,8 +4,8 @@
 // parses (they are fragments — a macro list, a def with a wav that isn't here).
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { compileMMLisp, collectImports } from "../../live/src/mmlisp2ir.js";
-import { parse } from "../../live/src/mmlisp-parser.js";
+import { compileMMLisp, collectImports } from "../../live/src/lang/mmlisp2ir.js";
+import { parse } from "../../live/src/lang/mmlisp-parser.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const md = fs.readFileSync(root + "docs/cheatsheet.md", "utf8");

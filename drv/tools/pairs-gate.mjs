@@ -31,9 +31,9 @@ import { fileURLToPath } from "node:url";
 import { buildMmb } from "./mmb-build.mjs";
 import { generatedTables } from "./c-tables.mjs";
 import { FrameRecorder, PairsModel, inTime, pairsCfgForImage } from "./pairs-model.mjs";
-import { DrvPlayer } from "../../live/src/drv-player.js";
-import { engineImage } from "../../live/src/engine-images.js";
-import { HEADER_FLAG, headerPcmVoices } from "../../live/src/mmb.js";
+import { DrvPlayer } from "../../live/src/driver/drv-player.js";
+import { engineImage } from "../../live/src/driver/engine-images.js";
+import { HEADER_FLAG, headerPcmVoices } from "../../live/src/driver/mmb.js";
 import { corpus } from "./c-gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));

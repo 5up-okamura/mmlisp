@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { buildLightImage } from "./build-engine.mjs";
 import { ENGINE_TABLE_ADDRESS, ENGINE_TABLES, engineCode, cByteArray } from "./engine-rom.mjs";
 import { SGDK_PAIRS_PER_GRAB } from "./pairs-model.mjs";
-import { pcmBankStamp } from "../../live/src/mmb.js";
+import { pcmBankStamp } from "../../live/src/driver/mmb.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, "..", "sgdk", "mmlispdrv_bin.h");

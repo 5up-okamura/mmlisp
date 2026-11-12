@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// File > Export > Stems (live/src/stems.js): the score rendered a file per
+// File > Export > Stems (live/src/export/stems.js): the score rendered a file per
 // mixer strip, each strip soloed as the mixer's S solos it.
 //
 //   every machine  a test score of each: one stem a strip the song plays (a
@@ -24,12 +24,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileScoreFile } from "../../drv/tools/mmb-build.mjs";
 import { bakedChipSamples, loadSamplesForIr } from "../../drv/tools/wav.mjs";
-import { IRPlayer } from "../../live/src/ir-player.js";
-import { renderWavSamples } from "../../live/src/export-wav.js";
-import { renderStems, mixerStrips, stemName, soloStrip } from "../../live/src/stems.js";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
-import { targetProfile } from "../../live/src/targets.js";
-import { bakeSampleBank, sampleBankKind } from "../../live/src/sample-bank.js";
+import { IRPlayer } from "../../live/src/player/ir-player.js";
+import { renderWavSamples } from "../../live/src/export/export-wav.js";
+import { renderStems, mixerStrips, stemName, soloStrip } from "../../live/src/export/stems.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
+import { targetProfile } from "../../live/src/machine/targets.js";
+import { bakeSampleBank, sampleBankKind } from "../../live/src/audio/sample-bank.js";
 
 process.chdir(join(dirname(fileURLToPath(import.meta.url)), "..", ".."));
 
@@ -142,7 +142,7 @@ for (const file of ADDS_UP) {
 // by: its voice where the part has one (a soloed track is not a soloed
 // voice — the PC Engine's DDA, soloed by track, silenced itself).
 {
-  const { TARGETS } = await import("../../live/src/targets.js");
+  const { TARGETS } = await import("../../live/src/machine/targets.js");
   for (const [name, t] of Object.entries(TARGETS)) {
     const head = t.channelNames.find((h) => t.partOf(h)?.kind === "sample" && !t.partOf(h).kit);
     if (!head) continue;

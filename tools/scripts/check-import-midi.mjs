@@ -5,11 +5,11 @@
 // keep the file's parts on the channels it has, and read a program and a drum
 // by the channel they land on.
 import assert from "node:assert/strict";
-import { compileMMLisp } from "../../live/src/mmlisp2ir.js";
+import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { TARGETS } from "../../live/src/targets.js";
-import { noiseNoteOfHz } from "../../live/src/chips/huc6280.js";
-import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests } from "../../live/src/import-midi.js";
+import { TARGETS } from "../../live/src/machine/targets.js";
+import { noiseNoteOfHz } from "../../live/src/machine/chips/huc6280.js";
+import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests } from "../../live/src/import/import-midi.js";
 
 const vlq = (v) => { const b = [v & 127]; while ((v >>= 7)) b.unshift((v & 127) | 128); return b; };
 function track(events) {
