@@ -358,7 +358,6 @@ MML_HOT uint8_t enc_b4_pan(const MMLFmCh *c, int8_t p) {
   uint8_t pan = p < 0 ? 2 : p > 0 ? 1 : 3;
   return (uint8_t)((pan << 6) | ((c->ams & 3) << 4) | (c->fms & 7));
 }
-MML_HOT uint8_t enc_b4(const MMLFmCh *c) { return enc_b4_pan(c, c->pan); }
 /* The DAC comes out on fm6's L / R: while a PCM SE plays they are the
  * effect's pan, the song's again at its end (driver.md §14). */
 static int se_pan_live(const MMLSeq *s) {
