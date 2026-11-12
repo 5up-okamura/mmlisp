@@ -46,16 +46,11 @@ import {
   HEADER_PCM_VOICES_SHIFT,
   HEADER_FLAG,
 } from "./mmb.js";
-import {
-  pitchToMidi,
-  clampForTarget,
-  YM2612_MASTER_CLOCK,
-  sampleCurveUnit,
-  FRAME_HZ_NTSC,
-  FRAME_HZ_PAL,
-  VEL_FINE,
-  VEL_FINE_MAX,
-} from "../lang/ir-utils.js";
+import { pitchToMidi, YM2612_MASTER_CLOCK } from "../ir/pitch.js";
+import { clampForTarget } from "../ir/ranges.js";
+import { sampleCurveUnit } from "../ir/curves.js";
+import { FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../ir/timing.js";
+import { VEL_FINE, VEL_FINE_MAX } from "../ir/levels.js";
 
 // The PCM point targets (:loop-* and :pcm-*), and the largest byte offset one
 // can name: the bank's usable window (the top page is the silence a parked

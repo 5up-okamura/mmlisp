@@ -4,7 +4,7 @@
 // UI glue (file pickers, editor insertion) stays in index.html, so this module
 // is unit-testable from node.
 
-import { fmCarrierOpsForAlg } from "../lang/ir-utils.js";
+import { fmCarrierOpsForAlg } from "../machine/chips/opn-regs.js";
 
 function readDmpU8(bytes, cursor) {
   if (cursor.i >= bytes.length) throw new Error('Unexpected end of DMP data');

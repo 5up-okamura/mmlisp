@@ -23,7 +23,7 @@ import { bankedEngineImage } from "./engine-banked-images.js";
 //
 // The runtime is integer-only, like the C: all float math happens once, in
 // buildLuts (F-number/block and PSG period by MIDI note, vel/vol level
-// offsets), from the same ir-utils.js functions tools/gen-c-tables.mjs emits
+// offsets), from the same live/src/ir/ functions tools/gen-c-tables.mjs emits
 // drv/68k/tables.c from. One stepFrame() is one frame in the normative order
 // of driver.md §4: host commands → per-track dispatch → engines → the frame.
 //
@@ -62,28 +62,11 @@ import {
   VAL_TARGET_IDS,
   resolveChannelId,
 } from "./mmb.js";
-import {
-  toSlotValue,
-  midiToPsgPeriod,
-  midiToFnumBlock,
-  snapNote,
-  velSteps,
-  VEL_FINE,
-  VEL_FINE_MAX,
-  faderSteps,
-  VOL_UNITY,
-  OP_ADDR_OFFSET,
-  encodeB0,
-  encodeB4,
-  encode60,
-  encode30,
-  detuneFromReg,
-  encode80,
-  fmCarrierOpsForAlg,
-  FRAME_HZ_NTSC,
-  fnumBlockOf,
-  psgPeriodOf,
-} from "../lang/ir-utils.js";
+import { toSlotValue, snapNote } from "../ir/ranges.js";
+import { midiToPsgPeriod, midiToFnumBlock, fnumBlockOf, psgPeriodOf } from "../ir/pitch.js";
+import { velSteps, VEL_FINE, VEL_FINE_MAX, faderSteps, VOL_UNITY } from "../ir/levels.js";
+import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode60, encode30, detuneFromReg, encode80, fmCarrierOpsForAlg } from "../machine/chips/opn-regs.js";
+import { FRAME_HZ_NTSC } from "../ir/timing.js";
 
 // The channels the macro engine runs on: 0-9 and FM3's four operators
 // (mmlispseq.h MML_MACRO_CHANNELS).
@@ -734,7 +717,7 @@ export class DrvPlayer {
   // numerator, so the whole thing stays inside 16-bit integers and matches the
   // C bit-for-bit (driver.md §8; the residue against ir-player's float-space
   // pitch is ≤ 1 F-number LSB, well inside the A/B band).
-  // The driver's pitch rule (driver.md §8), the IR preview's too (ir-utils.js).
+  // The driver's pitch rule (driver.md §8), the IR preview's too (ir/pitch.js).
   _fnumBlockFor(note, cents) {
     return fnumBlockOf(note, cents);
   }

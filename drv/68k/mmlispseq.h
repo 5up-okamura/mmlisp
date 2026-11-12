@@ -82,7 +82,7 @@ typedef char mml_assert_char_is_signed[(char)-1 < 0 ? 1 : -1];
 extern const uint16_t MML_FNUM_BLOCK[128];
 extern const uint16_t MML_PSG_PERIOD[128];
 /* Every channel holds a velocity in eighths of a step (driver.md §7.1); the vel
- * tables are indexed by it. ir-utils.js VEL_FINE — tables.c sizes its arrays
+ * tables are indexed by it. ir/levels.js VEL_FINE — tables.c sizes its arrays
  * from this, so a mismatch fails to compile. */
 #define MML_VEL_FINE 8
 #define MML_VEL_MAX (15 * MML_VEL_FINE)

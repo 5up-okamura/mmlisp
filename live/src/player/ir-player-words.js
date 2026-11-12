@@ -4,7 +4,9 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { toSlotValue, VOL_UNITY, sampleSweepPhase, sampleCurveUnit, WAVE } from "../lang/ir-utils.js";
+import { toSlotValue, WAVE } from "../ir/ranges.js";
+import { VOL_UNITY } from "../ir/levels.js";
+import { sampleSweepPhase, sampleCurveUnit } from "../ir/curves.js";
 import { curveId, sweepFrameValue } from "../driver/mmb.js";
 import { isSongWord, SLOT_FREEING, DRIVER_SWEEP_CURVES, SWEEP, SONG } from "./ir-player-shared.js";
 
@@ -263,7 +265,7 @@ export const wordMethods = {
 
   // ---- a voice's pan ----
   // -1 (left) .. 1 (right), each chip writing it at its own resolution
-  // (ir-utils panSide), kept by the site the track writes:
+  // (opn-regs.js panSide), kept by the site the track writes:
   //   fm    an FM channel's ($B4, with its AMS / FMS: chRegs)
   //   psg   a lane's own (the PC Engine's $05, the Game Boy's NR51)
   //   strk  a sample track's, which its hits key on with (_panOf)

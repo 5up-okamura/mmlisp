@@ -31,7 +31,8 @@ const { targetProfile, assetMark, builtinNames } = await load("machine/targets.j
 const { bakeSampleBank, hasSampleBank, sampleBankKind } = await load("audio/sample-bank.js");
 const { bakeRhythmStandIn } = await load("machine/chips/rhythm-rom.js");
 const { loadSamplesForIr } = await import(path.join(ROOT, "drv", "tools", "wav.mjs"));
-const { pitchToMidi, playedTicks } = await load("lang/ir-utils.js");
+const { pitchToMidi } = await load("ir/pitch.js");
+const { playedTicks } = await load("ir/timing.js");
 const { REFERENCE, REFERENCE_CATEGORIES, referenceFor, namesOf } = await load("lang/reference.js");
 const { portSnippet, portMode, fmVoiceNames } = await load("port/snippet-port.js");
 

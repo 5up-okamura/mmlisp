@@ -15,7 +15,12 @@
  * posts messages to the AudioWorklet.
  */
 
-import { toSlotValue, midiToHz, pitchToMidi, snapNote, velK, levelSteps, levelGain, VOL_UNITY, sampleCurveUnit, buildChannelRegState, fmCarrierOpsForAlg, KEY_OFF_LEAD_SECS, KEY_ORDER_EPS_SECS, HOLD_FRAMES, expandLoops, WAVE, waveEval, waveSlots, waveSteps } from "../lang/ir-utils.js";
+import { toSlotValue, snapNote, WAVE, waveEval, waveSlots, waveSteps } from "../ir/ranges.js";
+import { midiToHz, pitchToMidi } from "../ir/pitch.js";
+import { velK, levelSteps, levelGain, VOL_UNITY } from "../ir/levels.js";
+import { sampleCurveUnit } from "../ir/curves.js";
+import { buildChannelRegState, fmCarrierOpsForAlg } from "../machine/chips/opn-regs.js";
+import { KEY_OFF_LEAD_SECS, KEY_ORDER_EPS_SECS, HOLD_FRAMES, expandLoops } from "../ir/timing.js";
 import { toneLaneOf, targetProfile, notYet } from "../machine/targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "../driver/mmb.js";
 import { PCM8_VOICES } from "../machine/chips/msm6258.js";
@@ -2890,7 +2895,7 @@ export class IRPlayer {
     const t = String(target || "").toUpperCase();
     if (t === "PAN") {
       // -1 (left) .. +1 (right); the encoder reads it at its chip's
-      // resolution (ir-utils panSide: left / both / right).
+      // resolution (opn-regs.js panSide: left / both / right).
       return Math.max(-1, Math.min(1, Number(value) || 0));
     }
     if (t === "NOISE_MODE") {

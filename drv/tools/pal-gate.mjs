@@ -52,7 +52,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { encodeMmb, MACRO_ARG_KEYS } from "../../live/src/driver/export-mmb.js";
 import { DrvPlayer } from "../../live/src/driver/drv-player.js";
-import { FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../../live/src/lang/ir-utils.js";
+import { FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../../live/src/ir/timing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const testDir = join(here, "..", "tests");

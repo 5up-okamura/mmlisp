@@ -31,7 +31,8 @@ import { GM_PROGRAMS, GM_DRUM_NOTE, NAMED_VOICES, programOf } from "../../live/s
 import { OPLL_ROM_NAMES } from "../../live/src/machine/chips/ym2413.js";
 import { VRC7_ROM_NAMES } from "../../live/src/machine/chips/vrc7.js";
 import { parseMidi, analyzeMidi } from "../../live/src/import/import-midi.js";
-import { expandLoops, pitchToMidi } from "../../live/src/lang/ir-utils.js";
+import { expandLoops } from "../../live/src/ir/timing.js";
+import { pitchToMidi } from "../../live/src/ir/pitch.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 process.chdir(ROOT);

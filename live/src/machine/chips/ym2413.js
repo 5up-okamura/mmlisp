@@ -13,7 +13,7 @@
 // otherwise — one for the chip, the last written winning.
 import { fmWords } from "./fm-words.js";
 import { NO_WORDS } from "./parts.js";
-import { pitchToMidi } from "../../lang/ir-utils.js";
+import { pitchToMidi } from "../../ir/pitch.js";
 
 const CLOCK = 3579545; // the MSX's 3.58 MHz
 export const OPLL_PORT = 4;

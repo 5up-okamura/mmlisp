@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // The FM family's words (language.md §9, def-fm): one table, which the
 // compiler's keywords, macro targets and voice keys, the IR's ranges
-// (ir-utils.js MACRO_TARGET_RANGE), the editor's completion and each FM
+// (ir/ranges.js MACRO_TARGET_RANGE), the editor's completion and each FM
 // part's word list (chips/parts.js `words`) are all read from. A word is the
 // family's; a part names which of them its chip has, and how many operators,
 // so a word one chip lacks (SSG-EG on the OPM, DT2 on the OPN) is that
@@ -9,7 +9,7 @@
 //
 //   kw     the keyword (an operator's takes its number: `:tl1`)
 //   word   the IR target (an operator's takes its number: FM_TL1)
-//   field  an operator's field in a register shadow (ir-utils.js
+//   field  an operator's field in a register shadow (machine/chips/opn-regs.js
 //          buildChannelRegState, the Live panel's regs)
 //   label  the Live panel's
 //   min, max  the value's range, clamped at the register write

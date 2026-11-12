@@ -4,7 +4,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { VOL_UNITY } from "../lang/ir-utils.js";
+import { VOL_UNITY } from "../ir/levels.js";
 import { toneLaneOf } from "../machine/targets.js";
 import { CORE_OF_KIND, WAVE_LFO_WORDS } from "./ir-player-shared.js";
 

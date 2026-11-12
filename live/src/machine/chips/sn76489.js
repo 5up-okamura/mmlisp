@@ -1,7 +1,7 @@
 // The SN76489 (the Mega Drive's PSG): three square tones and a noise, one
 // write port, a byte stream.
 import { NO_WORDS, words } from "./parts.js";
-import { psgPeriodOf, noteCents } from "../../lang/ir-utils.js";
+import { psgPeriodOf, noteCents } from "../../ir/pitch.js";
 
 // noise :mode → its control bits FB | NF (bits 2-0): white = FB 1, periodic
 // FB 0; NF 0-2 a fixed shift rate, 3 tracking sqr3's tone.
@@ -49,7 +49,7 @@ export const sn76489 = {
   // The IR player's PSG: stateless, so the chip is its own encoder.
   psgEncoder() { return this; },
   // A (fractional) MIDI note's period by the driver's rule (driver.md §8,
-  // ir-utils.js psgPeriodOf): the IR preview plays the driver's periods.
+  // ir/pitch.js psgPeriodOf): the IR preview plays the driver's periods.
   pitchPeriod(midi) {
     return psgPeriodOf(...noteCents(midi), this.clock);
   },

@@ -93,7 +93,7 @@ import { fmVoiceDef, nearestRomVoice } from "./import-fm-voices.js";
 import { encodeWav } from "../export/export-wav.js";
 import { decodeAdpcmB } from "./mucom-pcm.js";
 import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op, romVoicesAs4op } from "../machine/chips/ym2413.js";
-import { VEL_DB_PER_STEP } from "../lang/ir-utils.js";
+import { VEL_DB_PER_STEP } from "../ir/levels.js";
 import { engineImage } from "../driver/engine-images.js";
 import { bankedEngineImage } from "../driver/engine-banked-images.js";
 

@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { readImportSources } from "../../drv/tools/mmb-build.mjs";
-import { pitchToMidi } from "../../live/src/lang/ir-utils.js";
+import { pitchToMidi } from "../../live/src/ir/pitch.js";
 import { midiPlan } from "../../live/src/export/export-midi.js";
 import { TARGETS } from "../../live/src/machine/targets.js";
 import { parseMdx, analyzeMdx, mdxToMmlisp } from "../../live/src/import/import-mdx.js";

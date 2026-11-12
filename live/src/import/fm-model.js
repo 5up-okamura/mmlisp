@@ -7,7 +7,7 @@
  * patch comes out within about 1 dB of log-spectral error, where two
  * different patches lie 15–25 dB apart. No LFO, SSG-EG or detune.
  */
-import { midiToFnumBlock } from "../lang/ir-utils.js";
+import { midiToFnumBlock } from "../ir/pitch.js";
 
 export const RATE = 7670454 / 144;
 const LOGSIN = new Uint16Array(256), EXP = new Uint16Array(256);

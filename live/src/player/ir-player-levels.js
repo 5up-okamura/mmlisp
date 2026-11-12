@@ -5,7 +5,9 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, pitchToMidi, VOL_UNITY } from "../lang/ir-utils.js";
+import { clampForTarget } from "../ir/ranges.js";
+import { pitchToMidi } from "../ir/pitch.js";
+import { VOL_UNITY } from "../ir/levels.js";
 import { KEYON, MACRO } from "./ir-player-shared.js";
 
 // ---- a voice's kind ----

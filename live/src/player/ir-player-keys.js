@@ -3,7 +3,7 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { velK, VOL_UNITY } from "../lang/ir-utils.js";
+import { velK, VOL_UNITY } from "../ir/levels.js";
 
 export const keyMethods = {
   /** The machine's name, and its FM encoder (chips/) for a key's own writes. */

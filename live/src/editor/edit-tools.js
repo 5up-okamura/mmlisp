@@ -8,7 +8,7 @@
 import { parse } from "../lang/mmlisp-parser.js";
 import { AC_TRACKS } from "./completion-names.js";
 import { compileMMLisp, canonicalTarget, macroCurveSteps, waveCurveSteps, dirnamePosix, importKeyOf, isAbsolutePath, resolveSamplePath } from "../lang/mmlisp2ir.js";
-import { MACRO_TARGET_RANGE, WAVE } from "../lang/ir-utils.js";
+import { MACRO_TARGET_RANGE, WAVE } from "../ir/ranges.js";
 
 const TRACKS = new Set(AC_TRACKS);
 
@@ -645,7 +645,7 @@ function literalSteps(list, starts) {
   return { values, marks, slots };
 }
 
-// A macro keyword's range: the target's (ir-utils.js MACRO_TARGET_RANGE), or
+// A macro keyword's range: the target's (ir/ranges.js MACRO_TARGET_RANGE), or
 // for a relative one a view around 0 wide enough for its values.
 function macroRange(keyword, values) {
   const op = /[+*]$/.exec(keyword)?.[0] ?? null;

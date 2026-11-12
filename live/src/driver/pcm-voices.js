@@ -24,7 +24,7 @@ import {
 } from "./mmb.js";
 import { PCM_START, PCM_START_BANKED, PCM_VOL, PCM_RETARGET, PCM_MASTER, PCM_VOICES } from "./slot-builder.js";
 import { pcmNotePoints, PCM_WINDOW, PCM_SILENCE_ADDR } from "./pcm-model.js";
-import { velFine, VEL_FINE, VEL_FINE_MAX } from "../lang/ir-utils.js";
+import { velFine, VEL_FINE, VEL_FINE_MAX } from "../ir/levels.js";
 
 
 const u16le = (x) => [x & 0xff, (x >> 8) & 0xff];

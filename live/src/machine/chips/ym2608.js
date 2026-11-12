@@ -6,7 +6,7 @@ import { opnFm, opnFmEncoder } from "./opn-fm.js";
 import { ssgTone, ssgNoise, ssgEncoder } from "./ssg.js";
 import { rhythmRom } from "./rhythm-rom.js";
 import { adpcmB } from "./adpcm-b.js";
-import { panSide } from "../../lang/ir-utils.js";
+import { panSide } from "./opn-regs.js";
 
 const CLOCK = 7987200;
 const SSG_CLOCK = CLOCK / 4; // its tone and noise divide this by 16

@@ -13,7 +13,8 @@
 
 import { decodeMucomPcmBank } from "./mucom-pcm.js";
 import { encodeWav } from "../export/export-wav.js";
-import { VEL_DB_PER_STEP, fmCarrierOpsForAlg } from "../lang/ir-utils.js";
+import { VEL_DB_PER_STEP } from "../ir/levels.js";
+import { fmCarrierOpsForAlg } from "../machine/chips/opn-regs.js";
 import { PPQN, qstr, noteName } from "./import-song.js";
 import { lineItems } from "./import-shapes.js";
 import { ym2608 } from "../machine/chips/ym2608.js";

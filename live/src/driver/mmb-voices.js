@@ -12,7 +12,8 @@
 // terms. The ab-compare gate (ir-player vs drv-player) is the safety net.
 // ---------------------------------------------------------------------------
 
-import { encode30, encode60, encode80, clampForTarget } from "../lang/ir-utils.js";
+import { encode30, encode60, encode80 } from "../machine/chips/opn-regs.js";
+import { clampForTarget } from "../ir/ranges.js";
 
 // The mandatory targets that mark a same-tick PARAM_SET run as a full voice:
 // AR/DR/SR/RR/SL/TL/KS/ML/DT × 4 ops + ALG + FB (38). SSG/AMEN are optional

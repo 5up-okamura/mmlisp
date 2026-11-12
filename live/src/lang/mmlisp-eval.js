@@ -15,7 +15,8 @@
 // .claude/memory/language-open.md §2.
 // ---------------------------------------------------------------------------
 
-import { sampleCurveUnit, createSeededRng, STOCHASTIC_LUT_SEED, pitchToMidi } from "./ir-utils.js";
+import { sampleCurveUnit, createSeededRng, STOCHASTIC_LUT_SEED } from "../ir/curves.js";
+import { pitchToMidi } from "../ir/pitch.js";
 
 const MAX_DEPTH = 32; // eval nesting guard, independent of def-expansion depth
 

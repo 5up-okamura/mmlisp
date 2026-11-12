@@ -1154,7 +1154,11 @@
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import/import-midi.js';
     import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import/import-to-midi.js';
-    import { VOL_UNITY, pitchToMidi, MACRO_TARGET_RANGE, fmCarrierOpsForAlg, levelGain, macroFrames } from './src/lang/ir-utils.js';
+    import { VOL_UNITY, levelGain } from './src/ir/levels.js';
+import { pitchToMidi } from './src/ir/pitch.js';
+import { MACRO_TARGET_RANGE } from './src/ir/ranges.js';
+import { fmCarrierOpsForAlg } from './src/machine/chips/opn-regs.js';
+import { macroFrames } from './src/ir/timing.js';
     import { compileMMLisp, canonicalTarget, collectImports } from './src/lang/mmlisp2ir.js';
     import { CorrelationTrigger } from './src/synth/scope-trigger.js';
     import { parse } from './src/lang/mmlisp-parser.js';

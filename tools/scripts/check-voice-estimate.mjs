@@ -9,7 +9,8 @@ import { renderModel, RATE } from "../../live/src/import/fm-model.js";
 import { estimateVoice, features, distance, patchToDef, patchToRegs } from "../../live/src/import/voice-estimate.js";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import createNukedModule from "../../live/nuked-opn2.js";
-import { midiToFnumBlock, OP_ADDR_OFFSET } from "../../live/src/lang/ir-utils.js";
+import { midiToFnumBlock } from "../../live/src/ir/pitch.js";
+import { OP_ADDR_OFFSET } from "../../live/src/machine/chips/opn-regs.js";
 
 const op = (o) => ({ ar: 31, dr: 0, sr: 0, sl: 0, rr: 7, tl: 0, ml: 1, dt: 0, ks: 0, ...o });
 const fails = [];

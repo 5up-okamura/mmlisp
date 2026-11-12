@@ -31,7 +31,7 @@
 // reliably writable while it plays: Pan Docs), a click a load, so the same
 // steps are not loaded twice.
 import { words } from "./parts.js";
-import { panSide } from "../../lang/ir-utils.js";
+import { panSide } from "./opn-regs.js";
 import { dutyCode } from "./rp2a03.js";
 
 const CLOCK = 4194304;

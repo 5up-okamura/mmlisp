@@ -5,7 +5,9 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { pitchToMidi, levelOffset, levelSteps, levelGain, VOL_UNITY, KEY_ORDER_EPS_SECS } from "../lang/ir-utils.js";
+import { pitchToMidi } from "../ir/pitch.js";
+import { levelOffset, levelSteps, levelGain, VOL_UNITY } from "../ir/levels.js";
+import { KEY_ORDER_EPS_SECS } from "../ir/timing.js";
 import { curveId, curveUnit8, sweepValue, sweepStep } from "../driver/mmb.js";
 import { engineImage } from "../driver/engine-images.js";
 import { ROM_SOUND_SEC } from "../machine/chips/rhythm-rom.js";

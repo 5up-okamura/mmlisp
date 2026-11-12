@@ -350,7 +350,7 @@ static void pcm_compose_master(MMLSeq *s) {
   }
 }
 
-/* ── Register encoders (ir-utils.js) ───────────────────────────────────────── */
+/* ── Register encoders (machine/chips/opn-regs.js) ───────────────────────────────────────── */
 MML_HOT uint8_t enc_b0(const MMLFmCh *c) {
   return (uint8_t)(((c->feedback & 7) << 3) | (c->algorithm & 7));
 }
@@ -561,7 +561,7 @@ static uint16_t psg_period_for(int note, int cents) {
  * channel's mask (bit 0 = C); mask 0 is off. Runs before fold_cents, so the
  * cents — a vibrato, a glide — ride the snapped note. At most 11 steps, each a
  * shift and a test; nothing on a channel with no mask. Mirrors snapNote in
- * live/src/lang/ir-utils.js. */
+ * live/src/ir/ranges.js. */
 static int snap_note(int note, uint16_t mask) {
   if (!(mask & 0xfff)) return note;
   for (int n = note, i = 0; i < 12; n--, i++) {

@@ -13,7 +13,7 @@
 //             fm | tone | noise | wave | sample
 //   level     the part's level register, which the dB a note's vel / vol /
 //             master (and a mixer strip) sum to is quantized onto once
-//             (language.md §6; ir-utils.js levelSteps / levelGain): a
+//             (language.md §6; ir/levels.js levelSteps / levelGain): a
 //             ladder { stepDb, steps }, 0 loud — FM's TL 0.75 dB in 128
 //             steps, the SN76489's attenuator 2 dB in 16, the SSG's 3 dB in
 //             16, the ROM rhythm's IL 0.75 dB in 32 — or { scale: "linear",
@@ -107,8 +107,8 @@
 // toolchain has it: `encoder` (the IR player writes its registers, so the
 // register log and the VGM exist) and `emulator` (a core plays them, so Play
 // and WAV do). An encoder takes a value at the language's widest — a wave's
-// steps −128..127 (ir-utils WAVE), a pan −1..1 — and writes it at its chip's
-// resolution (the SCC's 8 bits; the OPN's left and right bits, ir-utils
+// steps −128..127 (ir/ranges.js WAVE), a pan −1..1 — and writes it at its chip's
+// resolution (the SCC's 8 bits; the OPN's left and right bits, opn-regs.js
 // panSide). A target (targets/) is its chips, its channel table and the
 // few readings of another machine's words.
 // ---------------------------------------------------------------------------

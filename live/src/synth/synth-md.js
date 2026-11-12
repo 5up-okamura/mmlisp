@@ -31,7 +31,7 @@
 
 import createNukedModule from "../../nuked-opn2.js";
 import createPsgModule from "../../nuked-psg.js";
-import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "../lang/ir-utils.js";
+import { YM2612_MASTER_CLOCK, PSG_MASTER_CLOCK } from "../ir/pitch.js";
 import { opnHoldBus } from "../machine/chips/opn-fm.js";
 import { pitchLatches, opnPitch, snPitch } from "./scope-pitch.js";
 

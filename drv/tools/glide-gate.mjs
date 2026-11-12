@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { compileMMLisp } from "../../live/src/lang/mmlisp2ir.js";
 import { encodeMmb } from "../../live/src/driver/export-mmb.js";
 import { DrvPlayer } from "../../live/src/driver/drv-player.js";
-import { midiToFnumBlock, pitchToMidi, csmTimerPeriod } from "../../live/src/lang/ir-utils.js";
+import { midiToFnumBlock, pitchToMidi, csmTimerPeriod } from "../../live/src/ir/pitch.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tests = join(here, "..", "tests");

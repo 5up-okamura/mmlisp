@@ -21,7 +21,7 @@
 // writes (RAM_PORT): $00 / $01 an address's low and high byte, from $C000,
 // then each $02 a byte there, the address moving on — VGM's 0xC2 block.
 import { words } from "./parts.js";
-import { pitchToMidi } from "../../lang/ir-utils.js";
+import { pitchToMidi } from "../../ir/pitch.js";
 
 const CLOCK = 1789773; // NTSC: the master 21.477 MHz / 12
 const PORT = 0;

@@ -9,7 +9,7 @@
 // Frozen spec: docs/mmb.md (container), docs/opcodes.md (opcode/target/curve
 // freeze), docs/ir.md (event vocabulary). Ids and layouts here match those
 // documents verbatim, and drv/68k/mmlispseq.c carries the same ids.
-import { FRAME_HZ_NTSC } from "../lang/ir-utils.js";
+import { FRAME_HZ_NTSC } from "../ir/timing.js";
 
 // Ticks per quarter note — the musical grid every tick count is in.
 const PPQN = 96;
@@ -293,7 +293,7 @@ export function curveId(name) {
 // THIS definition — gen-c-tables.mjs emits SIN_LUT verbatim, and curveUnit8 is
 // hand-ported to C — so the two cannot disagree.
 
-// sin loop waveform: (1 - cos(2π·t/256)) / 2, i.e. the ir-utils `sin` curve
+// sin loop waveform: (1 - cos(2π·t/256)) / 2, i.e. the ir/curves.js `sin` curve
 // with default params, quantized to 0..255. Starts at 0, peaks 255 at t=128.
 export const SIN_LUT = (() => {
   const lut = new Uint8Array(256);

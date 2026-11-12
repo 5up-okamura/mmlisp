@@ -3,7 +3,7 @@
 // roles of the same name (guide.md, the kits), built in where a score
 // defines none; a sound has no pitch, no loop and no range, and a def's :fx
 // does not reach it.
-import { pitchToMidi } from "../../lang/ir-utils.js";
+import { pitchToMidi } from "../../ir/pitch.js";
 import { words } from "./parts.js";
 import { resample } from "../../audio/wav-decode.js";
 

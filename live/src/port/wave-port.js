@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { egStep, CARRIERS } from "../import/fm-model.js";
-import { midiToFnumBlock } from "../lang/ir-utils.js";
+import { midiToFnumBlock } from "../ir/pitch.js";
 import { FDS_MOD_STEPS } from "../machine/chips/fds.js";
 import { lineItems } from "../import/import-shapes.js";
 

@@ -5,7 +5,7 @@ import { parse } from '../../live/src/lang/mmlisp-parser.js';
 import { readFileSync } from 'node:fs';
 import { TARGETS, builtinNames, assetMark, targetsWith } from '../../live/src/machine/targets.js';
 import { IRPlayer } from '../../live/src/player/ir-player.js';
-import { macroFrames } from '../../live/src/lang/ir-utils.js';
+import { macroFrames } from '../../live/src/ir/timing.js';
 import { layeredNotes, matchNotes, applyLogical, logicalAffected, logicalInputError, excludedBy, sampleDefOf, writtenPoints, samplePoints, moveSamplePoint, samplePointEdit, trimSampleEdits, importFxChain, ownDefText, scoreDefsText } from '../../live/src/editor/edit-tools.js';
 
 let count = 0;

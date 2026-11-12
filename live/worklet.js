@@ -295,7 +295,7 @@ class YM2612Processor extends AudioWorkletProcessor {
 
   // Queue a write for the instant it was scheduled for. The sort key is that
   // exact time, NOT the audio frame it rounds to: a player that puts a key-off
-  // a microsecond before a key-on (ir-utils.js KEY_ORDER_EPS_SECS) is saying
+  // a microsecond before a key-on (ir/timing.js KEY_ORDER_EPS_SECS) is saying
   // which comes first, and a frame is ~21 µs, so rounding first would throw
   // that order away and leave arrival order to decide — which is how an FM3
   // operator's re-key key-off, computed while the LAST operator's note is

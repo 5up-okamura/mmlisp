@@ -13,7 +13,7 @@
 // the quantize at the end is the one hard clip, so a `gain` that overshoots is
 // caught by a later `limit` / `normalize` or clips there.
 
-import { sampleCurveUnit } from "../lang/ir-utils.js";
+import { sampleCurveUnit } from "../ir/curves.js";
 
 // Param kinds: "db" (a number, dB), "num" (a plain number), "int",
 // "time" (a length token → seconds; `positive` when 0 is not a span),

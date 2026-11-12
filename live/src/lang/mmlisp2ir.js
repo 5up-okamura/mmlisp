@@ -16,21 +16,11 @@ import { FM_CHANNEL_WORDS, FM_OP_WORDS, opWords, fmInitVoice } from "../machine/
 import { opllRomVoices } from "../machine/chips/ym2413.js";
 import { NAMED_CC } from "../machine/chips/midi.js";
 import { parse } from "./mmlisp-parser.js";
-import {
-  clampForTarget,
-  csmTimerHz,
-  csmTimerPeriod,
-  midiToHz,
-  pitchToMidi,
-  sampleCurveUnit,
-  WAVE,
-  waveCombine,
-  waveSteps,
-  expandLoops,
-  FRAME_HZ_NTSC,
-  FRAME_HZ_PAL,
-  VEL_FINE,
-} from "./ir-utils.js";
+import { clampForTarget, WAVE, waveCombine, waveSteps } from "../ir/ranges.js";
+import { csmTimerHz, csmTimerPeriod, midiToHz, pitchToMidi } from "../ir/pitch.js";
+import { sampleCurveUnit } from "../ir/curves.js";
+import { expandLoops, FRAME_HZ_NTSC, FRAME_HZ_PAL } from "../ir/timing.js";
+import { VEL_FINE } from "../ir/levels.js";
 import {
   makeEnv,
   isEvalHead,
@@ -3977,7 +3967,7 @@ function resolveWaves(waveDefs, typedDefs, defs, paramDefs, diagnostics) {
 // A wave expression (language.md §19) as the compiler reads it: a def-wave's
 // name, a curve (one cycle), a number, a `$slot` (`runtime`: a track's
 // `:wave`), and `+ - * /` over them. What has no $slot is folded here (the
-// shared ir-utils.js waveCombine); the rest is left as the tree the IR player
+// shared ir/ranges.js waveCombine); the rest is left as the tree the IR player
 // runs. Returns { n } | { data } | { tree }, or null after a diagnostic.
 const WAVE_OPS = new Set(["+", "-", "*", "/"]);
 function waveExpr(node, { waveOf, vals = null, runtime = false, diagnostics, trackName }) {

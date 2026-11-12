@@ -175,10 +175,10 @@ Pitch is a **u8 MIDI note number**, resolved at compile time (note names,
 registers with ROM tables, both 128 entries indexed by the note number:
 
 - FM: `MML_FNUM_BLOCK[128]`, each entry `(block << 11) | fnum` as
-  `midiToFnumBlock` in `live/src/lang/ir-utils.js` returns it for that note.
+  `midiToFnumBlock` in `live/src/ir/pitch.js` returns it for that note.
 - PSG: `MML_PSG_PERIOD[128]`, the SN76489 tone period (clamped to 1023).
 
-Both tables **must match the `ir-utils.js` math** (`midiToFnumBlock`,
+Both tables **must match the `ir/pitch.js` math** (`midiToFnumBlock`,
 `PSG_MASTER_CLOCK`). The JS reference builds both tables from that same code,
 and `drv/tools/gen-c-tables.mjs` emits them as C for the 68k sequencer
 (driver.md §8, §12.6). Fractional/cent pitch never appears in the

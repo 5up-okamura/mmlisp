@@ -63,7 +63,7 @@ import { PORT_TARGETS } from "../port/score-port.js";
 import { OPLL_ROM_NAMES, romVoicesAs4op } from "../machine/chips/ym2413.js";
 import { envCycle } from "../machine/chips/ssg.js";
 import { RHYTHM_KIT } from "./import-mucom.js";
-import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "../lang/ir-utils.js";
+import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "../ir/levels.js";
 import { fmVoiceDef, dtRegFromFurnace, nearestRomVoice } from "./import-fm-voices.js";
 import { DMC_RATES } from "../machine/chips/rp2a03.js";
 import { NOISE_NOTE_BASE as GB_NOISE_BASE, NOISE_TABLE as GB_NOISE_TABLE } from "../machine/chips/lr35902.js";

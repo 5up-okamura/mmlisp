@@ -47,10 +47,11 @@
 
 import { GM_DRUM_NOTE, programOf } from "../midi/gm-names.js";
 import { targetProfile } from "../machine/targets.js";
-import {
-  pitchToMidi, snapNote, expandLoops, sampleCurveUnit, clampForTarget,
-  VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY, FRAME_HZ_NTSC,
-} from "../lang/ir-utils.js";
+import { pitchToMidi } from "../ir/pitch.js";
+import { snapNote, clampForTarget } from "../ir/ranges.js";
+import { expandLoops, FRAME_HZ_NTSC } from "../ir/timing.js";
+import { sampleCurveUnit } from "../ir/curves.js";
+import { VEL_DB_PER_STEP, VOL_STEP_DB, VOL_UNITY } from "../ir/levels.js";
 
 const PPQN = 96;
 const DRUM_CH = 9;

@@ -4,7 +4,9 @@
 //
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
-import { clampForTarget, sampleCurveUnit, KEY_OFF_LEAD_SECS } from "../lang/ir-utils.js";
+import { clampForTarget } from "../ir/ranges.js";
+import { sampleCurveUnit } from "../ir/curves.js";
+import { KEY_OFF_LEAD_SECS } from "../ir/timing.js";
 import { scaleMacroSample, MACRO } from "./ir-player-shared.js";
 
 export const macroMethods = {

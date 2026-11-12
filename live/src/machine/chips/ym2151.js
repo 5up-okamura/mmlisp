@@ -13,7 +13,7 @@
 // the one $0F (noiseReg).
 import { NO_WORDS, words } from "./parts.js";
 import { fmWords } from "./fm-words.js";
-import { encode30, encode80, panSide } from "../../lang/ir-utils.js";
+import { encode30, encode80, panSide } from "./opn-regs.js";
 
 const CLOCK = 4000000; // the X68000's
 // The KC table is the chip's at 3.579545 MHz, where KC $4A is A4 = 440 Hz;

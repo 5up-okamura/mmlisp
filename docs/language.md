@@ -591,7 +591,7 @@ the velocity floor — for a fade to true silence automate `:tl` (carrier TL →
 127) or use `:vol`.
 
 Tunable constants: `VEL_DB_PER_STEP`, `VOL_STEP_DB`, `VOL_UNITY` in
-`live/src/lang/ir-utils.js`.
+`live/src/ir/levels.js`.
 
 ---
 

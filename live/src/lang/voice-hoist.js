@@ -45,7 +45,7 @@ import { targetProfile } from "../machine/targets.js";
 // The tracks the pass moves: the Mega Drive's FM channels. It is the
 // driver's (its wire); a VGM target writes a voice at its note (mmlisp2ir.js).
 const FM_CHANNELS = new Set(targetProfile("md").headsOfKind("fm"));
-import { expandLoops } from "./ir-utils.js";
+import { expandLoops } from "../ir/timing.js";
 
 // A voice: what a `def-fm` compiles to. Its presence is what moves a gap.
 export const VOICE_TARGETS = new Set([

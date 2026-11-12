@@ -10,7 +10,7 @@
 //   { "tracksMin": 3 }     at least 3 tracks play notes
 //   { "velsMin": 2 }       the notes are struck at 2 velocities or more
 //   { "sameLength": true } every track that plays notes takes as long, its
-//                          repeats counted out (ir-utils.js playedTicks)
+//                          repeats counted out (ir/timing.js playedTicks)
 //
 // A score that does not compile passes nothing.
 //
@@ -18,7 +18,7 @@
 // texts are found and translated under, which step comes next, what a
 // compile says of a Try. live/index.html draws from it; tools
 // `npm run check:lessons` and i18n-sync.mjs read it too.
-import { playedTicks } from "../lang/ir-utils.js";
+import { playedTicks } from "../ir/timing.js";
 
 /** A step's file: { about, task, code }. */
 export function parseStep(text) {

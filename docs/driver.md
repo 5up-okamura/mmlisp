@@ -490,7 +490,7 @@ the A/B gate compares like with like.
 Ordinary C structs; what follows is the model, not a memory map. Constant
 tables (F-number, PSG period, level ladders, carrier masks, operator offsets,
 the sin curve unit — §7, §8) are ROM data: `tools/gen-c-tables.mjs` generates
-`drv/68k/tables.c` from the same `live/src/lang/ir-utils.js` functions
+`drv/68k/tables.c` from the same functions in `live/src/ir/` and `live/src/machine/chips/opn-regs.js`,
 `drv-player.js` builds its tables from, so the two cannot disagree (§12.6).
 
 **Channel state**, one per channel 0–9 (fm1–fm6, sqr1–sqr3, noise; mmb.md §6.1).
@@ -851,7 +851,7 @@ is rounded once (`round4(x) = (x ± 2) >> 2`, half away from zero), so the
 runtime stays integer-only and quantizes once, at the register. `vel` here is
 the live velocity **in eighths of a step** (0…120, §7.1).
 
-Offset tables in 68k ROM, **generated from the `ir-utils.js` constants**
+Offset tables in 68k ROM, **generated from the `ir/levels.js` constants**
 (`VEL_DB_PER_STEP` 2, `VOL_STEP_DB` 2, `VOL_UNITY` 31, `VEL_FINE` 8) on the
 Mega Drive's parts' ladders (`level.stepDb` in `live/src/machine/chips/`: the YM2612's
 TL 0.75, the SN76489's attenuator 2):
@@ -955,7 +955,7 @@ fade read the fader. Gates: `m4-vol-macro-carry`, `m4-level-macros`.
 
 ## 8. Pitch Tables
 
-Both tables are generated **from the same code as `ir-utils.js`**
+Both tables are generated **from the same code as `ir/pitch.js`**
 (`midiToFnumBlock`, `PSG_MASTER_CLOCK`) and emitted as C arrays the 68k links
 (§12.6). NTSC clocks: YM 7,670,454 Hz, PSG 3,579,545 Hz.
 
@@ -1309,7 +1309,7 @@ the driver does not have.
 
 The reference computes every constant table (F-number, PSG period, level
 offsets on the parts' ladders in `live/src/machine/chips/`, curve units) from
-`live/src/lang/ir-utils.js`, and
+`live/src/ir/`, and
 `tools/gen-c-tables.mjs` emits the same tables as C for the 68k
 (`drv/68k/tables.c`, and the images' rate stamps in `drv/68k/mml_rate.h`).
 Neither side re-derives a table. `npm run mirrors` checks that `mml_rate.h`, the

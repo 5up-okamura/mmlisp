@@ -3,7 +3,8 @@
 // independent-operator and CSM tracks.
 import { words } from "./parts.js";
 import { fmWords } from "./fm-words.js";
-import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80, fnumBlockOf, noteCents } from "../../lang/ir-utils.js";
+import { OP_ADDR_OFFSET, encodeB0, encodeB4, encode30, encode60, encode80 } from "./opn-regs.js";
+import { fnumBlockOf, noteCents } from "../../ir/pitch.js";
 
 export const opnFm = {
   name: "fm",
@@ -56,7 +57,7 @@ export function opnFmEncoder(fnumRate, clock) {
     },
     // A (fractional) MIDI note: the block and F-number, high byte first —
     // by the driver's rule, its semitone table and the cents between
-    // (driver.md §8, ir-utils.js fnumBlockOf).
+    // (driver.md §8, ir/pitch.js fnumBlockOf).
     pitch(ch, midi) {
       const [port, off] = at(ch);
       const fb = fnumBlockOf(...noteCents(midi), fnumRate);

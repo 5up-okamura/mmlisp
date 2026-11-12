@@ -333,7 +333,7 @@ Ids are `TARGET_ID` in `live/src/driver/mmb.js` (and `TARGET_NAME`, its inverse)
 68000 sequencer mirrors them as the `T_*` enum in `drv/68k/mmlispseq.c`. Width
 1 = i8/u8 payload, 2 = i16; the wide set is `WIDE_TARGET_IDS` in `mmb.js`,
 mirrored by `target_wide()` in the C. Clamp ranges are `MACRO_TARGET_RANGE` in
-`live/src/lang/ir-utils.js`, and the driver clamps at the register write with the
+`live/src/ir/ranges.js`, and the driver clamps at the register write with the
 same bounds.
 
 | Id   | IR name     | Width | Clamp range    | Register family                    |
@@ -420,7 +420,7 @@ range's end still moves it.
 carries: an i8 in target units like every other operator param, clamped to
 `MACRO_TARGET_RANGE.FM_DT`. The chip's 3-bit field is sign-magnitude, and the
 conversion happens at the register write, not in the encoder —
-`detuneToReg()` in `live/src/lang/ir-utils.js` and `dt_to_reg()` in
+`detuneToReg()` in `live/src/machine/chips/opn-regs.js` and `dt_to_reg()` in
 `drv/68k/mmlispseq.c` both map `d < 0 ? 4 | (−d & 3) : d & 3` into bits 6–4 of
 `$30+op`. So the byte on the wire is a signed detune, and only the register
 byte holds 0..7.
@@ -470,6 +470,6 @@ TEMPO_SWEEP or CSM_RATE (`E_CURVE_MACRO_ONLY`, language.md §11), and these ids
 never reach a sweep.
 
 In a **macro** the curve names are exact: the exporter samples them
-through `sampleCurveUnit()` (`live/src/lang/ir-utils.js`, seeded LUTs) and MACRO_TABLE
+through `sampleCurveUnit()` (`live/src/ir/curves.js`, seeded LUTs) and MACRO_TABLE
 stores the sampled values, so what the driver steps is the shape itself, not an
 id it has to evaluate.
