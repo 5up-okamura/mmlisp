@@ -57,7 +57,7 @@
 import { emitSong, emitStructured, barEnds, qstr, PPQN, lenToken, withPre, dropIdleNones, noteName, octOf, GLIDE_NONE } from "./import-song.js";
 import { defTable, sjis, hoistMacros } from "./import-shapes.js";
 import { fmVoiceDef } from "./import-fm-voices.js";
-import { decodeOki } from "./import-vgm.js";
+import { decodeOki } from "../audio/pcm-decode.js";
 import { encodeWav } from "../audio/wav-encode.js";
 
 // MXDRV's clock: 48 a quarter at Timer B's rate — the grid the file's

@@ -4,7 +4,7 @@
 // An NSF is a Famicom song's own code — its driver and its data — with an
 // init and a play routine: init picks the song, play runs once a frame. So
 // the song is run (cpu6502.js) and what it writes to the sound chips is read
-// as a VGM's writes are (import-vgm.js nesChips: the 2A03, and the VRC6,
+// as a VGM's writes are (nes-chips.js nesChips: the 2A03, and the VRC6,
 // VRC7, FDS, MMC5, N163 and 5B its header names) — the rows, the dialog and
 // the score are the VGM import's. A write lands at its frame's start plus
 // the cycles the play routine took to reach it; a DMC hit's sample is the
@@ -32,7 +32,7 @@
 // ---------------------------------------------------------------------------
 
 import { Cpu6502 } from "./cpu6502.js";
-import { nesChips } from "./import-vgm.js";
+import { nesChips } from "./nes-chips.js";
 import { RATE } from "./import-song.js";
 
 const CLOCK_NTSC = 1789773, CLOCK_PAL = 1662607;
