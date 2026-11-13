@@ -94,10 +94,6 @@ Rules for every phase:
   choice: the import- / export- / synth- / ir-player- prefixes inside
   their directories (dropping them makes four midi.js), and
   import-song.js / import-shapes.js's names (a matter of taste, low gain).
-- Open: phases 0–3 are pushed (2026-11-12); from ec38f7f6 on is not —
-  to be played by the user first (value drag, Logical Editor, themes, the
-  FM panel's write-back, completion templates, :target midi's WAV and MIDI
-  export). sw.js's cache version was bumped for the moved modules.
 - Phase 4, as the review recast it: no addEventListener pass (each module
   can keep `window.X =`; the smoke already catches a handler that does not
   resolve). First the page's pure code out — 290 declarations, ~1,370
