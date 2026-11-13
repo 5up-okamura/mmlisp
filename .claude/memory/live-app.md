@@ -32,6 +32,21 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
   need a gate in the player (`_lane`) and in the worklet (the lookahead's
   writes already sent) and the queued encoders (ssg, rp2a03, lr35902,
   queued-tone) to carry their lane — reopen only for a symptom worth that.
+- **index.html is not split further** (2026-11-13, after the 2026-11
+  restructuring took its editor parts out): 95 of its 235 top-level lets
+  are written from another section, which ES modules cannot
+  import-and-assign, so a split means one state object first — thousands
+  of rewritten reads and writes with only the boot smoke to check them, no
+  gain the user sees, and the bound core (panel ↔ audio ↔ editor) still
+  bound. Take a section out only when it is being reworked anyway, its
+  state with it. Same for tools/scripts and drv/tools into
+  subdirectories: ~340 lines in 76 files climb from their own place to
+  repo paths, generators write there, many are outside every gate.
+- The restructuring's splits were made by a scratch tool, not in the repo:
+  acorn, each top-level declaration moved verbatim with its comments, its
+  file's imports computed, every importer rewritten, a line-multiset (and
+  for the page an AST) comparison that nothing was lost or doubled; only a
+  module's unexported helpers follow their callers.
 - **The PC Engine's PCM default level is not raised**: the DDA and a wave
   peak alike (−18.1 dBFS measured); the difference is the samples' energy,
   the machine's own balance.
