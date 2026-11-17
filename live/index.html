@@ -8212,6 +8212,14 @@ import { channelForms } from './src/lang/score-text.js';
       if (!_writeBatch.length) queueMicrotask(flushWriteBatch);
       _writeBatch.push(portOrMsg ?? 0, addr, data, when);
     }
+    // A run stopped: the worklet drops its scheduled writes first, then the
+    // player's silencing writes follow. The other way round, a block the
+    // worklet renders between the two applies the silence and then a
+    // scheduled write already due, and a level it raised rings on.
+    function stopRun(p) {
+      workletNode?.port.postMessage({ type: 'flush' });
+      p?.stop();
+    }
     // A run of writes at a fixed rate (the PC Engine's DDA): one message, the
     // worklet writing each tick at its own sample.
     writeToWorklet.stream = (s) => workletNode?.port.postMessage({ type: 'stream', ...s }, [s.bytes.buffer]);
@@ -8717,8 +8725,7 @@ import { channelForms } from './src/lang/score-text.js';
       if (failed && _lastGoodIR) log('The source has errors: playing the last version that compiled', 'warn');
       if (exactLine && !_lastSourceMap?.some((e) => e.line === fromLine)) return;
       if (player) {
-        player.stop();
-        workletNode?.port.postMessage({ type: 'flush' });
+        stopRun(player);
       }
       // With the cursor in a (def-se …), Play auditions that effect alone —
       // the song never starts its effects; the game does (driver.md §2.5).
@@ -8936,8 +8943,7 @@ import { channelForms } from './src/lang/score-text.js';
       resetChannelVu();
       _vizFrozen = null;
       const wasRunning = !!player; // playing or paused
-      player?.stop();
-      workletNode?.port.postMessage({ type: 'flush' });
+      stopRun(player);
       player = null;
       _paused = false; // a pause is over with the run it held
       releaseScreen();
@@ -9208,8 +9214,7 @@ import { channelForms } from './src/lang/score-text.js';
       _pausedAsLeft = true;
       // Freeze each track's playhead so the piano roll stops in place (not reset).
       _vizFrozen = new Map(_vizNotes.map((cell) => [cell.trackIndex, player.trackClock(cell.trackIndex)]));
-      player.stop();
-      workletNode?.port.postMessage({ type: 'flush' });
+      stopRun(player);
       releaseScreen();
       setMediaSession('paused'); // the element plays on (silence): the lock screen keeps its controls
       _paused = true;
@@ -10062,8 +10067,7 @@ import { channelForms } from './src/lang/score-text.js';
 
     function stopLibraryScorePreview() {
       if (!_libraryScorePlayer) return;
-      _libraryScorePlayer.stop();
-      workletNode?.port.postMessage({ type: 'flush' });
+      stopRun(_libraryScorePlayer);
       _libraryScorePlayer = null;
       _libraryScorePath = null;
     }
@@ -13681,8 +13685,7 @@ import { channelForms } from './src/lang/score-text.js';
       // as it ran then: it no longer lines up with the roll, so it goes.
       _rollTrace = null;
       if (player instanceof IRPlayer && player.isPlaying() && player.playedIr()) {
-        player.stop();
-        workletNode?.port.postMessage({ type: 'flush' });
+        stopRun(player);
         player.seek(audioCtx, { sec });
         _vizFrozen = null;
         startFmLiveLoop();
