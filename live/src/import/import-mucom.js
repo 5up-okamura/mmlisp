@@ -2193,39 +2193,40 @@ function finishChain(ctx, out) {
 // which plays as ssgRegVel of it — so in dB a decay is deeper the louder the
 // note, and its last steps are the PSG's wide ones. As a :vel* macro (the
 // note's vel times each value) the stages are that played :vel over the
-// note's, tick by tick, written as every importer writes a level
+// note's, a clock a step, written as every importer writes a level
 // (import-shapes.js lineItems: a line where it passes each of SOFENV's
 // stairs, else values and holds). One envelope therefore draws per `v`,
-// named like the LFO's pitch classes.
+// named like the LFO's pitch classes. The macro steps on the part's clock
+// (`:step 1/C`, a beat clock), as SOFENV does: a stage and the key-off q
+// sets fall on the clocks they do in mucom, where frames would round a
+// two-clock top past a key-off on the third.
 // The note plays at :vel 15 under its fader (ssgLevelVol), so a level is the
 // :vel that, with the fader's steps, lands on its register value — a
 // fraction is fine, the macro's ratio carries it — down to 30 dB below the
 // note's top.
-function ssgEnvSpec(op, wholeClocks, v, bpm) {
-  const factor = WHOLE_TICKS / wholeClocks;
-  let ticks = 0; // the stages' whole length, for macroStep
+function ssgEnvSpec(op, wholeClocks, v) {
+  const clocks = (n) => `${n}/${wholeClocks}`;
   const faderDb = 2 * (31 - ssgLevelVol(v));
   const vel = 15;
   const played = (level) => Math.max(0, Math.min(15, 15 - (3 * (15 - Math.floor((level * (v + 1)) / 256)) - faderDb) / 2));
   const ratio = (x) => Math.round((100 * x) / vel) / 100;
-  const seq = []; // the played :vel a tick, up to the key-off
+  const seq = []; // the played :vel a clock, up to the key-off
   let end = null; // where the last stage ends: the level it holds
-  // The tick the held note's register reaches 0. SOFENV's level falls
+  // The clock the held note's register reaches 0. SOFENV's level falls
   // to silence there, which a :vel* cannot (:vel 0 is 30 dB down): the
   // envelope's :vol holds the fader until then and drops to 0, so the note is
   // silent from there, released or not.
-  let held = true, zeroTick = null;
+  let held = true, zeroAt = null;
   // A stage from level a towards b, `rate` a clock — SOFENV steps the level
   // once a clock and holds it between, so a note keeps its start level for
-  // its first clock — as the played :vel per tick.
+  // its first clock — as the played :vel per clock.
   const stage = (a, b, rate) => {
     if (rate <= 0) return;
-    const total = Math.max(1, Math.round(Math.ceil(Math.abs(b - a) / rate) * factor));
-    ticks += total;
+    const total = Math.max(1, Math.ceil(Math.abs(b - a) / rate));
     const dir = b > a ? 1 : -1;
     const y = Array.from({ length: total + 1 }, (_, j) => {
-      const lv = dir > 0 ? Math.min(b, a + Math.floor(j / factor) * rate) : Math.max(b, a - Math.floor(j / factor) * rate);
-      if (held && dir < 0 && zeroTick == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroTick = ticks - total + j;
+      const lv = dir > 0 ? Math.min(b, a + j * rate) : Math.max(b, a - j * rate);
+      if (held && dir < 0 && zeroAt == null && Math.floor((lv * (v + 1)) / 256) === 0) zeroAt = seq.length + j;
       return played(lv);
     });
     seq.push(...y.slice(0, total));
@@ -2238,9 +2239,8 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
   } else if (ar > 0) {
     // At the top already, the attack still takes its clock: SOFENV adds AR,
     // finds 0FFH and only then turns to the decay (music.asm SOFEV1).
-    seq.push(...new Array(Math.round(factor)).fill(vel));
+    seq.push(vel);
     end = vel;
-    ticks += Math.round(factor);
   }
   if (al >= 255 || ar > 0) {
     if (sl < 255) stage(255, sl, dr);
@@ -2248,22 +2248,27 @@ function ssgEnvSpec(op, wholeClocks, v, bpm) {
     else if (sr > 0 && sl > 0) stage(sl, 0, sr);
   }
   // Key-off releases from wherever the level is: a release without its :from
-  // falls from where the macro is, to 0 in the time RR takes from SL — from
-  // the top when there is no sustain level (one straight piece: the played
-  // level is linear in SOFENV's on pc88). Its length is fixed where mucom's
-  // is the level's own over RR.
+  // falls from where the macro is, to 0 in the clocks RR takes the played
+  // level from SL there — from the top when there is no sustain level (one
+  // straight piece: the played level is linear in SOFENV's on pc88). Its
+  // length is fixed where mucom's is the level's own over RR.
   if (end != null) seq.push(end);
-  const items = lineItems(seq, { unit: "t", fmt: ratio });
+  const items = lineItems(seq, { unit: `/${wholeClocks}`, fmt: ratio });
   items.push("(wait key-off)");
   held = false;
   if (rr > 0) {
-    const total = Math.max(1, Math.round(Math.ceil((sl > 0 ? sl : 255) / rr) * factor));
-    ticks += total;
-    items.push(`(linear :to 0 :len ${total}t)`);
+    // To 0 where the played level is: the register's bottom steps are below
+    // :vel's 30 dB, so that is before the level itself is.
+    const from = sl > 0 ? sl : 255;
+    let n = 1;
+    while (n * rr < from && played(from - n * rr) > 0) n++;
+    items.push(`(linear :to 0 :len ${clocks(n)})`);
   }
   const fader = ssgLevelVol(v);
-  const mute = zeroTick == null ? "" : zeroTick > 0 ? ` :vol [ (linear ${fader}..${fader} :len ${zeroTick}t) 0 ]` : " :vol [ 0 ]";
-  return `${macroStep((ticks / PPQN) * (60 / (bpm || 120)) * 60)}:vel* [ ${items.join(" ")} ]${mute}`;
+  // One that never reaches 0 clears the :vol a muting one before it left,
+  // which would go on silencing its notes.
+  const mute = zeroAt == null ? " :vol none" : zeroAt > 0 ? ` :vol [ (linear ${fader}..${fader} :len ${clocks(zeroAt)}) 0 ]` : " :vol [ 0 ]";
+  return `:step ${clocks(1)} :vel* [ ${items.join(" ")} ]${mute}`;
 }
 
 
@@ -2278,7 +2283,7 @@ function envBeforeNote(ctx, out) {
   }
   const env = ctx.ssgEnv;
   if (!env || !ctx.envRegistry) return;
-  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15), ctx.tempo);
+  const spec = ssgEnvSpec(env, env.wholeClocks, clamp(ctx.vel ?? 15, 0, 15));
   let name = ctx.envRegistry.get(spec);
   if (!name) { name = `env${ctx.envRegistry.size + 1}`; ctx.envRegistry.set(spec, name); }
   if (name !== ctx.envActive || ctx.verbose || stale(ctx, "envActive")) { out.push(name); ctx.envActive = name; } // the def carries :macro :vel*
