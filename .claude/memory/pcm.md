@@ -21,10 +21,7 @@
   all song): a PCM note turns `$2B` on, an fm6 key-on off; the engine is told
   nothing and its voices play on unheard. Not a voice cut, not an engine
   change.
-- **The browser sounds like the driver.**
-- `:fx` is an ordered chain; a kit's chain runs before the def's. PCM
-  audition is the FM one.
-- Macros on PCM: `:keyon`, `:vel`, `:vol`.
+- PCM audition is the FM one.
 - Against XGM2: we pay each slot's worst case because CSM owns Timer A; we
   have levels and moving loop points, it has neither.
 - Ordinary FM3 is out of `banked_writes` (the converter does not know CH3's

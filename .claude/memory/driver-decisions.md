@@ -17,9 +17,6 @@ Superseded engines: tags `archive/all-z80`, `archive/ring-engine`,
   ring (now the 68000 pumps pairs); a fixed 3 PCM voices (now 1–3 images);
   runtime pitch (now baked per note); a ring depth knob; one 10.5 kHz rate
   (now three generated rates from `npm run light-study`).
-- Still in force: SE is the 68k's; change-only suppression is the 68k's;
-  writes go in **dispatch order, never coalesced full-frame** (it keeps the
-  zero-tolerance gate possible; coalescing saved ~1% of writes).
 - **Write census**: key on/off 0.8% of steady-state writes, F-num / PSG
   period 65%, TL 17%, PSG att 12%. Subdividing time multiplies 99% of the
   traffic and gains nothing on notes.
@@ -91,16 +88,8 @@ Superseded engines: tags `archive/all-z80`, `archive/ring-engine`,
   several parts per effect, a default priority the host may override.
 - The displaced part plays on as a ghost (catching up at SE-end rejected).
   Open: a `:master` written by a ghost's stream.
-- **SE-end restores the state, not the sound** (2026-11): no re-key on any
-  channel; the part sounds from its next note. Re-attacking (FM's EG, a PSG
-  `:vel` envelope, a sample's head) was rejected as an attack the music never
-  wrote; SMPS and Echo do the same (state back, no key-on). A `:len 0` hold
-  under an effect stays silent — the composer's to arrange (user's choice A).
-- **PCM voices are owned channels with ghosts** like FM / PSG (`owned_ch`,
-  `ghost_ix`); the PCM-only snapshot (loop restart, saved binds) is gone. The
-  DAC's one pan is the exception: a PCM SE's `se_pan` over fm6's L / R.
-- No effect on CH3; song-wide state (`:master`, `:lfo-rate`) refused in
-  def-se.
+- Re-keying a part at SE-end was rejected (2026-11); SMPS and Echo do not
+  either.
 - FM effects belong on free channels (priming); LEAD 1, an SE lane two
   frames ahead and a faster light-image wire were not chosen.
 - Two scores resident: per-score state off the sequencer; two scores
@@ -114,10 +103,6 @@ Superseded engines: tags `archive/all-z80`, `archive/ring-engine`,
 - Sub-tick timing retired (`SLOT_SUBS = 1`), its machinery left in on
   purpose (LTO folds it).
 - The PSG soft-envelope divergence stays: the goal is ir ≡ drv.
-- A tick-written macro `:step` runs on the tick clock; a `:keyon` retrigger
-  restarts the envelopes, not `:pitch` / `:semi`; velocity in eighths of a
-  step (TL resolves 0.75 dB).
-- **HBlank is the game's**; the host pumps from VBlank only.
 - The gates' slot encoder stays in `mmlispseq.c` (gc-sections drop it).
 
 ## How to work here (the user)

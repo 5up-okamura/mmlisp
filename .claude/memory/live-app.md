@@ -72,10 +72,8 @@ What the app does is `docs/guide.md`; what is ahead is `docs/roadmap.md`.
 
 ## The panel and the players — how it is built, and what is open
 
-`ir-player.js` is split into parts (`ir-player-work / -words / -macros /
--levels / -samples / -panel / -keys / -shared .js`), each a set of methods
-mixed into IRPlayer. The page and the exports read the player only through
-its public API (`playedIr()`, `loadedIr()`, `machine()`).
+The page and the exports read the player only through its public API
+(`playedIr()`, `loadedIr()`, `machine()`).
 
 How it stands (the 2026-11 restructuring: the user wanted structure over
 behaviour — fixing knobs one by one kept surfacing faults, because the IR
@@ -115,12 +113,7 @@ where the driver steps frames and puts every word through one `_paramSet`):
   `_pausedAsLeft`). Anything else — a seek, an edit, stop → play — reads the
   score's. User's rule (2026-11): only that one case.
 
-The gates for it: `check:words` (every word every way on every kind of Mega
-Drive track against the driver; a new word or way goes into its tables
-first), `check:word-rule` (the same rule on every machine's channels, sample ones
-too, no driver),
-`check:loops` (several passes of a track's loop against the driver),
-`check:note-path`, `check:panel`.
+A new word or way goes into `check:words`' tables first.
 
 Open, in the order worth taking:
 
@@ -171,17 +164,6 @@ voice-specific copy of any of these; extend the adapter instead:
   kind there, not a branch in a dispatcher.
 - `tools npm run check:note-path` holds all of it on every channel of every
   machine, sample ones included (closes, retriggers, mutes): 107 channels.
-
-## Working here
-
-Commits follow the repo's style (`refactor(player): …`, `fix(live): …`)
-with the Why / What / Impact body; author and committer hiroshi okamura
-<hiroshi_okamura@me.com>, no Claude attribution; on `main`, pushed only when
-the user asks (a push deploys mmlisp.com). Run every gate before a push (drv
-`verify:all`, `node tools/ab-gate.mjs`, `npm run pcm-ab`; tools
-`check:snapshot`, `check:note-path`, `check:word-rule`, `check:words`,
-`check:loops`, `check:panel`, `check:stems`, `check:gm-output`,
-`check:midi-out` …).
 
 ## To hear on a device
 
