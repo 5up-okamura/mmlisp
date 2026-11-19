@@ -1520,15 +1520,6 @@ function scratchCtx(ctx) {
   };
 }
 
-// Bring the runtime state written into `out` from `ctx`'s to `st`'s.
-function setRuntimeState(ctx, st, out) {
-  if (st.vel != null && st.vel !== ctx.vel) pushVel(ctx, out, st.vel);
-  ctx.qCut = st.qCut;
-  ctx.reverb = st.reverb;
-  if (st.gateCut != null) emitGate(ctx, out);
-  if ((st.detune ?? 0) !== (ctx.detune ?? 0) && (!ctx.isPcm || adpcmFader(ctx))) { ctx.detune = st.detune ?? 0; detuneChanged(ctx, out); }
-}
-
 // The runtime values a render writes only when they change. An (x …) body is
 // rendered once, from the loop's entry, so a write that matches the entry is
 // elided — but pass two starts where pass one ended (a mucom loop replays its
@@ -1536,6 +1527,23 @@ function setRuntimeState(ctx, st, out) {
 // pass leaves different from the entry is "stale" in the body: its first
 // write there is kept.
 const RUNTIME_FIELDS = ["vel", "velTok", "ssgMode", "noiseMode", "lfoActive", "envActive", "pitchOut", "gateCut", "hwEnv"];
+
+// Everything a part's ops leave behind for the ops after them to play under
+// — what a pasted macro carries on, and a loop left at its `/` stops at.
+const RUNTIME_STATE = ["pcmSample", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "ssgMode", "hwEnv", "velHist", "lfoPerPc", "lfoActive", "slotOffs", "velTok"];
+
+// A loop's last pass leaves at its `/`: mucom's state then is the head's,
+// played from where the passes before it ended (`ctx`), not the full body's.
+// What the player holds there is what the body's tokens left in that pass,
+// some of them elided against another pass's state — so, as after the song's
+// loop point, every runtime value keeps its first write after it (stale).
+function leaveAtBreak(ctx, head, ct0, depth) {
+  const h = scratchCtx(ctx);
+  setCompileState(h, ct0, []);
+  renderOps(head, h, [], depth + 1);
+  for (const key of RUNTIME_STATE) ctx[key] = h[key];
+  ctx.stale = new Set([...(ctx.stale ?? []), ...RUNTIME_FIELDS]);
+}
 function stale(ctx, field) {
   if (!ctx.stale?.has(field)) return false;
   ctx.stale.delete(field);
@@ -1632,14 +1640,7 @@ function renderLoop(op, ctx, out, depth) {
     ctx.stale = outer && new Set([...outer].filter((f) => left.has(f)));
     if (inner.length) out.push(`(x ${rest} ${inner.join(" ")})`);
     barMark(ctx, out); // its body moved the bar on as it was written
-    if (bi >= 0) {
-      // The last pass left at the break: the runtime state is the head's, not
-      // the full body's the (x …) left behind.
-      const h = scratchCtx(ctx);
-      setCompileState(h, ct0, []);
-      renderOps(head, h, [], depth + 1);
-      setRuntimeState(ctx, h, out);
-    }
+    if (bi >= 0) leaveAtBreak(ctx, head, ct0, depth); // not the full body's the (x …) left behind
   }
   setCompileState(ctx, ctFull, out);
 }
@@ -1936,7 +1937,7 @@ function renderOps(ops, ctx, out, depth = 0) {
           // Rendered as its def is (inMacro): what the pasted text leaves.
           const m = { ...scratchCtx(ctx), inMacro: true };
           renderOps(ctx.macroOps.get(op.n), m, [], depth + 1);
-          for (const key of ["pcmSample", "pvMode", "vel", "detune", "detunePerNote", "pitchOut", "gateCut", "qCut", "reverb", "reverbAmt", "voiceAlg", "pcmCur", "mix", "noiseW", "noiseMode", "envActive", "ssgEnv", "velHist", "oct", "len", "mucLen", "keyShift", "lastNote", "lfoPerPc", "lfoActive", "slotOffs", "velTok"]) ctx[key] = m[key];
+          for (const key of [...RUNTIME_STATE, "oct", "len", "mucLen", "keyShift", "lastNote"]) ctx[key] = m[key];
         }
         // Reference a (def *n …); skip macros whose body had no supported content.
         if (pasted) out.push(`*${op.n}`);
@@ -2033,6 +2034,9 @@ function renderOps(ops, ctx, out, depth = 0) {
           ctx.newUnrollCross.add(op.label);
         }
         out.push(`(go ${op.label} ${op.count})`);
+        // Its last pass left at the `/` in it, if any.
+        const bi = tree?.findIndex((o) => o.t === "loopBreak") ?? -1;
+        if (snap && bi >= 0 && op.count > 1) leaveAtBreak(ctx, tree.slice(0, bi), compileState(snap), depth);
         break;
       }
       case "globalLoop":
