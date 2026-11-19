@@ -1412,6 +1412,20 @@ and runs them for that note. Setting a macro is sticky until cleared.
 
 If the same target is set twice, the last one wins.
 
+**After key-off.** A macro with a release region (`#rel`, `(wait key-off)`,
+a curve after a looping one) leaves for it at key-off; an empty one — a
+trailing `(wait key-off)`, a `#rel` with nothing after it — stops the macro
+there, holding its value. A macro with none ends at key-off on a level
+(`:vel`, `:vol`) and on `:keyon`; on every other target — `:pitch`, `:semi`,
+`:pan`, the timbre words — it does not see the key-off and runs on, through
+the release and a rest, until the track's next note: a vibrato goes on while
+the note dies away, as on a chip's own drivers.
+
+```lisp
+(def vib (macro :pitch (triangle -30..30 :len 1/16)))        ; on through the release
+(def vib-off (macro :pitch [(triangle -30..30 :len 1/16) (wait key-off)])) ; stops at key-off
+```
+
 ### Targets
 
 | Keyword    | IR target    | Range        | Notes                                  |
@@ -1466,7 +1480,9 @@ vector holding any stage — a curve, `(wait …)`, arithmetic on a curve, or a
 - a number (or a `let` name bound to one) is one `:step` at that value, `_`
   waits one step;
 - a curve runs for its `:len`; a curve that loops (a loop wave, or `:mode
-  loop`) runs until key-off — a modulated sustain;
+  loop`) runs until key-off — a modulated sustain — or, with no release
+  after it on a pitch or timbre word, on to the next note (*After key-off*
+  above);
 - `(wait N)` holds the current value for a length token, `(wait key-off)`
   until key-off (a `N` that is not a length waits one tick, `W_WAIT_INVALID`);
 - `#sus` makes the stage after it loop until key-off, and `#rel` is where the

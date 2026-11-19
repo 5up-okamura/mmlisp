@@ -581,7 +581,7 @@ export const REFERENCE = [
   {
     name: '#sus #rel', aliases: ['#sus', '#rel', 'sustain', 'release', 'loop point'], cat: 'macros', section: '§10', tracks: null,
     syntax: '[15 #sus 13 #rel 8 4 0]',
-    summary: 'Marks in a step vector: the steps after #sus loop until key-off, then the run from #rel plays. A curve right after #rel without its :from falls from where the macro is at the key-off.',
+    summary: 'Marks in a step vector: the steps after #sus loop until key-off, then the run from #rel plays. A curve right after #rel without its :from falls from where the macro is at the key-off. With no #rel a pitch or timbre loop runs on to the next note; an empty #rel stops it.',
     insert: '(macro :vel [15 #sus 13 #rel 8 4 0])',
     example: '(sqr1 :oct 5 :len 4 :gate* 0.6 (macro :vel [15 #sus 13 #rel 8 4 0]) c e g e)',
   },
@@ -639,7 +639,7 @@ export const REFERENCE = [
   {
     name: 'loop waves', aliases: ['sin', 'triangle', 'square', 'saw', 'ramp', 'lfo'], cat: 'curves', section: '§11', tracks: null,
     syntax: '(sin A..B :len L)  ·  triangle  ·  square [:duty]  ·  saw  ·  ramp  [:skew]',
-    summary: 'Waves that cycle until key-off, one period per :len; :phase, :rate and :mode shot shape them.',
+    summary: 'Waves that cycle until key-off — on a pitch or timbre word with no release after them, on to the next note — one period per :len; :phase, :rate and :mode shot shape them.',
     insert: '(sin -20..20 :len 16)',
     example: '(fm1 :len 2 (macro :pitch (sin -25..25 :len 8f)) c e)',
   },

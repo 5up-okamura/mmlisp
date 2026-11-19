@@ -1,0 +1,16 @@
+; M3 gate: a macro after key-off (driver.md §13.2). With no release region a
+; pitch or timbre word's macro runs on through the release and a rest until
+; the channel's next note — a vibrato, a delayed one, a timbre loop; a level's
+; and a :keyon's end at key-off; an empty release (a trailing `(wait key-off)`,
+; `#rel` with nothing after it) stops it there, holding its value. On FM and
+; PSG, short gates so every note is let go early.
+(fm1 :tempo 150 :alg 4 :fb 3 :ar1 31 :tl1 20 :ar4 31 :tl4 8 :rr4 2 :len 4 :gate- 1/8
+  (macro :pitch [0 #sus 40 0 -40 0]) c _ e
+  (macro :pitch+ [ (wait 1/16) (triangle -50..50 :len 1/16) ]) g _
+  (macro :pitch [ (triangle -50..50 :len 1/16) (wait key-off) ]) c _
+  (macro :pitch [0 #sus 40 -40 #rel]) e _
+  (macro :pitch none :tl1 [20 #sus 30 40]) g _ c)
+(fm2 :len 4 :gate- 1/8 (macro :vel [15 #sus 12 15]) c _ e _)
+(sqr1 :len 4 :gate- 1/8
+  (macro :pitch [0 #sus 60 -60]) a _ c
+  (macro :pitch none :vel [15 #sus 10 15]) e _ g)

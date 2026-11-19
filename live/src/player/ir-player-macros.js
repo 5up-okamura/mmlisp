@@ -9,6 +9,22 @@ import { sampleCurveUnit } from "../ir/curves.js";
 import { KEY_OFF_LEAD_SECS } from "../ir/timing.js";
 import { scaleMacroSample, MACRO } from "./ir-player-shared.js";
 
+// Whether a macro has a release region — `#rel`, `(wait key-off)`, or a
+// curve stage after a looping one (export-mmb.js lowerStages puts the
+// boundary there too) — empty or not: an empty one stops it at key-off.
+export function macroHasRelease(spec) {
+  if (spec.type === "steps") return spec.releaseIndex != null;
+  if (spec.type === "curve") return !!spec.waitKeyOff;
+  if (spec.type === "stages") {
+    let afterLoop = false;
+    for (const st of spec.stages ?? []) {
+      if (st.waitKeyOff || (st.curve && afterLoop)) return true;
+      if (st.curve && st.loop) afterLoop = true;
+    }
+  }
+  return false;
+}
+
 export const macroMethods = {
   // A glide ended by its target's next write before it ran its length.
   // `endTick`: the sweep's end, when the dispatch has resolved it already.
@@ -36,14 +52,21 @@ export const macroMethods = {
   // playing: the taps step through it.
   // `at`: where its steps take their place in a frame — MACRO's by the order
   // they come, or another phase's (a :keyon's, KEYON, by track: _noteRetriggers).
-  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60, onEnd = null, at = { phase: MACRO, ord: null }) {
+  //
+  // `pastKeyOff`: a pitch or timbre word's macro with no release region does
+  // not see the key-off — it runs on, a vibrato through the release, until
+  // the track's next note (driver.md §13.2). A level's (:vel, :vol) and a
+  // :keyon's stop there. With no run (the keys while stopped) nothing steps
+  // a macro on, so there it ends at its gate, laid out as before.
+  _scheduleMacro(spec, noteFrames, gateSecs, when, writeFn, stepSecs = 1 / 60, onEnd = null, at = { phase: MACRO, ord: null }, { pastKeyOff = false } = {}) {
     if (!spec) return void onEnd?.(null);
+    const runsOn = pastKeyOff && this._writeCursor !== Infinity && !macroHasRelease(spec);
     // The note's gate as its steps read it (_macroSteps): a held note's —
     // a hold, a note the track's next event closes (a full gate) — is open
     // until it is let go (_onLetGo, below), and the steps wait at the
-    // release for it.
-    const G = { secs: gateSecs, frames: noteFrames };
-    let endless = gateSecs > when + 1e8; // a run does not wait for a held note's
+    // release for it. One that runs on reads the gate as never closing.
+    const G = runsOn ? { secs: Infinity, frames: Infinity } : { secs: gateSecs, frames: noteFrames };
+    let endless = runsOn || gateSecs > when + 1e8; // a run does not wait for a held note's
     const restarts = this._envRetrigs?.(G) ?? null;
     let restartWait = false;
     const nextRestart = () => {
@@ -108,7 +131,7 @@ export const macroMethods = {
     // where they are — a step waiting that is no longer the note's (by its
     // own rule: a sustain's in the key-off's frame or after it, a curve's
     // past the note's frames) goes, and what follows it comes.
-    if (endless && scope) this._onLetGo(scope).push((off) => {
+    if (endless && scope && !runsOn) this._onLetGo(scope).push((off) => {
       if (!ours()) return;
       G.secs = off - KEY_OFF_LEAD_SECS;
       G.frames = Math.max(1, Math.floor((off - when) * 60 + 1e-6));

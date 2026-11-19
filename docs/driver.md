@@ -1479,9 +1479,13 @@ In the frame loop (§4 step 3, after the sweep engines), each running macro:
 2. advances `cursor` with the region rules — attack once, then the sustain
    region cycled while the note is keyed, jumping to the release region at
    key-off (from wherever it is, attack included: release[0] lands on the
-   key-off's own frame), then playing release once and ending. A macro with
-   no release region ends at key-off; an empty attack/sustain (`[#rel …]`)
-   writes nothing until key-off.
+   key-off's own frame), then playing release once and ending; an empty
+   release region (`release == count`) ends it at key-off, holding its value.
+   A macro with no release region (`release = 0xFF`) ends at key-off on VEL,
+   VOL and KEYON; on every other target it does not see the key-off and runs
+   on as if keyed until the channel's next note re-instantiates its slots — a
+   vibrato through the release and a rest (language.md §10, *After key-off*).
+   An empty attack/sustain (`[#rel …]`) writes nothing until key-off.
 
 A `:vel` macro owns the note's level, so a note-on composes from the macro's
 first sample (the one that lands in the same frame), not from a stale velocity

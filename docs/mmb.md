@@ -515,6 +515,11 @@ Regions inside the array:
 [release .. count)       release — played once after key-off
 ```
 
+`release` 0xFF is no release region: the sustain then cycles on past key-off,
+to the channel's next note, on every target but VEL, VOL and KEYON
+(driver.md §13.2); `release == count` is an empty one, which ends the macro at
+key-off.
+
 A macro holds at most 255 steps. The exporter samples a curve at the `:step`
 clock; one that needs more is cut to 255 (`W_MMB_MACRO_TRUNCATED`), and a
 step vector or a multi-stage macro past 255 is dropped

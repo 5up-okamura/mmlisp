@@ -151,13 +151,16 @@ vib, vib-delay, slide-up, drop; combine one of each; they work on FM too).
 (macro :vel [15 #sus 13 #rel 8 4 0])                ; #sus loops till key-off, #rel after
 (macro :vel [(linear 15..4 :len 1) #rel (linear :to 0 :len 8f)]) ; release from where it is
 (macro :pitch [(wait 8f) (sin -30..30 :len 8f)])     ; a stage waits, then a curve
-(macro :pitch (sin -30..30 :len 8f))                ; vibrato, ±30 cents
+(macro :pitch (sin -30..30 :len 8f))                ; vibrato, ±30 cents, on through the release
+(macro :pitch [(sin -30..30 :len 8f) (wait key-off)]) ; vibrato that stops at key-off
 (macro :step 1/16 :semi [#sus 0 4 7] :keyon 1)      ; arpeggio, re-keyed each 16th
 (macro [:tl1 :tl2] (linear 40..0 :len 8))           ; one curve on two targets
 (macro :vel none)   (macro none)                    ; clear one / all
 ```
 
-A macro is sticky: it runs on every following note until cleared. Targets:
+A macro is sticky: it runs on every following note until cleared. With no
+release, a `:vel` / `:vol` / `:keyon` macro ends at key-off and any other runs
+on to the next note (a vibrato through the release). Targets:
 `:vel :vol :pitch :semi :keyon :pan :mode`, `:duty` `:wave` `:noise-rate`
 where the channel has them (§19), the FM voice (`:alg :fb :ams
 :fms`) and the operators (`:tl1`–`:tl4`, `:ar :dr :sr :rr :sl :ml :dt :ks :ssg

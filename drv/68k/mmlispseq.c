@@ -1590,8 +1590,13 @@ static int step_macro(MMLSeq *s, int ch, int mc, MMLMacroSlot *sl, int keyed) {
        * ticks after it, less the share the next line adds back. */
       if (d->flags & 8)
         sl->acc = (uint16_t)(s->off_acc[mc] - chan_frame_inc(s, mc));
+    } else if (d->release != 0xff || d->target == T_VEL || d->target == T_VOL || d->target == T_KEYON) {
+      return 1; /* an empty release section, or none on a level or a :keyon: it ends here */
     } else {
-      return 1;
+      /* No release section on a pitch or timbre word: the key-off is not its
+       * — a vibrato runs on through the release, until the channel's next
+       * note re-instantiates its slots (driver.md §13.2). */
+      keyed = 1;
     }
   }
   if (d->flags & 8) {

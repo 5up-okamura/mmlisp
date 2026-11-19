@@ -351,7 +351,7 @@ export const levelMethods = {
         const base = spec.add ? P.offset : 0;
         P.now = semi ? { note: P.midi + v, cents: base } : { note: P.midi, cents: base + v };
         if (!live || live()) this._ptWrite(site, t);
-      }, this._stepSecs(spec.step));
+      }, this._stepSecs(spec.step), null, undefined, { pastKeyOff: true });
     };
     const keys = Object.keys(args ?? {});
     const pair = [[args?.pitchMacro, false], [args?.note_semi, true]];
@@ -451,7 +451,7 @@ export const levelMethods = {
     let last = null;
     const step = moved ? (v, t) => { const r = Math.round(v); if (r !== last) write(r, t); last = r; } : write;
     this._envRetrigs = runsOn ? null : n.retrigs;
-    this._scheduleMacro(spec, noteFrames, gateSecs, when, step, this._stepSecs(spec.step));
+    this._scheduleMacro(spec, noteFrames, gateSecs, when, step, this._stepSecs(spec.step), null, undefined, { pastKeyOff: true });
     this._envRetrigs = null;
   },
 

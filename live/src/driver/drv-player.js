@@ -2191,8 +2191,13 @@ export class DrvPlayer {
         // ticks after it, less the share the next step adds back.
         if (d.flags & 8)
           slot.acc = (this._offAcc[this._macroCh(ch)] - this._chanFrameInc(this._macroCh(ch))) & 0xffff;
+      } else if (d.release !== 0xff || d.target === TARGET_ID.VEL || d.target === TARGET_ID.VOL || d.target === TARGET_ID.KEYON) {
+        return true; // an empty release section, or none on a level or a :keyon: it ends here
       } else {
-        return true; // no release section
+        // No release section on a pitch or timbre word: the key-off is not
+        // its — a vibrato runs on through the release, until the channel's
+        // next note re-instantiates its slots (§13.2).
+        keyed = true;
       }
     }
     if (d.flags & 8) {

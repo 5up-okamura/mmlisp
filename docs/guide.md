@@ -552,6 +552,16 @@ giving a modulated sustain (LFO). Loop-wave curves (`sin` `triangle` `square`
 ]))
 ```
 
+With nothing after it, a loop on a level (`:vel`, `:vol`) ends at KEY-OFF;
+on a pitch or timbre word it runs on, through the release and a rest, to the
+track's next note — so a vibrato keeps going while the note dies away. End it
+with `(wait key-off)` to stop it there:
+
+```lisp
+(fm1 (macro :pitch (triangle -30..30 :len 1/16)) :gate- 1/8 c4 e4)          ; vibrato through the release
+(fm1 (macro :pitch [(triangle -30..30 :len 1/16) (wait key-off)]) c4 e4)   ; still at key-off
+```
+
 `:mode loop` makes a non-loop curve cycle, e.g.
 `(ease-out :from 15 :to 0 :len 4 :mode loop)` as a pulsing sustain stage.
 
