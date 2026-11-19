@@ -335,6 +335,9 @@ function channelsOf(target, kind, { kit = false } = {}) {
 
 // The kind of sound a row is.
 const kindOf = (from, key) => (isSplit(key) ? "noise" : from.partOf(key)?.kind);
+// The channels a machine's drivers stream samples on, a sample part that
+// says so each (the PC Engine's DDA: one); none says so: [].
+const sampleStreams = (target) => target.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams);
 
 // Whether `head`'s noise notes split off onto `to`'s noise: its own channel
 // plays them by its :mode (x68k fm8, an SSG square), and `to`'s own squares
@@ -601,7 +604,7 @@ function planRows(s, from, to, loopOf = () => null) {
     // A machine whose drivers stream samples on fewer channels than it has
     // (the PC Engine's DDA: one) gives them that many.
     [(k) => kindOf(from, k) === "sample" && !rolesHere(s.heads.get(k)),
-      Math.min(channelsOf(to, "sample").length, ...to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams))],
+      Math.min(channelsOf(to, "sample").length, ...sampleStreams(to))],
   ];
   if (shared) pools.push([(k) => !isKitRow(k) && k !== "fm3-csm-rate", voiceKeysOf(["fm", "tone", "wave", "noise", "sample"]).size - reserved.length]);
   // A sample row's place among the drums (drumRank: the kick and snare
@@ -644,7 +647,7 @@ function planRows(s, from, to, loopOf = () => null) {
     for (const kind of TIMBRE_KINDS) {
       // Less a channel the bass takes (the Game Boy's wave), and the
       // channels the drivers stream samples on.
-      const streams = kind === "sample" ? to.parts.filter((p) => p.kind === "sample" && p.streams).map((p) => p.streams) : [];
+      const streams = kind === "sample" ? sampleStreams(to) : [];
       const room = Math.min(...streams, channelsOf(to, kind).filter((h) => !takenBy.has(to.voiceKey(h)) && !(h === bassChannel && bassRow() && kindOf(from, bassRow()) !== kind)).length);
       const ofKind = [...groups.values()].filter((g) => g.some((k) => kindOf(from, k) === kind)).sort((a, b) => (isBass(b) || isMelody(b)) - (isBass(a) || isMelody(a)) || notes(b) - notes(a));
       for (const g of ofKind.slice(0, room)) ownRows.add(g);
@@ -883,6 +886,13 @@ class Porter {
 
   say(line) { this.said.add(line); }
   toHas(w) { return [...this.toParts].some((p) => p.words(w) || p.songWords?.(w)); }
+  // The destination's part of a kind among those the rows play, if any.
+  toPart(kind) { return [...this.toParts].find((p) => p.kind === kind); }
+  // The rows [key, channel] that go onto a channel of a kind (a dropped row
+  // goes onto none); `kit: false` leaves out a kit's one voice.
+  onto(kind, { kit = true } = {}) {
+    return Object.entries(this.map).filter(([, h]) => { const p = this.to.partOf(h); return p?.kind === kind && (kit || !p.kit); });
+  }
   // A source channel as the log names it: the song's own name for it where
   // the caller has one (an MDX's FM G for fm7), else the channel.
   nameOf(head) { return head == null ? "a def" : isSplit(head) ? this.nameOf(splitHead(head)) : this.names[head] ?? head; }
@@ -1184,7 +1194,7 @@ class Porter {
     const name = n.items[1]?.value;
     const steps = this.waveSteps(name);
     const holds64 = [...this.toParts].some((p) => p.waveLen === 64);
-    if (!steps || steps.length !== 64 || holds64 || ![...this.toParts].some((p) => p.kind === "wave")) return this.slice(n);
+    if (!steps || steps.length !== 64 || holds64 || !this.toPart("wave")) return this.slice(n);
     this.say(`wave '${name}': 64 steps (the FDS's) written as the 32 the ${this.to.system} plays, every other one`);
     return `(def-wave ${name} :wave [${wave32(steps).join(" ")}])`;
   }
@@ -1258,8 +1268,8 @@ class Porter {
   // row's is not the ones kept (planRows).
   loopWhy(head) {
     if (this.from.partOf(head)?.kind !== "sample") return "";
-    const on = Object.entries(this.map).filter(([k, h]) => k !== head && h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit && this.from.partOf(k)?.kind === "sample");
-    const streams = this.to.parts.find((p) => p.kind === "sample" && p.streams)?.streams;
+    const on = this.onto("sample", { kit: false }).filter(([k]) => k !== head && this.from.partOf(k)?.kind === "sample");
+    const [streams] = sampleStreams(this.to);
     if (!on.length || !streams) return "";
     return `: the ${this.to.system} streams samples on ${streams === 1 ? "one channel" : `${streams} channels`}, a channel has one loop, and ${this.nameOf(head)} loops over other ticks than ${on.map(([k]) => this.nameOf(k)).join(", ")} on ${on[0][1]}`;
   }
@@ -1272,7 +1282,7 @@ class Porter {
     // and its def goes if nothing plays it; any other is read as two operators.
     if (twoOp(fm) && !twoOp(this.fromFm)) {
       const d = this.voices.get(name);
-      const onFm = Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm");
+      const onFm = this.onto("fm").length > 0;
       if (!d || !onFm || name !== this.userVoice) return this.slice(n);
       const r = opnAs2op(name, d.words);
       if (r.without.length) this.say(`'${name}' as two operators plays without ${r.without.join(", ")}`);
@@ -1338,7 +1348,7 @@ class Porter {
   mixBalance() {
     const L = (t, kind) => PART_LEVELS[t]?.[kind === "noise" ? "tone" : kind];
     const from = this.from.name, to = this.to.name;
-    const sampleRows = Object.entries(this.map).filter(([k, h]) => h !== "drop" && this.from.partOf(splitHead(k))?.kind === "sample" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
+    const sampleRows = this.onto("sample", { kit: false }).filter(([k]) => this.from.partOf(splitHead(k))?.kind === "sample");
     if (!sampleRows.length || L(from, "sample") == null || L(to, "sample") == null) return null;
     const played = [...new Set(sampleRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])]))];
     const known = played.map((n) => this.s.peaks?.get(n)).filter((x) => x != null).sort((a, b) => a - b);
@@ -1382,7 +1392,7 @@ class Porter {
   // on the Mega Drive: the kick alone was heard). One of its own :file only;
   // a variant of it takes its base's.
   louder(n, text) {
-    const onSamples = Object.values(this.map).some((h) => h !== "drop" && this.to.partOf(h)?.kind === "sample" && !this.to.partOf(h).kit);
+    const onSamples = this.onto("sample", { kit: false }).length > 0;
     // A def of its own :file, or a variant with an :fx of its own (which
     // replaces its base's chain, normalize and all); one without takes its
     // base's. Limited only where it is a drum (a name or a sound that says
@@ -1437,7 +1447,7 @@ class Porter {
     // is its role's or its waveform's, wherever the snippet is played.
     // With no row on an FM channel they go.
     const ctx = this.ctx(null);
-    const onFm = Object.values(this.map).some((h) => this.to.partOf(h)?.kind === "fm");
+    const onFm = this.onto("fm").length > 0;
     if (this.fromFm && !onFm) Object.assign(ctx, { srcPart: this.fromFm, destPart: { kind: "none", label: "", words: () => false }, snippet: true });
     else if (this.fromFm && this.toFm && twoOp(this.fromFm) !== twoOp(this.toFm))
       Object.assign(ctx, { srcPart: this.fromFm, destPart: this.toFm, family: true, snippet: true });
@@ -2373,7 +2383,7 @@ class Porter {
         this.say(`:noise-rate ${n} (${Math.round(NOISE_CLOCK / n)} Hz) reads as :mode white${white} (${WHITE_HZ[white]} Hz)`);
         return { replace: `:mode white${white}` };
       }
-      const noise = [...this.toParts].find((p) => p.kind === "noise");
+      const noise = this.toPart("noise");
       const how = noiseModel(noise) === "pitch" ? "its rate is each noise note's pitch" : noiseModel(noise) === "mode" ? "its rate is the noise track's :mode" : "it has no rate sweep";
       this.say(`:noise-rate ${n ?? "(a sweep)"} on ${ctx.head ? this.nameOf(ctx.head) : "a def"}: the ${this.to.system}'s noise — ${how}; taken out`);
       return DROP;
@@ -2419,7 +2429,7 @@ class Porter {
   standIn(part) {
     if (twoOp(part)) return "clarinet"; // the OPLL's square-shaped ROM voice
     const loud = !this.to.parts.some((p) => p.kind === "tone")
-      && !Object.entries(this.map).some(([k, h]) => h !== "drop" && kindOf(this.from, k) === "fm" && this.to.partOf(h).kind === "fm");
+      && !this.onto("fm").some(([k]) => kindOf(this.from, k) === "fm");
     const name = loud ? "loud-square" : "wave-square";
     this.standIns.add(name);
     return name;
