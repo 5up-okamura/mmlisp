@@ -1154,7 +1154,8 @@
       flex-direction: column;
       gap: 0.25rem;
     }
-    /* Rough VU overlay on the [F1][M][S] stack: foreground fill rising from bottom. */
+    /* The channel's level (index.html updateChannelVu) over the [F1][M][S]
+       stack: a foreground fill rising from the bottom. */
     .ch-vu {
       position: absolute;
       inset: 0;

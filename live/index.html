@@ -13882,6 +13882,7 @@ import { channelForms } from './src/lang/score-text.js';
     const VU_RANGE_DB = 40;       // bar spans [-VU_RANGE_DB, 0] dB
     const VU_RELEASE = 0.9;       // displayed-level decay per VU tick
     const _vuLevels = new Map();  // head → displayed level
+    const _vuShown = new WeakMap(); // .ch-vu element → the transform last written to it
     // A machine with no taps (`:target midi`: its sound is a MIDI output's,
     // a port's or the GM SoundFont's) meters its notes instead — the note sounding at the
     // track's playhead, at its :vel (2 dB a step) under the strip's fader and
@@ -13911,13 +13912,16 @@ import { channelForms } from './src/lang/score-text.js';
           : 0;
         const lvl = Math.max(target, (_vuLevels.get(head) ?? 0) * VU_RELEASE);
         _vuLevels.set(head, lvl);
-        el.style.transform = `scaleY(${lvl.toFixed(3)})`;
+        // Written only when it moves: a silent strip, or a held level, costs
+        // no style or paint (keyed by element: a rebuilt strip is written anew).
+        const t = `scaleY(${lvl.toFixed(3)})`;
+        if (_vuShown.get(el) !== t) { _vuShown.set(el, t); el.style.transform = t; }
       }
     }
     function resetChannelVu() {
       _vuLevels.clear();
       _vuNotes.clear();
-      _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; });
+      _chVuEls.forEach((el) => { el.style.transform = 'scaleY(0)'; _vuShown.delete(el); });
     }
 
     // ---- visualizer colors and the oscilloscope canvas ----
