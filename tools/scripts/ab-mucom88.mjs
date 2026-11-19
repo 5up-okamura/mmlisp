@@ -122,18 +122,35 @@ function channel(f, id) {
 const R = frames(refVgm), O = frames(ourVgm, R.length * STEP);
 const ids = [...Array(6).keys()].map((i) => `fm:${i}`).concat([0, 1, 2].map((i) => `ssg:${i}`), [...Array(6).keys()].map((i) => `rh:${i}`));
 // Where ours lines up: an offset (frames) and a clock ratio, the pair whose
-// channels agree most often on sounding.
-let best = { s: -1, off: 0, scale: 1 };
-for (let scale = 0.99; scale <= 1.0101; scale += 0.001)
-  for (let off = -40; off <= 40; off++) {
-    let s = 0;
-    for (let k = 20; k < O.length - 20; k += 5) {
-      const r = R[Math.round(k * scale) + off];
-      if (!r) continue;
-      for (const id of ids.slice(0, 9)) if (channel(r, id).on === channel(O[k], id).on) s++;
+// channels agree most often — sounding, and at the pitch where both sound (on
+// a song that sounds throughout, sounding alone cannot tell offsets apart).
+// Searched coarse, then finer around the best: fmgen's Timer B runs the
+// reference a few hundredths of a percent off any 0.001 step, which over a
+// minute and a half slides every note several frames.
+const agreeAt = (off, scale, stride) => {
+  let s = 0;
+  for (let k = 20; k < O.length - 20; k += stride) {
+    const r = R[Math.round(k * scale) + off];
+    if (!r) continue;
+    for (const id of ids.slice(0, 9)) {
+      const a = channel(r, id), b = channel(O[k], id);
+      if (a.on === b.on && !(a.on && a.midi != null && b.midi != null && Math.abs(a.midi - b.midi) >= 0.5)) s++;
     }
-    if (s > best.s) best = { s, off, scale };
   }
+  return s;
+};
+let best = { s: -1, off: 0, scale: 1 };
+const search = (scales, offs, stride) => {
+  best = { s: -1, off: 0, scale: 1 };
+  for (const scale of scales)
+    for (const off of offs) {
+      const s = agreeAt(off, scale, stride);
+      if (s > best.s) best = { s, off, scale };
+    }
+};
+const range = (a, b, d) => Array.from({ length: Math.round((b - a) / d) + 1 }, (_, i) => a + i * d);
+search(range(0.99, 1.01, 0.001), range(-40, 40, 1), 5);
+search(range(best.scale - 0.0015, best.scale + 0.0015, 0.00005), range(best.off - 6, best.off + 6, 1), 2);
 const N = Math.min(O.length, Math.floor((R.length - best.off) / best.scale));
 const ref = (k) => R[Math.min(R.length - 1, Math.max(0, Math.round(k * best.scale) + best.off))];
 
@@ -143,7 +160,7 @@ if (only) {
   for (let i = 0; i < Math.max(a.length, b.length); i++) console.log((a[i] ?? "").padEnd(36), b[i] ?? "");
   process.exit(0);
 }
-console.log(`${path.basename(file)}${flat ? " (flat)" : ""}: ${N} frames, the reference at ${best.off >= 0 ? "+" : ""}${best.off} frames ×${best.scale.toFixed(3)}`);
+console.log(`${path.basename(file)}${flat ? " (flat)" : ""}: ${N} frames, the reference at ${best.off >= 0 ? "+" : ""}${best.off} frames ×${best.scale.toFixed(5)}`);
 let all = 0, allAgree = 0, allPitched = 0, allNear = 0, allBoth = 0, allLevel = 0;
 for (const id of ids) {
   let refOn = 0, ourOn = 0, agree = 0, both = 0, near = 0, pitched = 0, volDiff = 0;
