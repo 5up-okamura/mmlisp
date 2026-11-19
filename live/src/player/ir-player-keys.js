@@ -4,6 +4,7 @@
 // A part of IRPlayer (ir-player.js), its methods mixed into the class there:
 // `this` is the player.
 import { velK, VOL_UNITY } from "../ir/levels.js";
+import { FM_OP_REGS } from "../ir/fm-words.js";
 
 export const keyMethods = {
   /** The machine's name, and its FM encoder (chips/) for a key's own writes. */
@@ -98,7 +99,7 @@ export const keyMethods = {
     if (fm.held) return fm.held.patch(ch, { ...regs, ops }, ops[carriers[0]]?.tl);
     const out = [];
     ops.forEach((op, i) => {
-      for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg"]) out.push(...fm.op(ch, i, reg, op));
+      for (const reg of FM_OP_REGS) out.push(...fm.op(ch, i, reg, op));
     });
     out.push(...fm.alg(ch, regs));
     out.push(...fm.pan(ch, { pan: this._chRegs[ch]?.pan ?? 0, ams: regs.ams ?? 0, fms: regs.fms ?? 0 }));

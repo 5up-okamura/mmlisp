@@ -24,8 +24,8 @@ import { KEY_OFF_LEAD_SECS, KEY_ORDER_EPS_SECS, HOLD_FRAMES, expandLoops } from 
 import { toneLaneOf, targetProfile, notYet } from "../machine/targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "../driver/mmb.js";
 import { PCM8_VOICES } from "../machine/chips/msm6258.js";
-import { FM_OPS, fmInitVoice, fmOpWord } from "../ir/fm-words.js";
-import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_REG_FIELD, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
+import { FM_OPS, FM_OP_REGS, fmInitVoice, fmOpWord, fmChannelWord } from "../ir/fm-words.js";
+import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
 import { workMethods } from "./ir-player-work.js";
 import { panelMethods } from "./ir-player-panel.js";
 import { keyMethods } from "./ir-player-keys.js";
@@ -35,6 +35,15 @@ import { levelMethods } from "./ir-player-levels.js";
 import { sampleMethods } from "./ir-player-samples.js";
 
 export { songOrEffectIr } from "./ir-player-shared.js";
+
+// An operator word's IR target: the word and its operator (FM_TL1, FM_DT2_3).
+const OP_TARGET = /^(FM_[A-Z]+(?:2_)?)([1-4])$/;
+// A channel word's register, by its entry's `reg` (ir/fm-words.js).
+const CHANNEL_WRITE = {
+  alg: (enc, ch, regs, when) => enc.alg(ch, regs, when),
+  pan: (enc, ch, regs) => enc.pan(ch, regs),
+  sus: (enc, ch, regs, when) => enc.sus?.(ch, regs.sus, when) ?? [],
+};
 
 export class IRPlayer {
   /**
@@ -2392,16 +2401,15 @@ export class IRPlayer {
     const regs = this._chRegs[ch];
     if (!regs) return 0;
     const t = String(target || "").toUpperCase();
-    const m = t.match(/^FM_([A-Z]+(?:2_)?)([1-4])$/);
-    if (m) {
-      const f = OP_REG_FIELD[m[1]];
-      return f ? (regs.ops[+m[2] - 1]?.[f] ?? 0) : 0;
-    }
+    // An FM word's field, by its entry (ir/fm-words.js) as _applyParam writes
+    // it: the TL's is the voiced level the composition starts from; the
+    // velocity sensitivity has no value to read.
+    const m = OP_TARGET.exec(t);
+    const ow = m && fmOpWord(m[1]);
+    if (ow) return ow.inline ? 0 : (regs.ops[+m[2] - 1]?.[ow.field === "tl" ? "voicedTl" : ow.field] ?? 0);
+    const cw = fmChannelWord(t);
+    if (cw) return regs[cw.field] ?? 0;
     switch (t) {
-      case "FM_FB": return regs.feedback ?? 0;
-      case "FM_ALG": return regs.algorithm ?? 0;
-      case "FM_AMS": return regs.ams ?? 0;
-      case "FM_FMS": return regs.fms ?? 0;
       // The song's LFO, as last written (the OPM's own words its reading).
       case "LFO_RATE": return this._lfoRate ?? 0;
       case "LFO_FREQ": return this._opmLfo.freq ?? 0;
@@ -2430,137 +2438,34 @@ export class IRPlayer {
       apply(next);
     };
 
-    switch (target) {
-      case "FM_FB":
-        set(
-          (v) => {
-            regs.feedback = v;
-          },
-          0,
-          7,
-        );
-        this._fmWrites(this._fmEnc.alg(ch, regs, when), when);
-        break;
-      case "FM_ALG":
-        set(
-          (v) => {
-            regs.algorithm = v;
-          },
-          0,
-          7,
-        );
-        this._fmWrites(this._fmEnc.alg(ch, regs, when), when);
-        break;
-      case "FM_TL1":
-      case "FM_TL2":
-      case "FM_TL3":
-      case "FM_TL4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            // Voiced (timbre) TL — the base level vel/vol/master attenuate from.
-            regs.ops[opIdx].voicedTl = v;
-            regs.ops[opIdx].tl = this._opLevel(ch, opIdx, when);
-          },
-          0,
-          127,
-        );
-        this._fmOp(ch, opIdx, "tl", when);
-        break;
-      }
-      case "FM_VEL1":
-      case "FM_VEL2":
-      case "FM_VEL3":
-      case "FM_VEL4": {
+    // An FM word, by its entry in ir/fm-words.js: its field in the shadow,
+    // clamped to the part's range (else the word's), written through its
+    // register. The level's two (TL, VEL) re-compose the operator's level.
+    const op = OP_TARGET.exec(target);
+    const ow = op && fmOpWord(op[1]);
+    if (ow) {
+      const opIdx = +op[2] - 1, o = regs.ops[opIdx];
+      if (ow.field === "velK") {
         // Velocity sensitivity (sixteenths, -1 = the role's own): no register
-        // of its own, it re-composes the operator's level.
-        const opIdx = parseInt(target[6]) - 1;
+        // of its own.
         const v = Math.round(value);
-        regs.ops[opIdx].velK = v >= 0 && v <= 16 ? v : undefined;
-        regs.ops[opIdx].tl = this._opLevel(ch, opIdx, when);
-        this._fmOp(ch, opIdx, "tl", when);
-        break;
+        o.velK = v >= 0 && v <= 16 ? v : undefined;
+      } else {
+        // TL is the voiced (timbre) level, the base vel/vol/master attenuate from.
+        set((v) => { o[ow.field === "tl" ? "voicedTl" : ow.field] = v; }, ow.min, ow.max);
       }
-      case "FM_AR1":
-      case "FM_AR2":
-      case "FM_AR3":
-      case "FM_AR4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].ar = v;
-          },
-          0,
-          31,
-        );
-        this._fmOp(ch, opIdx, "ks-ar", when);
-        break;
-      }
-      case "FM_DR1":
-      case "FM_DR2":
-      case "FM_DR3":
-      case "FM_DR4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].dr = v;
-          },
-          0,
-          31,
-        );
-        this._fmOp(ch, opIdx, "am-dr", when);
-        break;
-      }
-      case "FM_SR1":
-      case "FM_SR2":
-      case "FM_SR3":
-      case "FM_SR4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].d2r = v;
-          },
-          0,
-          31,
-        );
-        this._fmOp(ch, opIdx, "sr", when);
-        break;
-      }
-      case "FM_AMEN1":
-      case "FM_AMEN2":
-      case "FM_AMEN3":
-      case "FM_AMEN4": {
-        const opIdx = parseInt(target[7]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].amen = v;
-          },
-          0,
-          1,
-        );
-        this._fmOp(ch, opIdx, "am-dr", when);
-        break;
-      }
-      case "FM_AMS":
-        set(
-          (v) => {
-            regs.ams = v;
-          },
-          0,
-          3,
-        );
-        this._fmWrites(this._fmEnc.pan(ch, regs), when);
-        break;
-      case "FM_FMS":
-        set(
-          (v) => {
-            regs.fms = v;
-          },
-          0,
-          7,
-        );
-        this._fmWrites(this._fmEnc.pan(ch, regs), when);
-        break;
+      if (ow.reg === "tl") o.tl = this._opLevel(ch, opIdx, when);
+      this._fmOp(ch, opIdx, ow.reg, when);
+      return;
+    }
+    const cw = fmChannelWord(target);
+    if (cw) {
+      set((v) => { regs[cw.field] = v; }, cw.min, cw.max);
+      this._fmWrites(CHANNEL_WRITE[cw.reg](this._fmEnc, ch, regs, when), when);
+      return;
+    }
+
+    switch (target) {
       case "PAN": // (a note's pan macro: the one pan, _setPan)
         this._setPan(`fm:${ch}`, value, when);
         break;
@@ -2576,7 +2481,6 @@ export class IRPlayer {
         this._fmWrites(this._fmEnc.lfo(rate), when);
         break;
       }
-      // The OPM's own LFO (chips/ym2151.js).
       // The OPM's own LFO (chips/ym2151.js), kept for the panel.
       case "LFO_FREQ":
         this._opmLfo.freq = Math.round(value);
@@ -2598,128 +2502,6 @@ export class IRPlayer {
       case "FM_NOISE":
         this._fmWrites(this._fmEnc.noise?.(Math.round(value) === 1) ?? [], when);
         break;
-      case "FM_DT2_1":
-      case "FM_DT2_2":
-      case "FM_DT2_3":
-      case "FM_DT2_4": {
-        // The OPM's second detune, beside the operator's SR.
-        const opIdx = parseInt(target[7]) - 1;
-        set((v) => { regs.ops[opIdx].dt2 = v; }, 0, 3);
-        this._fmOp(ch, opIdx, "sr", when);
-        break;
-      }
-      case "FM_RR1":
-      case "FM_RR2":
-      case "FM_RR3":
-      case "FM_RR4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].rr = v;
-          },
-          0,
-          15,
-        );
-        this._fmOp(ch, opIdx, "sl-rr", when);
-        break;
-      }
-      case "FM_ML1":
-      case "FM_ML2":
-      case "FM_ML3":
-      case "FM_ML4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].mul = v;
-          },
-          0,
-          15,
-        );
-        this._fmOp(ch, opIdx, "dt-ml", when);
-        break;
-      }
-      case "FM_SL1":
-      case "FM_SL2":
-      case "FM_SL3":
-      case "FM_SL4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].sl = v;
-          },
-          0,
-          15,
-        );
-        this._fmOp(ch, opIdx, "sl-rr", when);
-        break;
-      }
-      case "FM_DT1":
-      case "FM_DT2":
-      case "FM_DT3":
-      case "FM_DT4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].dt = v;
-          },
-          -3,
-          3,
-        );
-        this._fmOp(ch, opIdx, "dt-ml", when);
-        break;
-      }
-      case "FM_KS1":
-      case "FM_KS2":
-      case "FM_KS3":
-      case "FM_KS4": {
-        const opIdx = parseInt(target[5]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].rs = v;
-          },
-          0,
-          3,
-        );
-        this._fmOp(ch, opIdx, "ks-ar", when);
-        break;
-      }
-      // The OPLL's (chips/ym2413.js): the waveform, the envelope type, the
-      // level's key scale and the vibrato, each a bit (KSL two) of its voice.
-      case "FM_WS1":
-      case "FM_WS2":
-      case "FM_EG1":
-      case "FM_EG2":
-      case "FM_KSL1":
-      case "FM_KSL2":
-      case "FM_VIB1":
-      case "FM_VIB2": {
-        const opIdx = Number(target.slice(-1)) - 1;
-        const field = { WS: "ws", EG: "eg", KSL: "ksl", VIB: "vib" }[target.slice(3, -1)];
-        set((v) => { regs.ops[opIdx][field] = v; }, 0, field === "ksl" ? 3 : 1);
-        this._fmOp(ch, opIdx, "voice", when);
-        break;
-      }
-      // The OPLL's sustain: a keyed-off note releases at RR 5.
-      case "FM_SUS":
-        set((v) => { regs.sus = v; }, 0, 1);
-        this._fmWrites(this._fmEnc.sus?.(ch, regs.sus, when) ?? [], when);
-        break;
-      case "FM_SSG1":
-      case "FM_SSG2":
-      case "FM_SSG3":
-      case "FM_SSG4": {
-        const opIdx = parseInt(target[6]) - 1;
-        set(
-          (v) => {
-            regs.ops[opIdx].ssg = v;
-          },
-          0,
-          15,
-        );
-        this._fmOp(ch, opIdx, "ssg-eg", when);
-        break;
-      }
-
       default:
         break;
     }
@@ -3605,7 +3387,7 @@ export class IRPlayer {
           if (field && field !== "velK") o[field] = v;
         }
         regs.ops[slot] = o;
-        for (const reg of ["dt-ml", "tl", "ks-ar", "am-dr", "sr", "sl-rr", "ssg-eg", "voice"]) this._fmOp(ch, slot, reg);
+        for (const reg of FM_OP_REGS) this._fmOp(ch, slot, reg);
       }
     }
     // Globals, matching the driver's boot patch (driver.md §5.4).

@@ -113,11 +113,6 @@ export const OP_MACRO_MAP = [
   ...[...FM_CHANNEL_WORDS, ...opWords(FM_OP_WORDS.filter((w) => !w.inline))].map((w) => [w.word.toLowerCase(), w.word]),
 ];
 
-// An FM operator target's field in the shadow register file (_readParam):
-// the table's, the TL's being the voiced level the composition starts from.
-export const OP_REG_FIELD = Object.fromEntries(
-  FM_OP_WORDS.filter((w) => !w.inline).map((w) => [w.word.slice(3), w.word === "FM_TL" ? "voicedTl" : w.field]));
-
 export function songOrEffectIr(ir, se) {
   const tracks = (ir?.tracks ?? []).filter((t) => (se == null ? !t.se : t.se?.index === se));
   if (tracks.length === (ir?.tracks ?? []).length) return ir;

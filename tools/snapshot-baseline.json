@@ -2407,6 +2407,13 @@
   "vgm": "508c7306ed6e0707",
   "mid": "353cca3c75242a57"
  },
+ "tools/tests/msx/opll-words.mmlisp": {
+  "diagnostics": "e3b0c44298fc1c14",
+  "ir": "98c2f58f978a14f1",
+  "regs": "ad9d3cdac183602f",
+  "vgm": "a3ea61d3a8bf5e66",
+  "mid": "dbf9f02481336359"
+ },
  "tools/tests/msx/psg.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "754d7cb7269adbd7",

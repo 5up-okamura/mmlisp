@@ -1,0 +1,13 @@
+; msx: the YM2413's operator words written on a track, each on both of its
+; operators — the waveform (:ws), the envelope type (:eg), the level's key
+; scale (:ksl) and the vibrato (:vib) — as a value and as a macro, between
+; the notes of the one user voice (the chip has one).
+(def-score :target msx :title "msx opll words")
+(def-fm lead clarinet :ar2 12 :rr2 7)
+(fm1 :tempo 120 lead :len 8
+  c :ws1 1 e :ws2 1 g :ws1 0 :ws2 0 c
+  :eg1 0 e :eg2 0 g :eg1 1 :eg2 1 c
+  :ksl1 2 e :ksl2 3 g :ksl1 0 :ksl2 1 c
+  :vib1 1 e :vib2 1 g :vib1 0 :vib2 0 c
+  (macro :ws2 [0 1]) c e (macro :ksl2 [0 1 2 3]) g c (macro :eg2 [1 0]) e g |)
+(fm2 piano :oct 3 :len 4 c g c g |)
