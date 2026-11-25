@@ -1697,9 +1697,10 @@ from memory until it is saved: **Save** asks for it right after the score, in
 the score's folder with its name filled in, until it is written (also
 `File > Export > Imported…`); a VGM's DAC or PCM-chip samples arrive the
 same way (below). Onto `md`, where the drums (K or G) play through fm6's DAC,
-part J moves to a free FM channel — or, where every FM part plays, keeps
-`fm6` and takes it from the drums in turn (a kick on FM6 under an ADPCM
-snare stays an FM kick; where the two meet, the later note sounds). NTSC and PAL drum
+part J moves to a free FM channel — where every FM part plays, a backing
+part goes to a square for it (a kick on FM6 under an ADPCM snare stays an FM
+kick), and only where the SSG takes every square does part J keep `fm6`,
+taking it from the drums in turn (where the two meet, the later note sounds). NTSC and PAL drum
 libraries with up to three PCM voices can expand to multiple sample banks
 automatically. If an individual baked sample is still too large, the
 importer can select a lower-rate voice profile with `(def-score :pcm-voices 2)` or
@@ -2687,10 +2688,13 @@ machine's channels or dropped:
   one-operator voice made from the patch's (`kit-op2`); CSM's notes play as
   plain notes.
 - Onto `md` with samples, `fm6` is left to the PCM (its DAC): a row on
-  `fm6` goes to a free FM channel. Where the score's FM is six parts, its
-  `fm6` row keeps `fm6` and takes it from the samples in turn; with more
-  (x68k's eight), it goes to a square with the rows past six, so the
-  samples play whole.
+  `fm6` goes to a free FM channel.
+- FM rows past the FM channels left (x68k's eight, or six beside md's PCM)
+  go to the squares, the backing ones first: not the bass, the melody or a
+  drum played on FM (a part on one pitch), the quietest and then the one
+  with fewest notes — so the lead and the bass keep FM wherever they were.
+  With no square free, a row on `fm6` keeps `fm6` beside the PCM, the two
+  taking it in turn.
 - Onto `md`, a sample longer than one 32 KB bank holds at the lowest note it
   plays (the driver bakes each note's pitch at its engine's rate) has its
   `:frames` cut to fit, as a VGM imported onto `md` does; the log names

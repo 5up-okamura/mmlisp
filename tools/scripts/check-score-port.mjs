@@ -1009,17 +1009,29 @@ const port = (src, to, rows, options) => {
   const j = portScore(jOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), jOwn) });
   assert.match(j.text, /\(fm2 :oct 3 \(x 4 :len 8 c d e f\)/, "part J kept on a free FM channel");
   // With every FM part playing (Actraiser's kick on FM6 under the ADPCM
-  // snare), part J keeps fm6, taking it from the PCM in turn (§16).
-  const full = new TextEncoder().encode("#title f\n\nA t120 o4 l8 cdef\nB o4 l8 cdef\nC o4 l8 cdef\nH o4 l8 cdef\nI o4 l8 cdef\nJ o2 l8 c r c r\nG l8 v15 r @8c r @8c\n");
+  // snare), a backing part goes to a square and part J — a drum on FM, one
+  // pitch — keeps FM on the channel it leaves; the PCM keeps fm6 (the user,
+  // 2026-11-26: the backing onto the PSG).
+  const full = new TextEncoder().encode("#title f\n\nA t120 o4 l8 cdef\nB o4 l8 cdef\nC o4 l8 cdef\nH o4 l8 cdef\nI o4 l8 cdef\nJ o2 l8 c r c r c r c r\nG l8 v15 r @8c r @8c\n");
   const fOwn = importMucom(full).source;
   const f = portScore(fOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), fOwn) });
-  assert.match(f.text, /\(fm6 [^)]*c _ c _/, "part J keeps fm6 beside the PCM when fm1-fm5 are taken");
+  assert.ok(/^fm[1-5]$/.test(f.map.fm6) && Object.values(f.map).some((h) => /^sqr/.test(h)) && !Object.values(f.map).includes("fm6"), `part J on FM, a backing part on a square, fm6 the PCM's: ${JSON.stringify(f.map)}`);
   assert.match(f.text, /\(pcm\d/, "the drums still on the PCM");
-  // With more FM than md has (an X68000's eight), rows go to the squares
-  // anyway: its fm6 row goes there too, leaving the DAC to the drums whole.
+  // With the SSG's three parts playing too there is no square for one: part
+  // J keeps fm6 beside the PCM, the two taking it in turn (§16).
+  const noRoom = new TextEncoder().encode("#title n\n\nA t120 o4 l8 cdef\nB o4 l8 cdef\nC o4 l8 cdef\nH o4 l8 cdef\nI o4 l8 cdef\nJ o2 l8 c r c r c r c r\nD o4 l8 cdef\nE o4 l8 cdef\nF o4 l8 cdef\nG l8 v15 r @8c r @8c\n");
+  const nOwn = importMucom(noRoom).source;
+  const n = portScore(nOwn, "md", { imports: readImportSources(join(repo, "tools/tests/t.mmlisp"), nOwn) });
+  assert.equal(n.map.fm6, "fm6", `no square free: part J keeps fm6: ${JSON.stringify(n.map)}`);
+  // With more FM than md has (an X68000's eight), rows go to the squares,
+  // the DAC left to the drums whole: parts alike, the later channels.
   const x8 = port('(def-score :target x68k)\n(import "presets/rx5/set.mmlisp")\n' + [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `(fm${n} :len 8 c d e f g a b c)`).join("\n") + "\n(pcm1 :len 4 kick c snare c)", "md");
   assert.ok(x8.map.fm6 !== "fm6" && !Object.values(x8.map).includes("fm6"), `an 8-FM source leaves fm6 to the PCM: ${JSON.stringify(x8.map)}`);
   assert.match(x8.map.fm6, /^sqr/, "its fm6 row on a square");
+  // The backing goes to the squares, not the lead: an X68000 melody on fm7
+  // (the loudest, over the rest) keeps FM, quieter parts take the squares.
+  const lead = port('(def-score :target x68k)\n(import "presets/rx5/set.mmlisp")\n' + [1, 2, 3, 4, 5, 6].map((n) => `(fm${n} :vel 9 :oct 4 :len 4 c e g e c e g e)`).join("\n") + "\n(fm7 :vel 15 :oct 5 :len 8 c d e f g a b > c < b a g f e d c d)\n(pcm1 :len 4 kick c snare c)", "md");
+  assert.match(lead.map.fm7, /^fm[1-5]$/, `the melody keeps FM: ${JSON.stringify(lead.map)}`);
   // A sample the X68000 plays whole (Asuka 120%'s three-second phrases)
   // bakes on md at the engine's rate and each note's pitch, one blob a bank:
   // past that at its lowest note, its :frames are cut to fit; one that fits

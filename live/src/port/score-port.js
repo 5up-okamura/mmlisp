@@ -289,6 +289,7 @@ const BASS_UNDER = 55; // a bass sits under G3 (import-to-midi.js LOW_UNDER)
 // a melody's level read in steps of MELODY_DB (a part 3 dB down is as loud).
 const PART_SHARE = 0.25;
 const PART_NOTES = 4; // a line has notes to change: one held note is none
+const DRUM_ONE = 0.8; // a part this much on one pitch is a drum (yielding)
 const MELODY_DB = 3;
 const MELODY_ABOVE = 3; // semitones over the next part as loud
 
@@ -444,19 +445,9 @@ function planRows(s, from, to, loopOf = () => null) {
   const taken = new Set();
   const sampleRows = keys.some((k) => kindOf(from, k) === "sample" && s.heads.get(k)?.notes);
   // The Mega Drive's PCM plays on fm6's DAC: fm6 is kept from the rows, and
-  // a source's fm6 row goes to a free FM channel — but where fm1-fm5 are
-  // all the source's, its own fm6 row keeps fm6, the two taking it in turn
-  // (language.md §16: the later note takes it; the user, 2026-11-10 — a
-  // mucom88 kick on FM6 under its ADPCM snare stays an FM kick). Only where
-  // the source's FM fits md's six: with more (an X68000's eight) rows go to
-  // the squares anyway, and its fm6 row going there too keeps the drums
-  // whole — taking turns, its notes cut the samples (the user, 2026-11-10).
-  // (Counted as the source's FM voices: fm3-1…fm3-4 are one.)
-  const fmRows = keys.filter((k) => kindOf(from, k) === "fm" && s.heads.get(k)?.notes > 0);
-  const fmVoices = new Set(fmRows.map((k) => from.voiceKey(k) ?? k)).size;
-  const mdFm = channelsOf(to, "fm").length;
-  const ownFm6 = fmRows.includes("fm6") && fmVoices > mdFm - 1 && fmVoices <= mdFm;
-  if (to.name === "md" && sampleRows && !ownFm6) takenBy.set(to.voiceKey("fm6"), "dac");
+  // a source's fm6 row goes to a free FM channel (which FM rows give theirs
+  // up for it, where they are more than the channels: `yielding`, below).
+  if (to.name === "md" && sampleRows) takenBy.set(to.voiceKey("fm6"), "dac");
   const srcKey = (k) => srcKeyOf(from, k);
   const free = (k, h) => {
     if (taken.has(h)) return false;
@@ -495,8 +486,7 @@ function planRows(s, from, to, loopOf = () => null) {
   const groupOf = (k) => (!isSplit(k) && to.partOf(k)?.kind === kindOf(from, k) && keys.some((o) => o !== k && !isSplit(o) && from.voiceKey(o) === from.voiceKey(k)) ? from.voiceKey(k) : k);
   // A machine short of channels keeps the parts that play the most notes
   // (the user, 2026-11-08): past its melodic channels — FM and squares, less
-  // a square its noise is and fm6 under the Mega Drive's PCM (but for a
-  // source's own fm6 row) — and past its
+  // a square its noise is and fm6 under the Mega Drive's PCM — and past its
   // noises, the parts with fewer notes are dropped before anything is placed.
   const melodic = (k) => MELODIC_KINDS.includes(kindOf(from, k)) && k !== "fm3-csm-rate";
   // The score's bass: the melodic part whose notes sit lowest, a fifth or
@@ -533,7 +523,13 @@ function planRows(s, from, to, loopOf = () => null) {
     // `sounds`: the ticks its notes take (as written, a loop's body once) —
     // how much of the song the part is, a held bass and a run of 32nds alike.
     for (const [k, r] of raw)
-      if (r.keys.length) stats.set(k, { notes: r.keys.length, mid: middle(r.keys), len: middle(r.lens), level: middle(r.levels), sounds: r.lens.reduce((a, x) => a + x, 0) });
+      if (r.keys.length) {
+        const count = new Map();
+        for (const m of r.keys) count.set(m, (count.get(m) ?? 0) + 1);
+        // `one`: the share of its notes on its commonest pitch (a drum on FM
+        // hits one: Actraiser's FM6 kick, every note at c1).
+        stats.set(k, { notes: r.keys.length, mid: middle(r.keys), len: middle(r.lens), level: middle(r.levels), sounds: r.lens.reduce((a, x) => a + x, 0), one: Math.max(...count.values()) / r.keys.length });
+      }
     return stats;
   };
   // The bass: the lowest parts — those within BASS_TOGETHER of the lowest,
@@ -590,6 +586,11 @@ function planRows(s, from, to, loopOf = () => null) {
   const reserved = to.name === "pce" && s.fdsMod ? ["wave2"] : [];
   for (const h of reserved) takenBy.set(to.voiceKey(h), "lfo");
   const melodicRoom = MELODIC_KINDS.reduce((n, kind) => n + channelsOf(to, kind).length, 0);
+  // Onto md the PCM takes fm6 from the melodic parts, unless they would not
+  // fit without it and the source has an fm6 row of its own to keep it
+  // beside the PCM in turn (`yielding`, below).
+  const melodicParts = new Set(keys.filter((k) => melodic(k) && notesOf(k) > 0 && !(k in dest)).map(groupOf)).size;
+  const dacRoom = to.name === "md" && sampleRows && !(kindOf(from, "fm6") === "fm" && notesOf("fm6") > 0 && melodicParts > melodicRoom - 1) ? 1 : 0;
   // A machine whose kinds share its voices (the PC Engine: wave5, noise5 and
   // pcm5 are channel 5) has one room for them all: its voices.
   const voiceKeysOf = (kinds) => new Set(kinds.flatMap((kind) => channelsOf(to, kind)).map((h) => to.voiceKey(h)));
@@ -598,7 +599,7 @@ function planRows(s, from, to, loopOf = () => null) {
   const pools = [
     [melodic, melodicRoom
       - (keys.some((k) => kindOf(from, k) === "noise") && channelsOf(to, "noise").some((n) => to.channelNames.some((h) => h !== n && to.voiceKey(h) === to.voiceKey(n))) ? 1 : 0)
-      - (to.name === "md" && sampleRows ? 1 : 0)
+      - dacRoom
       - kitTakes.filter((h) => channelsOf(to, "fm").includes(h)).length
       - reserved.length],
     [(k) => kindOf(from, k) === "noise", channelsOf(to, "noise").length],
@@ -697,12 +698,37 @@ function planRows(s, from, to, loopOf = () => null) {
   if (reserved.length && keys.includes("fds-wave") && dest["fds-wave"] !== "drop" && free("fds-wave", "wave1")) dest["fds-wave"] = claim("fds-wave", "wave1");
   // The bass onto the machine's bass channel, where it has one.
   if (bassChannel && bassRow() && !(bassRow() in dest) && free(bassRow(), bassChannel)) dest[bassRow()] = claim(bassRow(), bassChannel);
+  // FM rows past the FM channels left go to the squares (and waves): the
+  // backing ones (the user, 2026-11-26) — not the bass, the melody or a drum
+  // on FM (DRUM_ONE of its notes on one pitch), the quietest then the
+  // fewest notes first — so a song's lead and bass keep FM whichever channel
+  // they were on, and onto md the PCM keeps fm6's DAC whole. With no room
+  // there, a source's own fm6 row keeps fm6 beside the PCM, the two taking
+  // it in turn (language.md §16), before a part is lost.
+  const yielding = new Set();
+  {
+    const live = (k) => !(k in dest) && notesOf(k) > 0;
+    const voices = (ks) => new Set(ks.map((k) => from.voiceKey(k) ?? k)).size;
+    const fmRows = keys.filter((k) => kindOf(from, k) === "fm" && k !== "fm3-csm-rate" && live(k));
+    const freeOf = (kinds) => kinds.flatMap((kind) => channelsOf(to, kind)).filter((h) => !takenBy.has(to.voiceKey(h))).length;
+    let excess = voices(fmRows) - freeOf(["fm"]);
+    const room = freeOf(["wave", "tone"]) - voices(keys.filter((k) => ["wave", "tone"].includes(kindOf(from, k)) && live(k)));
+    if (excess > 0) {
+      const st = statsOf();
+      const level = (k) => Math.round((st.get(k)?.level ?? 0) / MELODY_DB);
+      const backing = fmRows.filter((k) => fmRows.every((o) => o === k || from.voiceKey(o) !== from.voiceKey(k))
+        && k !== bassRow() && k !== melodyRow() && !s.bassGroup.includes(k) && !((st.get(k)?.one ?? 0) >= DRUM_ONE && notesOf(k) >= PART_NOTES))
+        .sort((a, b) => level(a) - level(b) || notesOf(a) - notesOf(b) || keys.indexOf(b) - keys.indexOf(a)); // (alike: the later channel, as the table's order spills)
+      for (const k of backing.slice(0, Math.max(0, Math.min(excess, room)))) { yielding.add(k); excess--; }
+    }
+    if (excess > 0 && takenBy.get(to.voiceKey("fm6")) === "dac" && fmRows.includes("fm6")) takenBy.delete(to.voiceKey("fm6"));
+  }
   // First the channels the destination has as they are: the noise before a
   // square (a drum is a drum), then in the table's order.
   const byNoise = [...keys].sort((a, b) => (kindOf(from, b) === "noise") - (kindOf(from, a) === "noise"));
   for (const k of byNoise) {
     const p = to.partOf(k);
-    if (k in dest || !p || p.kind !== kindOf(from, k)) continue;
+    if (k in dest || !p || p.kind !== kindOf(from, k) || yielding.has(k)) continue;
     if (p.kit && !rolesHere(s.heads.get(k))) continue; // a kit's track plays its roles
     if (p.kind === "sample" && rolesHere(s.heads.get(k))) continue; // its roles go to the ROM rhythm
     if (p.kind === "wave" && p.waveRam && channelsOf(to, "wave").some((o) => o !== k && to.partOf(o).waveRam?.(to.channels[o].voice) === p.waveRam(to.channels[k].voice) && to.channelNames.indexOf(o) < to.channelNames.indexOf(k))) continue;
@@ -732,7 +758,7 @@ function planRows(s, from, to, loopOf = () => null) {
     const kind = kindOf(from, k);
     let cands = [];
     if (k === "fm3-csm-rate") cands = [];
-    else if (kind === "fm") cands = [...fmFirst(k), ...waves, ...tones, ...lastWaves];
+    else if (kind === "fm") cands = yielding.has(k) ? [...waves, ...tones, ...lastWaves, ...fmFirst(k)] : [...fmFirst(k), ...waves, ...tones, ...lastWaves];
     else if (kind === "tone") cands = [...tones, ...waves, ...fmFirst(k), ...lastWaves];
     else if (kind === "wave") cands = [...waves, ...fmFirst(k), ...tones, ...lastWaves];
     else if (kind === "noise") cands = channelsOf(to, "noise");
