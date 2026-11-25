@@ -46,6 +46,8 @@ import { PART_LEVELS } from "../machine/part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "../ir/pitch.js";
 import { expandLoops } from "../ir/timing.js";
+import { engineImage } from "../driver/engine-images.js";
+import { bankedEngineImage } from "../driver/engine-banked-images.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
 import { waveformOf, carrierOctave, carrierMultiple, soundOf, FM_ROLE_SOUND, opnAs2op, ROLES, ROM_OF_WAVE, voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
 
@@ -810,7 +812,45 @@ export function portScore(text, toName, { rows = {}, imports = null, header = tr
       return { error: prev.h === h ? `${prev.k} and ${k} both go to ${h}` : `${prev.k} (to ${prev.h}) and ${k} (to ${h}) are one channel of the ${to.system}` };
     seen.set(key, { k, h });
   }
-  return new Porter(text, from, to, map, imports, names, plan.s).run(header);
+  const out = new Porter(text, from, to, map, imports, names, plan.s).run(header);
+  return to.name === "md" ? fitBank(out, imports) : out;
+}
+
+// A note on the Mega Drive bakes one blob at the engine's rate and its own
+// pitch, and a blob must fit one 32 KB bank: a sample longer than that at the
+// lowest pitch it plays is cut to fit, its :frames written shorter — as a
+// VGM imported onto md is (import-vgm.js). Another machine plays it whole (an
+// X68000's PCM8: Asuka 120%'s three-second phrases), so without this the
+// bank refused the score and no sample played.
+const BLOB_MAX = 32512; // below a bank's silence page (export-mmb.js packBankedSamples)
+function fitBank(out, imports) {
+  if (!/\(def-pcm\b/.test(out.text)) return out;
+  let ir;
+  try { ir = compileMMLisp(out.text, "score.mmlisp", { imports: imports ?? new Map() }).ir; } catch { return out; }
+  if (!ir) return out;
+  // The lowest rate each sample plays at: its base rate times the note's.
+  const lowest = new Map();
+  for (const t of ir.tracks ?? [])
+    for (const e of t.events)
+      if (e.cmd === "PCM_NOTE_ON" && e.args?.sample && e.args.baseRate)
+        lowest.set(e.args.sample, Math.min(lowest.get(e.args.sample) ?? Infinity, e.args.baseRate * (e.args.rate || 1)));
+  if (!lowest.size) return out;
+  const voices = Math.max(1, Math.min(3, Number(ir.metadata?.pcmVoices) || 1));
+  const engineHz = Math.max(engineImage(voices).rateHz, bankedEngineImage(voices, 60).rateHz);
+  const cut = [];
+  // A def of its own :rate and :frames, on one line as the imports write
+  // it, with no range or loop point the shorter frames could leave behind.
+  const text = out.text.replace(/^\(def-pcm\s+(\S+)(.*?):frames\s+(\d+)(.*)$/gm, (whole, name, before, frames, after) => {
+    const hz = lowest.get(name);
+    const rate = Number((before + after).match(/:rate\s+([\d.]+)/)?.[1]);
+    if (!hz || !rate || /:(pcm|loop)-(start|end|len)\b/.test(before + after)) return whole;
+    const most = Math.floor(((BLOB_MAX - 16) * hz) / engineHz);
+    if (Number(frames) <= most) return whole;
+    cut.push(name);
+    return `(def-pcm ${name}${before}:frames ${most}${after}`;
+  });
+  if (!cut.length) return out;
+  return { ...out, text, said: [...out.said, `${cut.join(", ")} cut to fit a 32 KB bank at ${voices} PCM voice${voices === 1 ? "" : "s"} (:frames): the Mega Drive bakes each note's blob in one bank`] };
 }
 
 class Porter {
