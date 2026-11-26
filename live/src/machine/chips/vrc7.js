@@ -9,7 +9,7 @@
 // Its registers are the worklet's port 7, the chip's own $00-$35.
 //
 // VGM writes it as a YM2413 whose clock has bit 31 set (the VRC7's ROM).
-import { opllFm, opllEncoder, VRC7_ROM } from "./ym2413.js";
+import { opllFm, opllEncoder, opllSeek, VRC7_ROM } from "./ym2413.js";
 
 const CLOCK = 3579545; // its own 3.58 MHz oscillator
 const PORT = 7;
@@ -42,4 +42,5 @@ export const vrc7 = {
   // 0x51 command.
   vgm: { clock: 0x10, header: [[0x10, 4, (CLOCK | 0x80000000) >>> 0]], ports: { [PORT]: { cmd: 0x51, addr: true } } },
   fmEncoder: () => opllEncoder({ rom: VRC7_ROM, channels: 6, port: PORT }),
+  seek: opllSeek,
 };

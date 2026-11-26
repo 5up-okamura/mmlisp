@@ -100,6 +100,9 @@ export const ym2151 = {
   encoder: true,
   emulator: true,
   vgm: { clock: 0x30, ports: { 0: { cmd: 0x54, addr: true } } },
+  // A seek's state (chips/settle.js): $19 is two registers, AMD and PMD by
+  // its bit 7.
+  seek: { key: () => (w) => (w.addr === 0x19 ? `19:${w.data >> 7}` : w.addr) },
   // A run starts the chip-wide registers over: the noise off (fm8's fourth
   // operator a sine again), the LFO stopped at no depth on the saw — the
   // chip's reset, where a song before this one may have left them.

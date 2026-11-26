@@ -334,5 +334,8 @@ export const lr35902 = {
   ],
   // VGM 1.61: the clock at $80, the 0xB3 command (register − $FF10, data).
   vgm: { version: 0x161, clock: 0x80, ports: { [PORT]: { cmd: 0xb3, addr: true } } },
+  // A seek's state (chips/settle.js): the wave memory takes its bytes with
+  // the wave's DAC off; NR30's last write, after them, sets it as it was.
+  seek: { prelude: [[PORT, NR30, 0x00]] },
   psgEncoder: apuEncoder,
 };

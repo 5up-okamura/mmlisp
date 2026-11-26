@@ -34,6 +34,9 @@ export const ym2608 = {
   // with every channel on tone and the song's noise period at its start.
   init: [[0, 0x29, 0x80], [0, 0x11, 0x3f], [0, 0x07, 0x38], [0, 0x06, NOISE_RATE_START]],
   vgm: { version: 0x151, clock: 0x48, ports: { 0: { cmd: 0x56, addr: true }, 1: { cmd: 0x57, addr: true } } },
+  // A seek's state (chips/settle.js): the rhythm's keys and dumps ($10) and
+  // the ADPCM-B's start are not the chip's state.
+  seek: { drop: (port, addr, data) => (port === 0 && addr === 0x10) || (port === 1 && addr === 0x00 && (data & 0x80) !== 0) },
 
   // The SSG as the IR player's PSG (chips/ssg.js).
   psgEncoder() {

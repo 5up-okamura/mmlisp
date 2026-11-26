@@ -120,6 +120,21 @@ export const fds = {
   ],
   // VGM 1.61: the 2A03's 0xB4, its registers $20-$7F; the FDS is bit 31 of
   // the 2A03's clock (written after the 2A03's own, so it stands).
+  // A seek's state (chips/settle.js): the modulation's table is 32 entries
+  // through one register ($28), each write the next since the unit was
+  // halted ($27 bit 7) — an entry is its place; the wave memory and the
+  // table take their writes with the memory open ($29 bit 7) and the unit
+  // halted, which their last writes, after them, set as they were.
+  seek: {
+    key: () => {
+      let entry = 0;
+      return (w) => {
+        if (w.addr === 0x27 && (w.data & 0x80)) entry = 0;
+        return w.addr === 0x28 ? `28:${entry++ % FDS_MOD_LEN}` : w.addr;
+      };
+    },
+    prelude: [[PORT, 0x29, 0x80], [PORT, 0x27, 0x80]],
+  },
   vgm: {
     version: 0x161,
     clock: 0x84,

@@ -15,6 +15,7 @@
  * posts messages to the AudioWorklet.
  */
 
+import { settleWrites } from "../machine/chips/settle.js";
 import { toSlotValue, snapNote, WAVE, waveEval, waveSlots, waveSteps } from "../ir/ranges.js";
 import { midiToHz, pitchToMidi } from "../ir/pitch.js";
 import { velK, levelSteps, levelGain, VOL_UNITY } from "../ir/levels.js";
@@ -300,6 +301,8 @@ export class IRPlayer {
     // The ports that write a chip's memory, not its registers (chips/ `ramBlock`).
     this._ramPorts = new Set(Object.values(target.chips).flatMap((c) =>
       Object.entries(c.vgm?.ports ?? {}).filter(([, p]) => p?.ramBlock).map(([port]) => Number(port))));
+    // Each port's chip, whose state a seek sends (chips/settle.js).
+    this._chipOfPort = new Map(Object.values(target.chips).flatMap((c) => Object.keys(c.vgm?.ports ?? {}).map((port) => [Number(port), c])));
     this._laneWave.fill(null);
     this._laneExpr.fill(null);
     this._drawnWaves.clear();
@@ -600,30 +603,30 @@ export class IRPlayer {
     const at = audioContext.currentTime + 0.05;
     let { held } = this._chase(audioContext, at - Math.max(0, sec), at, null);
 
-    // The held writes, in time order, as one burst at the seek point — a
-    // chip that settles its writes (chips/ `settle`) sends its state instead.
+    // What the run left up to the point, as one burst there: each chip's
+    // state (chips/settle.js) — not every write the run made, which grows
+    // with the song — then the samples' levels. The FM's key-ons and a
+    // chip's memory (the 2A03's DMC samples, each hit loading its own) are
+    // not state: nothing keys on across the point.
     held.sort((a, b) => (a.when ?? -Infinity) - (b.when ?? -Infinity));
-    for (const chip of Object.values(this._target.chips)) {
-      if (!chip.settle) continue;
-      const ports = new Set(Object.keys(chip.vgm?.ports ?? {}).map(Number));
-      const mine = (w) => !w.msg && ports.has(w.port) && !(w.when != null && w.when > at);
-      const settled = chip.settle(held.filter(mine)).map(([port, addr, data]) => ({ port, addr, data, when: null }));
-      held = [...settled, ...held.filter((w) => !mine(w))];
+    const byChip = new Map(); // chip (or null: a port no chip names) → its writes
+    for (const w of held) {
+      if (w.msg || (w.when != null && w.when > at)) continue; // past the point: the live run writes it
+      if (this._fmEnc.isKeyOn(w.port, w.addr, w.data) || this._ramPorts.has(w.port)) continue;
+      const chip = this._chipOfPort.get(w.port) ?? null;
+      if (!byChip.has(chip)) byChip.set(chip, []);
+      byChip.get(chip).push(w);
+    }
+    for (const [chip, writes] of byChip) {
+      const state = chip ? settleWrites(writes, chip) : writes.map((w) => [w.port, w.addr, w.data]);
+      for (const [port, addr, data] of state) this._write(port, addr, data, at);
     }
     const pcmVoices = this._ir?.metadata?.pcmVoices ?? 0;
     for (const w of held) {
-      if (w.when != null && w.when > at) continue; // past the point: the live run writes it
-      if (w.msg) {
-        // PCM: levels carry over; notes, their loop points and offs do not.
-        const k = w.msg.kind;
-        if (k === "vol" || k === "vel" || k === "master") this._write({ ...w.msg, when: at });
-        continue;
-      }
-      if (this._fmEnc.isKeyOn(w.port, w.addr, w.data)) continue;
-      // A chip's memory (the 2A03's DMC samples): each hit loads its own, and
-      // one sounding across the point is stopped — not replayed by the byte.
-      if (this._ramPorts.has(w.port)) continue;
-      this._write(w.port, w.addr, w.data, at);
+      if (!w.msg || (w.when != null && w.when > at)) continue;
+      // PCM: levels carry over; notes, their loop points and offs do not.
+      const k = w.msg.kind;
+      if (k === "vol" || k === "vel" || k === "master") this._write({ ...w.msg, when: at });
     }
     for (let ch = 0; ch < this._fmEnc.channels; ch++) this._fmKey(ch, 0);
     for (let psgCh = 0; psgCh < PSG_LANES; psgCh++) this._psgSetAtt(psgCh, this._psgOff(psgCh), at);
@@ -649,10 +652,18 @@ export class IRPlayer {
     const saved = { write: this._sink, onLine: this._onLine, onSeq: this._onSeq, onTrig: this._onTrig, onHold: this._onHold, onPosition: this._onPosition };
     const held = [];
     this._onLine = this._onSeq = this._onTrig = this._onHold = this._onPosition = null;
-    this._sink = (portOrMsg, addr, data, when) => {
+    const hold = (portOrMsg, addr, data, when) => {
       if (portOrMsg && typeof portOrMsg === "object") held.push({ msg: portOrMsg, when: portOrMsg.when });
       else held.push({ port: portOrMsg | 0, addr: addr & 0xff, data: data & 0xff, when });
     };
+    // A stream of samples (the PC Engine's DDA) or into a chip's memory (the
+    // DMC's load) is a sound, not the chip's state: the chase does not make
+    // it. One of a single tick is its writes (the DMC's start).
+    hold.stream = ({ when, rate, port, bytes }) => {
+      if (rate !== 1 || this._ramPorts.has(port)) return;
+      for (let k = 0; k < bytes.length; k += 2) held.push({ port, addr: bytes[k], data: bytes[k + 1], when });
+    };
+    this._sink = hold;
     const clock = { currentTime: start, state: "running", resume() {} };
     const STEP = 0.01;
     const END = start + 1200; // the longest a capture runs (captureRegisterLog)
@@ -1380,6 +1391,7 @@ export class IRPlayer {
       const ev = track.events[track.flatIndex];
       // When each pass of a loop starts (captureRegisterLog's loop region).
       if (track.hasLoop && track.flatIndex === track.loopStartIndex) (track.passStarts ??= [])[track.loopCount] = evTime;
+      track.lastTime = evTime;
       // After a swap commit, _dispatchFloor suppresses the incoming IR's
       // loop catch-up so nothing is written before the boundary; advance
       // past those events without dispatching.
@@ -1391,7 +1403,6 @@ export class IRPlayer {
         // On a frame-clocked target an event happens on the frame its time
         // falls in, so a note's key-on and its macros' steps count from one
         // frame (_frameTime).
-      track.lastTime = evTime;
         const when = this._target.frameClock ? this._frameStart(evTime) : evTime;
         // The work of the frames before this event's runs first.
         const F = this._eventFrame(when);
@@ -1782,6 +1793,7 @@ export class IRPlayer {
         hasLoop: jumpTick >= 0,
         flatIndex: 0,
         audioTimeAtTick0: 0,
+        lastTime: -Infinity, // the last event's time (_scheduleTracks)
         loopCount: 0,
         startAudioTime: 0,
         route,
@@ -1793,7 +1805,6 @@ export class IRPlayer {
   _setTempoAtTick(bpm, changeTick, changeWhen) {
     if (!Number.isFinite(bpm) || bpm <= 0) return;
     if (this._tracks.length === 0) {
-        lastTime: -Infinity, // the last event's time (_scheduleTracks)
       this._bpm = bpm;
       return;
     }

@@ -709,6 +709,11 @@ export const opllHoldBus = (port = OPLL_PORT, channels = CHANNELS) => ({
   replay: (ch) => [[port, 0x30 + ch], [port, 0x10 + ch]],
 });
 
+// A seek's state (chips/settle.js): a key is not — a channel's ($20-$28
+// bit 4, the FM encoder's key-on) or the rhythm's ($0E bits 4-0, its mode
+// bit 5 kept by the writes that key nothing).
+export const opllSeek = { drop: (_port, addr, data) => (addr >= 0x20 && addr <= 0x28 && (data & 0x10) !== 0) || (addr === 0x0e && (data & 0x1f) !== 0) };
+
 export const ym2413 = {
   chip: "ym2413",
   clock: CLOCK,
@@ -722,4 +727,5 @@ export const ym2413 = {
   // VGM 1.00: the clock at 0x10, and the 0x51 command (an address and a byte).
   vgm: { clock: 0x10, ports: { [OPLL_PORT]: { cmd: 0x51, addr: true } } },
   fmEncoder: opllEncoder,
+  seek: opllSeek,
 };

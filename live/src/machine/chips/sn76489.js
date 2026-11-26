@@ -46,6 +46,7 @@ export const sn76489 = {
   // (white-noise feedback taps 0x0009, a 16-bit shift register, no flags);
   // the command a write on the worklet's port 2 becomes, one data byte.
   vgm: { clock: 0x0c, header: [[0x28, 2, 0x0009], [0x2a, 1, 16], [0x2b, 1, 0]], ports: { 2: { cmd: 0x50, addr: false } } },
+  settle: settlePsg,
   // The IR player's PSG: stateless, so the chip is its own encoder.
   psgEncoder() { return this; },
   // A (fractional) MIDI note's period by the driver's rule (driver.md §8,
@@ -74,3 +75,28 @@ export const sn76489 = {
     return [[2, 0, 0x80 | (0x03 << 5) | (mode & 0x07)]];
   },
 };
+
+// A seek's state (chips/settle.js): the byte stream as its eight registers —
+// a latch byte (bit 7) picks one and sets its low bits, a data byte the
+// tone's top six (a level's or the noise's own, on the others) — each
+// written once, the one the run left latched last so a data byte after
+// the seek lands where it would have. A register the run never wrote stays
+// unwritten (the noise's write restarts its shift register).
+function settlePsg(writes) {
+  const regs = new Map(); // r (ch·2 + 1 for a level) → value
+  let r = 0;
+  for (const { data } of writes) {
+    if (data & 0x80) {
+      r = (data >> 4) & 7;
+      regs.set(r, r & 1 || r === 6 ? data & 0x0f : ((regs.get(r) ?? 0) & 0x3f0) | (data & 0x0f));
+    } else regs.set(r, r & 1 || r === 6 ? data & 0x0f : ((data & 0x3f) << 4) | ((regs.get(r) ?? 0) & 0x0f));
+  }
+  const out = [];
+  const put = (q, v) => {
+    out.push([2, 0, 0x80 | (q << 4) | (v & 0x0f)]);
+    if (!(q & 1) && q !== 6) out.push([2, 0, (v >> 4) & 0x3f]);
+  };
+  for (const [q, v] of regs) if (q !== r) put(q, v);
+  if (regs.has(r)) put(r, regs.get(r));
+  return out;
+}
