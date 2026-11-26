@@ -608,10 +608,18 @@ export class IRPlayer {
       sec = found == null ? 0 : Math.max(0, found - 0.005);
     }
     const at = audioContext.currentTime + 0.05;
-    const { held } = this._chase(audioContext, at - Math.max(0, sec), at, null);
+    let { held } = this._chase(audioContext, at - Math.max(0, sec), at, null);
 
-    // The held writes, in time order, as one burst at the seek point.
+    // The held writes, in time order, as one burst at the seek point — a
+    // chip that settles its writes (chips/ `settle`) sends its state instead.
     held.sort((a, b) => (a.when ?? -Infinity) - (b.when ?? -Infinity));
+    for (const chip of Object.values(this._target.chips)) {
+      if (!chip.settle) continue;
+      const ports = new Set(Object.keys(chip.vgm?.ports ?? {}).map(Number));
+      const mine = (w) => !w.msg && ports.has(w.port) && !(w.when != null && w.when > at);
+      const settled = chip.settle(held.filter(mine)).map(([port, addr, data]) => ({ port, addr, data, when: null }));
+      held = [...settled, ...held.filter((w) => !mine(w))];
+    }
     const pcmVoices = this._ir?.metadata?.pcmVoices ?? 0;
     for (const w of held) {
       if (w.when != null && w.when > at) continue; // past the point: the live run writes it

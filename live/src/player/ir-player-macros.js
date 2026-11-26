@@ -7,6 +7,8 @@
 import { clampForTarget } from "../ir/ranges.js";
 import { sampleCurveUnit } from "../ir/curves.js";
 import { KEY_OFF_LEAD_SECS } from "../ir/timing.js";
+// How far the panel lays out a note's macro whose gate is not yet known.
+const SHOWN_OPEN_SECS = 4;
 import { scaleMacroSample, MACRO } from "./ir-player-shared.js";
 
 // Whether a macro has a release region — `#rel`, `(wait key-off)`, or a
@@ -165,14 +167,21 @@ export const macroMethods = {
       if (r.t > when + 1e-6) starts.push(r.t);
     }
     let end = null;
+    // As far as the eye follows it: the note and a second of its release —
+    // or, a gate not yet known (a note the track's next event closes), its
+    // first SHOWN_OPEN_SECS: walked to the minute's end, a frame a step, a
+    // held sustain on every note was most of a run's work. A step held is
+    // one mark.
+    const open = typeof gateSecs !== "number" || gateSecs > when + 1e8;
+    const until = when + (open ? SHOWN_OPEN_SECS : Math.min(60, (gateSecs - when) + 1));
     for (let i = 0; i < starts.length; i++) {
       const cut = starts[i + 1] ?? Infinity;
       const it = this._macroSteps(spec, Math.max(1, noteFrames - Math.round((starts[i] - when) * 60)), gateSecs, starts[i], stepSecs, !!marks);
       for (;;) {
         const { value, done } = it.next();
         if (done) { end = value; break; }
-        if (value.wait || value.t >= cut - 1e-9 || value.t > when + 60) break;
-        if (marks && "k" in value) marks.push([value.k, value.t]);
+        if (value.wait || value.t >= cut - 1e-9 || value.t > until) break;
+        if (marks && "k" in value && marks.at(-1)?.[0] !== value.k) marks.push([value.k, value.t]);
       }
     }
     if (marks?.length)

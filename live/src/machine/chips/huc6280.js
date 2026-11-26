@@ -260,4 +260,39 @@ export const huc6280 = {
   // VGM 1.61: the clock at $A4, the 0xB9 command.
   vgm: { version: 0x161, clock: 0xa4, ports: { [PORT]: { cmd: 0xb9, addr: true } } },
   waveEncoder: pceEncoder,
+  settle: settleWrites,
 };
+
+// A run of writes (port, addr, data in order) as the few that leave the chip
+// as they left it: each channel's wave, its registers, the global ones. A
+// seek's burst: every wave load and DDA sample up to the point would be
+// tens of thousands of writes, where a channel's state is a few dozen.
+function settleWrites(writes) {
+  let sel = 0;
+  const global = new Map();
+  const chans = Array.from({ length: CHANNELS }, () => ({ regs: new Map(), wave: [...DEFAULT_WAVE.map(waveStep)], at: 0 }));
+  for (const w of writes) {
+    const c = chans[sel];
+    if (w.addr === 0x00) sel = w.data & 7;
+    else if (w.addr === 0x01 || w.addr === 0x08 || w.addr === 0x09) global.set(w.addr, w.data);
+    else if (w.addr === 0x06) {
+      // A step of the wave while the channel is off (a load), else a DDA
+      // sample, which a seek does not carry.
+      if (!((c.regs.get(0x04) ?? 0) & 0xc0)) { c.wave[c.at] = w.data & 31; c.at = (c.at + 1) % WAVE_LEN; }
+    } else if (sel < CHANNELS) {
+      if (w.addr === 0x04 && (w.data & 0xc0) === 0x40) c.at = 0; // the DDA bit: the step back to 0
+      c.regs.set(w.addr, w.data);
+    }
+  }
+  const out = [...global].map(([addr, data]) => [PORT, addr, data]);
+  chans.forEach((c, ch) => {
+    out.push([PORT, 0x00, ch], [PORT, 0x04, 0x40], [PORT, 0x04, 0x00], ...c.wave.map((v) => [PORT, 0x06, v]));
+    for (const [addr, data] of c.regs) if (addr !== 0x04) out.push([PORT, addr, data]);
+    // Its control last: on as it was, a DDA channel back off (its samples
+    // are the live run's).
+    const ctl = c.regs.get(0x04) ?? 0;
+    out.push([PORT, 0x04, ctl & 0x40 ? 0 : ctl]);
+  });
+  out.push([PORT, 0x00, sel]);
+  return out;
+}
