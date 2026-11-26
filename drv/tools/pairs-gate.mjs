@@ -6,7 +6,8 @@
 // With no score named it runs c-gate's corpus. A banked score (the MMB's
 // MULTIBANK_PCM flag) goes through the banked converter, which has no JS twin
 // here: its frames and its view path are held, its pair streams are
-// banked:gate's (tests/banked-pairs.c).
+// banked:gate's (tests/banked-pairs.c, and the wire recorded in
+// tests/banked-pairs.sums).
 //
 // Both sides take the SAME frames — the sequencer's, rendered by gate_main
 // --frames: every write in the sequencer's order, uncapped, as the SGDK host

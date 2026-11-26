@@ -1225,6 +1225,17 @@ with frames released as soon as rendered and at render leads 1 and 2
 (which must give the same wire), with one and two
 grabs a frame, and through the frame-view path the SGDK host uses.
 
+The block-banked images' converter (`banked_writes`, §5.4) orders a frame by
+its own rule and has no JS twin: a twin would show the two agree, not that
+either is right, and `banked:sgdk` (`drv/README.md`) runs the 68000's own code on
+BlastEm. `npm run banked:gate` holds it without the machine: its unit cases
+(`tests/banked-pairs.c` — the grab reservation, the consumer's advance, the
+generation fences, the short groups first), and each banked score down the
+host's frame-view path (`view_main --banked`) against the wire recorded in
+`tests/banked-pairs.sums`, so a change nobody meant shows. A change meant to
+move the wire is checked with `banked:sgdk`, then recorded
+(`node tools/banked-export-gate.mjs --update`).
+
 ### 12.4 The engine
 
 The images run in `tools/machine.mjs` — a Z80 emulator plus the Mega Drive

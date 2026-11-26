@@ -1,0 +1,14 @@
+{
+ "tests/multibank.mmlisp@60": "a95546e40e7ed0e15ded68c6bd95eabfae59f8382b15cb9d4706dc31a7dfc207",
+ "tests/m3-pcm-baked.mmlisp@60": "31fe514b66e43721c80ca872bc9d40f8dcd010748fcc88e7018faeb813dd60a8",
+ "tests/m4-pcm-2v-master.mmlisp@60": "1e691516dbb9b8fbf5d3385d81e1d7c6cf8e688ac974aab0fbe1a9cb7b098350",
+ "tests/p3-se-pcm-macro.mmlisp@60": "d2b621281dd734ad7154a2c4c88b4ffc350f09a8875875a1a6c13d12264e875f",
+ "tests/multibank-packed.mmlisp@60": "6f1491a2673e4ee7cd223c58284e0efd17ab0cb76d970c295a7b28c1b39499ff",
+ "tests/multibank.mmlisp@50": "8c0e9cc7a6ef2ade91a7489bc563ea621f11f2e266284f7cdd13e9b7a4d327ec",
+ "tests/m3-pcm-baked.mmlisp@50": "1976cee3819ba3df6a59c8e77d9373fb497edf190a679f3daade937bf3cc2031",
+ "tests/p3-se-pcm-macro.mmlisp@50": "80d65bbc969a7e4509994d9d5bb40c029dfc057a04e4df6105b16e063b80e802",
+ "tests/m4-pcm-3v.mmlisp@60": "6e295c52748160203e6030719b1961aac5f1fddd3abdc8c2e08586148a72d91d",
+ "tests/multibank-3v.mmlisp@60": "63f7bea2867d756d12fc818faf36105ab4dfb84db095116654f5b67c7e47db2d",
+ "tests/multibank-3v.mmlisp@50": "d3c187437d25661afa91807547baf63339bcffb10fb3096d5cd4926e11d8bcb1",
+ "tests/m4-pcm-3v.mmlisp@50": "f0b2c05914b862732218b1181de15f7b5779405efd954b290d772bac210ee16b"
+}

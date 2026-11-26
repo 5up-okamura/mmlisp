@@ -1,7 +1,8 @@
 // Format, compiler, JS/C sequencer and shared-bank compatibility regression.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {buildMmb} from './mmb-build.mjs';
 import {buildBundle} from './bundle.mjs';
@@ -10,12 +11,36 @@ import {bankedEngineImage} from '../../live/src/driver/engine-banked-images.js';
 import {DrvPlayer} from '../../live/src/driver/drv-player.js';
 import {SlotBuilder} from '../../live/src/driver/slot-builder.js';
 import {packBankedSamples} from '../../live/src/driver/export-mmb.js';
+import {pairsCfgForImage} from './pairs-model.mjs';
+import {engineImage} from '../../live/src/driver/engine-images.js';
+import {buildMultibankImage} from './build-multibank.mjs';
 const out=resolve('out/banked-export-gate');mkdirSync(out,{recursive:true});
 const pairsExe=join(out,'pairs');
 execFileSync('cc',['-std=c99','-O2','-I68k','tests/banked-pairs.c','68k/mmlpairs.c','68k/mmlispseq.c','68k/tables.c','-o',pairsExe]);
 execFileSync(pairsExe);
 console.log('ok full physical grab reservation, consumer advance, generation fences');
 const exe=join(out,'seq');execFileSync('cc',['-std=c99','-O2','-I68k','68k/gate_main.c','68k/mmlispseq.c','68k/tables.c','-o',exe]);
+// THE BANKED CONVERTER'S WIRE, RECORDED. banked_writes has no JS twin: a
+// twin's agreement would prove agreement, not correctness, and banked:sgdk
+// already runs the real 68000 code on BlastEm against the engine's model.
+// What a host-only run can still catch is a change nobody meant: each banked
+// score down the SGDK host's path (view_main --banked: the sequencer's frames
+// straight into banked_writes, grabbed as pairs_main grabs) must give the
+// stream recorded in tests/banked-pairs.sums. After a change meant to move
+// it, run banked:sgdk, then `--update` to record it.
+const convExe=join(out,'view');execFileSync('cc',['-std=c99','-O2','-Wall','-Wextra','-Werror','-I68k','68k/view_main.c','68k/mmlpairs.c','68k/mmlispseq.c','68k/tables.c','-o',convExe]);
+const sumsPath='tests/banked-pairs.sums',update=process.argv.includes('--update');
+const sums=existsSync(sumsPath)?JSON.parse(readFileSync(sumsPath,'utf8')):{},seen={};
+function wire(file,mmb,smp,voices,frameHz){
+ // The host's constants (the FIFO, the LUT page, the port) are every image's;
+ // the voices and the IDLE pairs after a generation are the banked image's.
+ const c={...pairsCfgForImage(engineImage(voices)),voices,idleAfterGen:buildMultibankImage({voices,frameHz}).gen.idleAfterGen};
+ const stream=execFileSync(convExe,[mmb,'400','--samples',smp,'--banked','1',...[c.fifo,c.fifoPairs,c.pairsPerGrab,c.lutPage,c.opPort,c.voices,c.idleAfterGen].map(String)],{maxBuffer:1<<26,stdio:['ignore','pipe','pipe']});
+ assert.ok(stream.length>0,`${file}: the banked converter sent nothing`);
+ const key=`${file}@${frameHz}`,sum=createHash('sha256').update(stream).digest('hex');
+ seen[key]=sum;
+ if(!update)assert.equal(sum,sums[key],`${key}: the banked converter's wire moved (${stream.length} B) — if meant, run banked:sgdk, then banked:gate --update`);
+}
 function gate(file,voices,{commands=[],autoStart=true,frameHz=60}={}){
  const b=buildMmb(file,{multibank:true,frameHz}),bank=parsePcmBank(b.sampleBank);
  assert.equal(bank.multibank,true);assert.equal(bank.stamp,Math.round(bankedEngineImage(voices,frameHz).rateHz));
@@ -26,6 +51,7 @@ function gate(file,voices,{commands=[],autoStart=true,frameHz=60}={}){
   const p=new DrvPlayer();p.loadMMB(b.bytes,b.sampleBank);
   const ref=p.captureSlotLog({maxFrames:400,builder:new SlotBuilder(),commands,autoStart,...(prime===undefined?{}:{prime})}).slots;
   const raw=execFileSync(exe,[mmb,'400','--samples',smp,...(commands.length?['--cmds',cmdPath]:[]),...(autoStart?[]:['--idle']),...(prime===undefined?[]:['--prime','0'])]);
+  if(prime===undefined)wire(file,mmb,smp,voices,frameHz);
   let at=0,index=0;while(at<raw.length&&index<ref.length){const n=raw[at]|raw[at+1]<<8;at+=2;assert.deepEqual([...raw.subarray(at,at+n)],[...ref[index]],`${file} prime=${prime} frame=${index}`);at+=n;index++;}assert.equal(index,ref.length);
  }
  const e=new PcmLiveEngine(bankedEngineImage(voices,frameHz),b.sampleBank),s=bank.entries[0];
@@ -89,10 +115,11 @@ const bundle=buildBundle({multibank:true,pcmVoices:2,songs:[{name:'a',src:'tests
 assert.ok(bundle.bank.length>32768);assert.ok(!bundle.diagnostics.some(d=>d.severity==='error'));
 assert.ok(buildBundle({pcmVoices:2,songs:[{name:'auto',src:'tests/multibank.mmlisp'}]},{baseDir:resolve('.')}).bank.length>32768);
 for(const hz of [60,50]) for(const voices of [1,2,3]) {
- const {buildMultibankImage}=await import('./build-multibank.mjs');
  const image=buildMultibankImage({voices,frameHz:hz}),sites=new Set(image.gen.sites.map(x=>x.a));
  const window=Math.ceil(image.cfg.machine.frameMaster/(15*image.cfg.periodCycles))+1;
  const peak=Math.max(...Array.from({length:image.cfg.cycleSlots},(_,start)=>Array.from({length:window},(_,i)=>sites.has((start+i)%image.cfg.cycleSlots)?1:0).reduce((a,b)=>a+b,0)));
  assert.ok(peak<128,`FIFO publication can hide a wrap at ${hz} Hz / ${voices} voices: ${peak}`);
 }
 console.log('ok auto extension, single-bank output, unsupported profiles, corrupt banks, bundle');
+if(update){writeFileSync(sumsPath,JSON.stringify(seen,null,1)+'\n');console.log(`recorded ${Object.keys(seen).length} banked wires in ${sumsPath}`);}
+else{assert.deepEqual(Object.keys(sums).sort(),Object.keys(seen).sort(),`${sumsPath} records other runs — banked:gate --update`);console.log(`ok banked converter wire ≡ recorded (${Object.keys(seen).length} runs)`);}

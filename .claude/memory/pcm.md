@@ -26,10 +26,17 @@
   have levels and moving loop points, it has neither.
 - Ordinary FM3 is out of `banked_writes` (the converter does not know CH3's
   mode).
+- **The banked converter gets no JS twin** (2026-11-26): a twin's agreement
+  proves agreement, not correctness, and `banked:sgdk` already runs the real
+  68000 code on BlastEm against the engine's model; the twin would be a
+  second implementation to keep in step with every change. `banked:gate`
+  instead holds its wire down the host's path (`view_main --banked`) to the
+  one recorded (`tests/banked-pairs.sums`), so a change nobody meant shows
+  without SGDK; a meant one is checked on `banked:sgdk`, then recorded.
+  Known gap: the test scores do not move the wire on the third voice's bank
+  store ($21's place in OP_VOICE) — a mutation there passes.
 
 ## Open
 
-- The banked converter has no byte-for-byte JS twin (covered by
-  `tests/banked-pairs.c`, BlastEm, `prioritizeFmNotes`).
 - Reverse at playback: zero bank cost but a new piece in every layer; worth
   it only if a composer wants direction as a performance control.

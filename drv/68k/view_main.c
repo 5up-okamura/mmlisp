@@ -6,10 +6,16 @@
  * converters — and after every frame the two converters must be byte for
  * byte the same, and so must the two sequencers.
  *
- *   view_main <song.mmb> <frames> [--samples bank.smp] [--prime K]
+ *   view_main <song.mmb> <frames> [--samples bank.smp] [--prime K] [--banked 1]
  *             <fifo> <fifo_pairs> <ppg> <lut_page> <op_port> <voices> <idle_after_gen>
  *
- * Prints "ok <frames>" or the first frame the two differ at, and exits 1. */
+ * Prints "ok <frames>" or the first frame the two differ at, and exits 1.
+ *
+ * --banked 1: the host's path alone, with the block-banked image's converter
+ * (banked_writes, which the record path never takes) — each frame rendered,
+ * then grabbed as pairs_main grabs (the same modelled engine), the pairs and
+ * PSG bytes written out as pairs_main writes them. banked_writes has no JS
+ * twin; banked:gate holds this stream to the one recorded. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +37,47 @@ static unsigned char *slurp(const char *path, long *out_len) {
 
 static MMLSeq seq_a, seq_b;
 static MMLPairs pairs_a, pairs_b;
+
+/* --banked: one grab, as pairs_main's grab() (the engine 17 pairs on, every
+ * seventh grab 10 more between the read and the write). */
+static unsigned consumer = 0, ngrab = 0;
+static void grab_out(MMLPairs *p, const MMLPairsCfg *cfg) {
+  uint8_t ops[MMLP_MAX_GRAB], vals[MMLP_MAX_GRAB], psg[256];
+  uint16_t dst = 0;
+  consumer = (consumer + 17) % cfg->fifo_pairs;
+  const uint8_t fresh = (uint8_t)(2 * consumer);
+  uint16_t n = mmlp_plan(p, fresh, p->frames_in, ops, vals, &dst);
+  if (ngrab++ % 7 == 6) consumer = (consumer + 10) % cfg->fifo_pairs;
+  if (n && !mmlp_in_time(fresh, dst, (uint8_t)(2 * consumer))) { mmlp_abort(p); n = 0; fputc('L', stdout); }
+  fputc('G', stdout);
+  fputc(dst & 0xff, stdout); fputc(dst >> 8, stdout);
+  fputc(n, stdout);
+  for (uint16_t k = 0; k < n; k++) { fputc(ops[k], stdout); fputc(vals[k], stdout); }
+  const uint16_t np = mmlp_psg_take(p, p->frames_in, psg, sizeof psg);
+  fputc('P', stdout);
+  fputc(np & 0xff, stdout);
+  fwrite(psg, 1, np, stdout);
+}
+
+static int banked_wire(const MMLPairsCfg *cfg, long frames) {
+  MMLPairsCfg banked = *cfg;
+  banked.banked = 1;
+  mmlp_init(&pairs_b, &banked);
+  mml_start_all(&seq_b);
+  for (long k = 0; k < frames; k++) {
+    mmlp_render(&pairs_b, &seq_b);
+    grab_out(&pairs_b, &banked);
+    grab_out(&pairs_b, &banked);
+    if (mml_done(&seq_b)) break;
+  }
+  while (mml_pending(&seq_b)) {
+    mmlp_drain(&pairs_b, &seq_b);
+    grab_out(&pairs_b, &banked);
+    grab_out(&pairs_b, &banked);
+  }
+  for (int g = 0; g < 4096 && mmlp_pending(&pairs_b); g++) grab_out(&pairs_b, &banked);
+  return 0;
+}
 
 static int same(long frame, const char *what) {
   if (memcmp(&pairs_a, &pairs_b, sizeof pairs_a)) { printf("frame %ld (%s): the converters differ\n", frame, what); return 0; }
@@ -62,10 +109,11 @@ int main(int argc, char **argv) {
   if (argc < 3) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
   const char *smp_path = 0;
   long prime = -1;
-  int a = 3;
+  int a = 3, banked = 0;
   for (; a < argc && argv[a][0] == '-' && argv[a][1] == '-'; a += 2) {
     if (!strcmp(argv[a], "--samples")) smp_path = argv[a + 1];
     else if (!strcmp(argv[a], "--prime")) prime = strtol(argv[a + 1], 0, 10);
+    else if (!strcmp(argv[a], "--banked")) banked = atoi(argv[a + 1]);
   }
   if (argc - a < 7) { fprintf(stderr, "usage: see the header comment\n"); return 2; }
   MMLPairsCfg cfg;
@@ -86,6 +134,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "bad sample bank\n");
     return 2;
   }
+  if (banked) return banked_wire(&cfg, frames);
   mmlp_init(&pairs_a, &cfg);
   mmlp_init(&pairs_b, &cfg);
   long f = 0;
