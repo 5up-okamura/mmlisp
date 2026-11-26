@@ -23,16 +23,15 @@ import { buildChannelRegState, fmCarrierOpsForAlg } from "../machine/chips/opn-r
 import { KEY_OFF_LEAD_SECS, KEY_ORDER_EPS_SECS, HOLD_FRAMES, expandLoops } from "../ir/timing.js";
 import { toneLaneOf, targetProfile, notYet } from "../machine/targets.js";
 import { curveId, sweepFrameValue, bpmToTickIncrement, tickIncrementToBpm } from "../driver/mmb.js";
-import { PCM8_VOICES } from "../machine/chips/msm6258.js";
 import { FM_OPS, FM_OP_REGS, fmInitVoice, fmOpWord, fmChannelWord } from "../ir/fm-words.js";
-import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, SAMPLE_HANDLERS, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
+import { FM_CHANNELS, CORE_OF_KIND, PSG_LANES, FM_LFO_ROUTE, isSongWord, TIMED_CMDS, KEYED, FM3_KEYS, LFO_TARGETS, WAVE_LFO_WORDS, HAND_PARAMS, writesVol, handWordOf, LFO_RESET_GAP, OP_MACRO_MAP, songOrEffectIr, drvBpm, PLAYHEAD_SKIP_CMDS, lcm, NO_FM, SWEEP, MACRO, SONG, FM3_TL } from "./ir-player-shared.js";
 import { workMethods } from "./ir-player-work.js";
 import { panelMethods } from "./ir-player-panel.js";
 import { keyMethods } from "./ir-player-keys.js";
 import { wordMethods } from "./ir-player-words.js";
 import { macroMethods } from "./ir-player-macros.js";
 import { levelMethods } from "./ir-player-levels.js";
-import { sampleMethods } from "./ir-player-samples.js";
+import { sampleMethods, SAMPLE_VOICES } from "./ir-player-samples.js";
 
 export { songOrEffectIr } from "./ir-player-shared.js";
 
@@ -421,23 +420,14 @@ export class IRPlayer {
   }
 
   // Every voice the chips' own sample parts sound — the ADPCM-B, the ROM
-  // rhythm's six, PCM8's eight — stopped at `when` (now when absent): a run's
-  // end and a seek's point, where nothing the song keyed may ring on.
+  // rhythm's sounds, PCM8's eight, the DDA's channels, the DMC — stopped at
+  // `when` (now when absent), each as its part stops them (SAMPLE_VOICES):
+  // a run's end and a seek's point, where nothing the song keyed may ring on.
   _silenceChipPcm(when) {
     const write = (writes) => { for (const [p, a, d] of writes) this._write(p, a, d, when); };
-    const adpcm = this._target.chipFor("adpcm-b")?.adpcm;
-    if (adpcm) write(adpcm.stop());
-    const kit = this._target.parts.find((p) => p.kit)?.kit;
-    if (this._rhythmEnc && kit) for (const sound of Object.values(kit)) write(this._rhythmEnc.dump(sound));
     for (const enc of this._queuedEncoders()) enc.drop?.(); // the SSG's queued mixer changes, the 2A03's levels
     const t = when ?? this._audioContext?.currentTime ?? 0;
-    if (this._target.hasPart("pcm8")) for (let v = 0; v < PCM8_VOICES; v++) this._pcm8Ev(t, { kind: "cut", voice: v });
-    // The PC Engine's DDA channels back off (a sample cut where it stands).
-    const dda = this._ddaEncoder();
-    if (dda) for (const [, ch] of this._lanesOf("sample", "pce-dda")) write(dda.off(ch));
-    // The 2A03's DMC stops.
-    const dmc = this._target.chipFor("fc-dpcm")?.dmc;
-    if (dmc) write(dmc.stop());
+    for (const part of this._target.parts) SAMPLE_VOICES[part.name]?.stopAll?.(this, part, write, t);
   }
 
   // The chip and channel state belongs to one run. A run's sticky state (a
@@ -894,8 +884,8 @@ export class IRPlayer {
     for (const [ti, voice] of this._lanesOf("sample", "dac")) if (!this._isTrackAudible(ti)) this._silence(`pcm:${voice}`, when);
     // CSM: Timer A keys CH3, so muting the CSM voice holds the timer instead.
     if (this._reg27 & 0x80) this._writeReg27(when);
-    for (const voice of this._chipPcm?.owner.keys() ?? []) if (!this._isVoiceAudible(voice)) this._silence(`voice:${voice}`, when);
-    for (const [ti] of this._lanesOf("sample", "fc-dpcm")) if (!this._isVoiceTrackAudible(ti, "dpcm")) this._silence("voice:dpcm", when);
+    // A chip's sample voice: its strip or the track whose hit sounds on it.
+    for (const [voice, h] of this._chipPcm?.owner ?? []) if (!this._isVoiceTrackAudible(h.ti, voice)) this._silence(`voice:${voice}`, when);
   }
 
   // A voice silenced now — its track muted or not soloed (_applyAudibility),
@@ -1210,7 +1200,7 @@ export class IRPlayer {
     }
     const core = CORE_OF_KIND[c.part.kind];
     if (!core) throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
-    if (core === "sample" && !SAMPLE_HANDLERS[c.part.name])
+    if (core === "sample" && !SAMPLE_VOICES[c.part.name])
       throw new Error(`the IR player cannot play ${track.channel} yet (${c.part.label})`);
     const lane = core === "psg" ? toneLaneOf(c) : c.voice;
     this._routes.set(trackIndex, { core, part: c.part, lane });
@@ -2266,12 +2256,12 @@ export class IRPlayer {
       return;
     }
 
-    // The sample core, by the track's part (SAMPLE_HANDLERS). A sample
+    // The sample core, by the track's part (SAMPLE_VOICES). A sample
     // track's _chIndex is its voice, which collides with FM channel indices —
     // its PARAM_SETs must NOT fall through to the FM path (they would corrupt
     // FM ch 1-3's TL).
     if (ev._route.core === "sample") {
-      this[SAMPLE_HANDLERS[ev._route.part.name]](ev, when);
+      this[SAMPLE_VOICES[ev._route.part.name].event](ev, when);
       return;
     }
 

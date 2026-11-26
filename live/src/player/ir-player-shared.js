@@ -26,22 +26,9 @@ export const FM_CHANNELS = Math.max(
 // its events on the clock and writes nothing.
 export const CORE_OF_KIND = { fm: "fm", tone: "psg", noise: "psg", wave: "psg", sample: "sample", midi: "none" };
 export const PSG_LANES = TONE_LANES; // the PSG core's
-// The sample core's handler for each sample part: the chips' own voices (the
-// YM2608's rhythm and ADPCM-B, the OPLL's rhythm), PCM8's mix, the Mega
-// Drive driver's DAC mix.
 // Where a PSG or sample track's song-wide LFO write goes: the FM core's
 // channel 0, as the driver takes it from any track.
 export const FM_LFO_ROUTE = { core: "fm", part: null, lane: 0 };
-export const SAMPLE_HANDLERS = {
-  rhythm: "_dispatchRhythmEvent",
-  "opll-rhythm": "_dispatchRhythmEvent",
-  "adpcm-b": "_dispatchAdpcmEvent",
-  pcm8: "_dispatchPcm8Event",
-  "pce-dda": "_dispatchDdaEvent",
-  "fc-dpcm": "_dispatchDpcmEvent",
-  dac: "_dispatchDacEvent",
-  "midi-drums": "_dispatchNothing",
-};
 // A frame's order (driver.md §4): the places work takes in it (IRPlayer._at).
 // The events that take time on their track: a note, a rest, a tie.
 export const TIMED_CMDS = new Set(["NOTE_ON", "PCM_NOTE_ON", "REST", "TIE"]);

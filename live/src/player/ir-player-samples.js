@@ -11,7 +11,7 @@ import { KEY_ORDER_EPS_SECS } from "../ir/timing.js";
 import { curveId, curveUnit8, sweepValue, sweepStep } from "../driver/mmb.js";
 import { engineImage } from "../driver/engine-images.js";
 import { ROM_SOUND_SEC } from "../machine/chips/rhythm-rom.js";
-import { PCM8_RATE } from "../machine/chips/msm6258.js";
+import { PCM8_RATE, PCM8_VOICES } from "../machine/chips/msm6258.js";
 import { DDA_RATE, ddaStep } from "../machine/chips/huc6280.js";
 import { dmcRate, dmcRates, dmcLevels, dmcEncode } from "../machine/chips/rp2a03.js";
 import { DDA_HOLD_SEC, DMC_LOAD_LEAD_SECS, PCM_LOOP_MAX, VOICES, PCM_SWEEP_AFTER, PCM_POINT_TARGETS, SWEEP, MACRO, AFTER } from "./ir-player-shared.js";
@@ -62,6 +62,59 @@ function pcm8Gain({ vel, vol, master }) {
 function adpcmLevel(level, { vel, vol, master }) {
   return Math.round((level.steps - 1) * levelGain({ vel, faders: [vol, master] }));
 }
+
+// A chip's ROM rhythm (the YM2608's, the OPLL's): its sounds dumped.
+const ROM_RHYTHM = {
+  event: "_dispatchRhythmEvent",
+  write: (p, h, t, force) => p._rhythmWrite(h, t, force),
+  silence: (p, h, write, t) => write(p._rhythmEnc?.dump(h.voice, t) ?? []),
+  stopAll: (p, part, write) => { if (p._rhythmEnc && part.kit) for (const sound of Object.values(part.kit)) write(p._rhythmEnc.dump(sound)); },
+};
+
+// A sample part as the player plays it, by its name (the machine's part,
+// chips/parts.js): `event` the dispatcher of its tracks' events, and what a
+// hit sounding on one of its voices does —
+//   write(p, h, t, force)    its level and pitch as they are now (_chipPcmWrite)
+//   silence(p, h, write, t)  it stops, for a mute (VOICE_KINDS.voice)
+//   frame(p, h, until)       its samples up to `until`, a frame at a time
+//                            while it sounds (_chipPcmNext)
+//   handOver(p, h, t)        its track's next note ends it (on the other
+//                            chips the voice takes the next note itself)
+// — and stopAll(p, part, write, t): every voice it has, at a run's end and
+// a seek (_silenceChipPcm). The Mega Drive's DAC mix is the worklet's voice
+// model (the `pcm` voices, VOICE_KINDS); the MIDI drums sound on the output.
+export const SAMPLE_VOICES = {
+  rhythm: ROM_RHYTHM,
+  "opll-rhythm": ROM_RHYTHM,
+  "adpcm-b": {
+    event: "_dispatchAdpcmEvent",
+    write: (p, h, t, force) => p._adpcmWrite(h, t, force),
+    silence: (p, h, write) => write(p._target.chipFor("adpcm-b").adpcm.stop()),
+    stopAll: (p, part, write) => write(p._target.chipFor("adpcm-b").adpcm.stop()),
+  },
+  pcm8: {
+    event: "_dispatchPcm8Event",
+    write: (p, h, t, force) => p._pcm8Write(h, t, force),
+    silence: (p, h, write, t) => p._pcm8Ev(t, { kind: "cut", voice: h.pcm8 }),
+    stopAll: (p, part, write, t) => { for (let v = 0; v < PCM8_VOICES; v++) p._pcm8Ev(t, { kind: "cut", voice: v }); },
+  },
+  "pce-dda": {
+    event: "_dispatchDdaEvent",
+    write: (p, h, t, force) => p._ddaWrite(h, t, force),
+    silence: (p, h, write) => { h.dumped = true; write(p._ddaEncoder()?.off(h.dda) ?? []); },
+    frame: (p, h, until) => p._ddaFrame(h, until),
+    handOver: (p, h, t) => { if (!h.dumped && h.end > t) { h.end = t; p._ddaFrame(h, t); } },
+    stopAll: (p, part, write) => { const dda = p._ddaEncoder(); if (dda) for (const [, ch] of p._lanesOf("sample", part.name)) write(dda.off(ch)); },
+  },
+  // (its level is baked into the bytes at the key-on: nothing to write after)
+  "fc-dpcm": {
+    event: "_dispatchDpcmEvent",
+    silence: (p, h, write) => write(p._target.chipFor("fc-dpcm").dmc.stop()),
+    stopAll: (p, part, write) => write(p._target.chipFor("fc-dpcm").dmc.stop()),
+  },
+  dac: { event: "_dispatchDacEvent" },
+  "midi-drums": { event: "_dispatchNothing" },
+};
 
 export const sampleMethods = {
   // PCM track dispatch. The worklet runs the driver's own voice model and
@@ -193,15 +246,12 @@ export const sampleMethods = {
       // The track's own sound on the channel ends at its next note (not at a
       // retrigger of the same note, which plays over it).
       const prev = st.owner.get(voice);
-      if (prev?.dda != null && prev.ti === h.ti && prev.note !== h.note && !prev.dumped && prev.end > h.t) {
-        prev.end = h.t;
-        this._ddaFrame(prev, h.t);
-      }
+      if (prev && prev.ti === h.ti && prev.note !== h.note) prev.ops.handOver?.(this, prev, h.t);
       st.owner.set(voice, h);
       const lane = this._routes.get(h.ti)?.part?.kitLane?.[voice];
       if (lane != null) st.lane.set(lane, h);
       key(h.t, h);
-      if (h.dda != null && !st.frames) {
+      if (h.ops.frame && !st.frames) {
         st.frames = true;
         this._chipPcmNext(this._eventFrame(h.t));
       }
@@ -212,7 +262,7 @@ export const sampleMethods = {
       pitchGate: fields.tune ? ev.args?.length : undefined,
       key: (n) => {
         const note = this._lv(site).note;
-        hit = { t: when, end, voice, ti, note, ...fields };
+        hit = { t: when, end, voice, ti, note, ops: SAMPLE_VOICES[ev._route.part.name], ...fields };
         const fresh = { ...hit }; // a retrigger's hit starts as the note's did
         keyHit(hit);
         return {
@@ -271,32 +321,38 @@ export const sampleMethods = {
     return enc.deltaN(hit.rate * 2 ** ((hit.midi - 60) / 12 + this._hitCents(hit) / 1200));
   },
 
-  // The DDA's frame `k`, as work of the frame once its steps are done
-  // (VOICES): each sounding hit's samples on the CPU's timer, and its end.
-  // The frames go on while a hit has samples to write.
+  // A frame-fed voice's frame `k` (the DDA's), as work of the frame once
+  // its steps are done (VOICES): each sounding hit's samples on the CPU's
+  // timer, and its end. The frames go on while a hit has samples to write.
   _chipPcmNext(k) {
     const st = this._chipPcm;
     let more = false;
-    for (const h of st.owner.values()) if (h.dda != null && !h.dumped) more = true;
+    for (const h of st.owner.values()) if (h.ops.frame && !h.dumped) more = true;
     if (!more) { st.frames = false; return; }
     const t = this._frameOrigin + k / 60;
     this._step(k, VOICES, t, () => {
       if (this._chipPcm !== st) return;
-      for (const h of st.owner.values()) if (h.dda != null && !h.dumped) this._ddaFrame(h, t + 1 / 60);
+      for (const h of st.owner.values()) if (h.ops.frame && !h.dumped) h.ops.frame(this, h, t + 1 / 60);
       this._chipPcmNext(k + 1);
     });
   },
 
   // `voice`'s sounding hit's level, pitch and tune at `t`, where they moved
   // since its last write (`force`: written whatever — the panel's move,
-  // over what was sent ahead of it).
+  // over what was sent ahead of it): its part's write (SAMPLE_VOICES).
   _chipPcmWrite(voice, t, force = false) {
+    const h = this._chipPcm?.owner.get(voice);
+    h?.ops.write?.(this, h, t, force);
+  },
+
+  // A ROM rhythm hit: its level on the part's ladder — a sound fading below
+  // what it reaches, or turned off, dumped — and on the OPLL its pitch,
+  // which moves its channel while the sound rings and on through its
+  // release, to the next hit on the channel: its own or its pair's (SD with
+  // HH, TOM with the cymbal), which tunes it.
+  _rhythmWrite(h, t, force) {
     const st = this._chipPcm;
-    const h = st?.owner.get(voice);
-    if (!h) return;
-    // An OPLL rhythm hit's pitch moves its channel while the sound rings
-    // and on through its release, to the next hit on the channel: its own
-    // or its pair's (SD with HH, TOM with the cymbal), which tunes it.
+    const voice = h.voice;
     const lane = this._routes.get(h.ti)?.part?.kitLane?.[voice];
     if (h.tune && (lane == null || st.lane.get(lane) === h)) {
       const midi = h.midi + this._hitCents(h) / 100;
@@ -307,42 +363,52 @@ export const sampleMethods = {
     }
     if (h.dumped || t >= h.end) return;
     const lv = this._chipPcmLevelAt(h);
-    if (h.dda != null) {
-      const att = levelSteps(this._routes.get(h.ti).part.level, { vel: lv.vel, faders: [lv.vol, lv.master] });
-      if (att !== h.att || force) { h.att = att; for (const [p, a, d] of this._ddaEncoder().level(h.dda, att)) this._write(p, a, d, t); }
-    } else if (h.pcm8 != null) {
-      const gain = pcm8Gain(lv);
-      if (gain !== h.gain || force) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
-      const step = this._pcm8Step(h);
-      if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
-    } else if (voice === "adpcm") {
-      const chip = this._target.chipFor("adpcm-b");
-      const level = adpcmLevel(this._routes.get(h.ti).part.level, lv);
-      if (level !== h.level || force) {
-        h.level = level;
-        for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
-      }
-      const deltaN = this._adpcmDeltaN(h);
-      if (deltaN !== h.deltaN) {
-        h.deltaN = deltaN;
-        for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
-      }
-    } else {
-      const level = this._routes.get(h.ti).part.level;
-      const top = level.steps - 1;
-      const att = rhythmAtt(level, lv);
-      // Turned off, or falling below what the level reaches: the sound stops.
-      const falling = att > (h.lastAtt ?? h.att);
-      h.lastAtt = att;
-      if (lv.vol <= 0 || lv.master <= 0 || (att > top && falling)) {
-        h.dumped = true;
-        for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
-        return;
-      }
-      const il = top - Math.min(top, att);
-      if (il === h.il && !force) return;
-      h.il = il;
-      for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
+    const level = this._routes.get(h.ti).part.level;
+    const top = level.steps - 1;
+    const att = rhythmAtt(level, lv);
+    // Turned off, or falling below what the level reaches: the sound stops.
+    const falling = att > (h.lastAtt ?? h.att);
+    h.lastAtt = att;
+    if (lv.vol <= 0 || lv.master <= 0 || (att > top && falling)) {
+      h.dumped = true;
+      for (const [p, a, d] of this._rhythmEnc.dump(voice, t)) this._write(p, a, d, t);
+      return;
+    }
+    const il = top - Math.min(top, att);
+    if (il === h.il && !force) return;
+    h.il = il;
+    for (const [p, a, d] of this._rhythmEnc.level(voice, il, h.pan, t)) this._write(p, a, d, t);
+  },
+
+  // A DDA hit: its attenuation on the part's ladder.
+  _ddaWrite(h, t, force) {
+    if (h.dumped || t >= h.end) return;
+    const att = levelSteps(this._routes.get(h.ti).part.level, this._ddaLevel(h, t));
+    if (att !== h.att || force) { h.att = att; for (const [p, a, d] of this._ddaEncoder().level(h.dda, att)) this._write(p, a, d, t); }
+  },
+
+  // A PCM8 hit: its gain in the mix and its step through the sample.
+  _pcm8Write(h, t, force) {
+    if (h.dumped || t >= h.end) return;
+    const gain = pcm8Gain(this._chipPcmLevelAt(h));
+    if (gain !== h.gain || force) { h.gain = gain; this._pcm8Ev(t, { kind: "gain", voice: h.pcm8, value: gain }); }
+    const step = this._pcm8Step(h);
+    if (step !== h.step) { h.step = step; this._pcm8Ev(t, { kind: "step", voice: h.pcm8, value: step }); }
+  },
+
+  // An ADPCM-B note: its linear level and its Delta-N.
+  _adpcmWrite(h, t, force) {
+    if (h.dumped || t >= h.end) return;
+    const chip = this._target.chipFor("adpcm-b");
+    const level = adpcmLevel(this._routes.get(h.ti).part.level, this._chipPcmLevelAt(h));
+    if (level !== h.level || force) {
+      h.level = level;
+      for (const [p, a, d] of chip.adpcm.level(level)) this._write(p, a, d, t);
+    }
+    const deltaN = this._adpcmDeltaN(h);
+    if (deltaN !== h.deltaN) {
+      h.deltaN = deltaN;
+      for (const [p, a, d] of chip.adpcm.pitch(deltaN)) this._write(p, a, d, t);
     }
   },
 
@@ -587,6 +653,9 @@ export const sampleMethods = {
           audible: this._isVoiceTrackAudible(ti, "dpcm"),
           level: "voice:dpcm", vel: Number(ev.args?.vel ?? 15),
           key: () => {
+            // The voice is the note's, as a chip's hit's (_chipPcmHit): its
+            // part's silence stops it (SAMPLE_VOICES).
+            this._chipPcmState().owner.set("dpcm", { t: when, end: Infinity, voice: "dpcm", ti, ops: SAMPLE_VOICES["fc-dpcm"] });
             // The level at key-on, baked into the bytes: the voice's
             // (_sampleLevel) — its note's vel and :vol macro's first steps,
             // the strip, the track's :vol, the master.

@@ -69,25 +69,15 @@ export const VOICE_KINDS = {
     },
   },
   // A chip's sample voice (`at` its name: "adpcm", a rhythm sound, "pcm8-0",
-  // "dda-0", "dpcm"): its sounding hit's level and pitch (_chipPcmWrite); a
-  // rhythm sound dumped, the ADPCM-B stopped, a PCM8 voice cut from the mix,
-  // a DDA channel off and fed no more frames, the DMC stopped.
+  // "dda-0", "dpcm"): its sounding hit's level and pitch (_chipPcmWrite),
+  // and its silence — each as its part does it (SAMPLE_VOICES).
   voice: {
     level: (p, n, at, when, why) => p._chipPcmWrite(at, when ?? p._audioContext?.currentTime ?? 0, why === "hand"),
     fader: (p, n, at, strip) => `strk:${strip.tracks[0]}`, // its track's
     pitch: (p, n, at, when) => p._chipPcmWrite(at, when),
     silence: (p, n, at, when) => {
-      const write = chipWrite(p, when);
-      if (at === "dpcm") return void write(p._target?.chipFor?.("fc-dpcm")?.dmc?.stop() ?? []);
       const h = p._chipPcm?.owner.get(at);
-      if (!h) return;
-      if (h.pcm8 != null) return void p._pcm8Ev(when, { kind: "cut", voice: h.pcm8 });
-      if (h.dda != null) {
-        h.dumped = true;
-        return void write(p._ddaEncoder()?.off(h.dda) ?? []);
-      }
-      if (at === "adpcm") write(p._target.chipFor("adpcm-b").adpcm.stop());
-      else if (p._rhythmEnc) write(p._rhythmEnc.dump(at, when)); // (a sample voice this player cannot dump: none)
+      h?.ops.silence?.(p, h, chipWrite(p, when), when);
     },
   },
   // A sample track (its number): its fader, which the hits it sounds on the
