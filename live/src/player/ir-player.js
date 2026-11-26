@@ -3128,10 +3128,11 @@ export class IRPlayer {
     }
 
     // A note at vol or master 0 keys nothing: it keys the channel off
-    // instead, the previous note may have left its key-off to this one (a
-    // muted track's note does as much, _playNote's _silence).
+    // instead where it is still keyed — the previous note may have left its
+    // key-off to this one (a muted track's note does as much, _playNote's
+    // _silence) — as the driver's note-on keys off only a keyed channel.
     const keys = !this._fmNoteSilent(ch, when);
-    if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch)) this._fmKey(ch, 0, when);
+    if (!keys && !isFm3OpNote && !this._csmKeysCh3(ch) && this._fmKeyMask[ch]) this._fmKey(ch, 0, when);
     // What closing the note is on its voice (_closeNote): at its gate's end,
     // a rest, the track's end, the host's key-off — and at the track's next
     // note, which a slur, or a hold, carries over into.
