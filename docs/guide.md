@@ -2755,6 +2755,12 @@ machine's channels or dropped:
   plays a drum track on it: each sample as the kit's role it is named or
   sounds as (an MDX's samples by their sound: kick, snare, tom, top
   cymbal, hat).
+- The FM-PAC's rhythm releases at its gate; a sample's `:mode gate` is cut
+  there, so onto samples its hits are shots, played out.
+- A voice keeps the octave it sounds at: the one its tone repeats at, read
+  off its main carrier's multiple and every operator loud enough to be
+  heard (TL 40 or under) — a modulator at `:ml 0` sounds an octave down —
+  and its `:key`, against its stand-in's.
 - A conversion sets levels only where a machine needs them, by ear. The
   score's own samples, carried over, are too quiet on a machine whose DAC
   is weak: every one takes one gain, so they keep their balance with each
@@ -2770,8 +2776,10 @@ machine's channels or dropped:
   forms, language.md §1), a `:prio` each: the kick and snare first, then
   toms, a rim or clap, cymbals, and the hats last; each hit holds the channel a tick
   (`:gate 1t`, a shot plays out anyway), so where two strike at once the
-  higher sounds, and otherwise the latest. The other five channels stay the
-  melody's. A channel has one loop, so the parts sharing it must loop over
+  higher sounds, and otherwise the latest. The layers share the channel's
+  one pan, so their `:pan` is taken out (a hat panned hit by hit would leave
+  the kick where it last went): write one on the channel to move them all.
+  The other five channels stay the melody's. A channel has one loop, so the parts sharing it must loop over
   the same ticks: those that do and play the most notes between them are
   kept, and a part looping on its own (a mucom88 song's part K beside its
   rhythm) is left out, said in the log.

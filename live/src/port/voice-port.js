@@ -125,18 +125,37 @@ export function voiceTable(text, imports, part) {
 const full4op = (words) => new Map([...fmInitVoice(null), ...words]);
 
 /**
- * The octaves a 4-op voice sounds above its written note: its main carrier's
- * multiple, where that is a power of two (ML 2 one up, 4 two, 0 — a half —
- * one down); any other multiple (3, 5 …) is a partial, 0. A wave or a
- * square plays the written note: it is written that many octaves up.
+ * The octaves a 4-op voice sounds above its written note: the multiple its
+ * tone repeats at (soundingMultiple), where that is a power of two (2 one
+ * up, 4 two, a half one down); any other (3, 5 …) is a partial, 0. A wave
+ * or a square plays the written note: it is written that many octaves up.
  */
 export function carrierOctave(words) {
-  return mlOctave(carrierMultiple(words));
+  return mlOctave(soundingMultiple(words));
+}
+// An operator this loud or louder (TL) is heard in the tone's period.
+const HEARD_TL = 40;
+/**
+ * The multiple a 4-op voice's tone repeats at: the greatest common divisor
+ * of its operators' multiples (ML 0 a half) — its main carrier's and every
+ * other operator's loud enough to be heard. A carrier at ML 1 under a modulator
+ * at ML 0 (presets/fm-roles' acoustic bass) sounds an octave under the
+ * carrier: the pitch heard is the period's, not the carrier's.
+ */
+export function soundingMultiple(words) {
+  const w = full4op(words);
+  const main = mainCarrier(w);
+  const twice = [1, 2, 3, 4]
+    .filter((op) => op === main || (w.get(`FM_TL${op}`) ?? 127) <= HEARD_TL)
+    .map((op) => { const ml = w.get(`FM_ML${op}`) ?? 1; return ml === 0 ? 1 : 2 * ml; });
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const g = twice.reduce(gcd);
+  return g === 1 ? 0 : g / 2;
 }
 const mlOctave = (ml) => (ml === 0 ? -1 : Number.isInteger(Math.log2(ml)) ? Math.log2(ml) : 0);
 /**
  * How a 4-op voice sounds against its written note: `pitch`, the semitones
- * above it — its main carrier's octave (operator `op`'s, for a track that
+ * above it — the octave its tone repeats at (operator `op`'s, for a track that
  * plays one operator) and its `:key` − 60 — and `key`, the `:key` that
  * moves the written note (60: none). A stand-in that plays the written note
  * (a wave, a square) is { 0, 60 }; a role's voice of presets/fm-roles,
@@ -144,7 +163,7 @@ const mlOctave = (ml) => (ml === 0 ? -1 : Number.isInteger(Math.log2(ml)) ? Math
  */
 export function soundOf(words, op = null) {
   const key = words.get("KEY") ?? 60;
-  const ml = op ? full4op(words).get(`FM_ML${op}`) ?? 1 : carrierMultiple(words);
+  const ml = op ? full4op(words).get(`FM_ML${op}`) ?? 1 : soundingMultiple(words);
   return { pitch: 12 * mlOctave(ml) + key - 60, key, ml };
 }
 /**
@@ -154,9 +173,9 @@ export function soundOf(words, op = null) {
  * --check holds it to the set).
  */
 export const FM_ROLE_SOUND = {
-  harpsichord: { pitch: 0, key: 72 }, guitar: { pitch: 0, key: 72 }, "acoustic-bass": { pitch: 12, key: 72 },
-  "synth-bass": { pitch: 12, key: 48 }, violin: { pitch: 12, key: 60 }, trumpet: { pitch: 0, key: 48 },
-  oboe: { pitch: 24, key: 60 }, synth: { pitch: 12, key: 60 },
+  harpsichord: { pitch: 0, key: 72 }, organ: { pitch: -12, key: 60 }, guitar: { pitch: 0, key: 72 },
+  "acoustic-bass": { pitch: 0, key: 72 }, "synth-bass": { pitch: -12, key: 48 },
+  trumpet: { pitch: 0, key: 48 },
 };
 /** A voice's `:key` as written in a def it is rewritten to. */
 const keyOf = (words) => (words.has("KEY") ? ` :key ${words.get("KEY")}` : "");
@@ -164,10 +183,10 @@ const keyOf = (words) => (words.has("KEY") ? ` :key ${words.get("KEY")}` : "");
 /** A 4-op voice's main carrier's multiple (:ml, the loudest carrier's). */
 export function carrierMultiple(words) {
   const w = full4op(words);
-  const carriers = CARRIERS_OF[w.get("FM_ALG") ?? 7];
-  const main = [...carriers].sort((a, b) => (w.get(`FM_TL${a}`) ?? 0) - (w.get(`FM_TL${b}`) ?? 0))[0];
-  return w.get(`FM_ML${main}`) ?? 1;
+  return w.get(`FM_ML${mainCarrier(w)}`) ?? 1;
 }
+// The loudest carrier of a voice's full words.
+const mainCarrier = (w) => [...CARRIERS_OF[w.get("FM_ALG") ?? 7]].sort((a, b) => (w.get(`FM_TL${a}`) ?? 0) - (w.get(`FM_TL${b}`) ?? 0))[0];
 // Each algorithm's carriers, op 1-4 (fm-model.js CARRIERS, 1-based).
 const CARRIERS_OF = [[4], [4], [4], [4], [2, 4], [2, 3, 4], [2, 3, 4], [1, 2, 3, 4]];
 

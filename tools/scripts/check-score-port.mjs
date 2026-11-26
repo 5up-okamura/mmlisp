@@ -286,15 +286,21 @@ const port = (src, to, rows, options) => {
 (fm2 high :len 4 c d lead e f)`, "msx");
   assert.match(up.text, /\(fm2 [\w-]+ :oct\+ 1 :len 4 c d lead :oct\+ -1 e f\)/, `the stand-in written up an octave:\n${up.text}`);
   assert.ok(up.said.some((w) => /'high' sounds \+12 semitones off its stand-in \(its carrier's :ml 2: \+12; its stand-in 0\); on fm2 its notes are written 1 octave up/.test(w)), up.said.join("\n"));
-  // Every stand-in keeps the pitch the voice sounds at: its carrier's octave
-  // and its :key against the stand-in's (soundOf) — a role's too: the
-  // fm-roles synth-bass sounds an octave up, the OPLL's an octave down.
+  // Every stand-in keeps the pitch the voice sounds at: the octave its tone
+  // repeats at (soundingMultiple: its carriers' and its heard modulators'
+  // multiples, a modulator at ML 0 an octave down) and its :key, against
+  // the stand-in's (soundOf) — a role's too. The FM-PAC's acoustic bass
+  // (ML 1 over ML 1) onto fm-roles' (ML 1 under ML 0 modulators, :key 72)
+  // sounds where it did: written as it is, not an octave down.
   const roles = port(`(import "presets/fm-roles/set.mmlisp")\n(fm1 synth-bass :oct 2 :len 4 c g)\n(fm2 piano :len 4 c e)`, "msx");
-  assert.match(roles.text, /\(fm1 synth-bass :oct\+ 2 :oct 4 :len 4 c g\)/, roles.text);
+  assert.match(roles.text, /\(fm1 synth-bass :oct 2 :len 4 c g\)/, roles.text);
   assert.match(roles.text, /\(fm2 piano :len 4 c e\)/, "a role that sounds as written moves none");
-  const romBack = port("(def-score :target msx)\n(fm1 oboe :oct 4 :len 4 c d)\n(fm2 synth-bass :oct 2 :len 4 c g)", "md");
-  assert.match(romBack.text, /\(fm1 oboe :oct\+ -1 :oct 3 /, `the ROM's oboe (+1) onto fm-roles' (+2):\n${romBack.text}`);
-  assert.match(romBack.text, /\(fm2 synth-bass :oct\+ -2 :oct 0 /, "the ROM's synth-bass (-1) onto fm-roles' (+1)");
+  const romBack = port("(def-score :target msx)\n(fm1 acoustic-bass :oct 2 :len 4 c g)", "md");
+  assert.match(romBack.text, /\(fm1 acoustic-bass :oct 2 :len 4 c g\)/, `the FM-PAC's acoustic bass where it sounded:\n${romBack.text}`);
+  const { soundingMultiple } = await import("../../live/src/port/voice-port.js");
+  assert.equal(soundingMultiple(new Map([["FM_ALG", 7], ["FM_ML1", 1], ["FM_ML2", 1], ["FM_ML3", 1], ["FM_ML4", 1]])), 1);
+  assert.equal(soundingMultiple(new Map([["FM_ALG", 4], ["FM_ML1", 0], ["FM_TL1", 30], ["FM_ML2", 1], ["FM_ML3", 0], ["FM_TL3", 127], ["FM_ML4", 1]])), 0, "a heard modulator at ML 0: an octave down");
+  assert.equal(soundingMultiple(new Map([["FM_ALG", 4], ["FM_ML1", 0], ["FM_TL1", 100], ["FM_ML2", 1], ["FM_ML3", 0], ["FM_TL3", 100], ["FM_ML4", 1]])), 1, "a quiet one is not heard in it");
   // A :key the conversion's def keeps; one past the octaves is said.
   const keyed = port("(def-fm low init-fm :alg 7 :key 48)\n(def-fm tom init-fm :alg 7 :key 62)\n(fm1 low :len 4 c e)\n(fm2 tom :len 4 c)", "msx");
   assert.match(keyed.text, /\(def-fm low init-fm :key 48 /, "the user voice keeps its :key");
@@ -673,6 +679,18 @@ const port = (src, to, rows, options) => {
   assert.doesNotMatch(msx.text, /def-mod|:fx/, msx.text);
   assert.deepEqual(compile(msx.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "it compiles");
   assert.doesNotMatch(portScore(mixSrc.replace(/\n\(pcm1[^\n]*/, ""), "md").text, /def-mod/, "no samples, no balance to keep");
+  // Rows made :prio layers of one channel share its pan: a hat's panned
+  // hits would leave the kick there; they play at the center.
+  const panned = portScore("(def-score :target pc88)\n(fm1 :len 4 c e g c)\n(rhythm1 kick :len 4 c c)\n(rhythm2 snare :len 4 _ c)\n(rhythm6 hat :len 8 :pan left c :pan right c :pan left c :pan right c)", "pce");
+  assert.ok(panned.text.split("\n").filter((l) => /^\(pcm\d :prio/.test(l)).length >= 2, panned.text);
+  assert.doesNotMatch(panned.text.slice(panned.text.indexOf("(pcm")), /:pan/, panned.text);
+  // The FM-PAC's rhythm releases at its gate; a sample's :mode gate cuts
+  // there: onto samples (md, pce) its hits are shots, played out.
+  for (const to of ["md", "pce"]) {
+    const g = portScore("(def-score :target msx)\n(fm1 :len 4 c e g c)\n(rhythm2 snare :mode gate :gate* 1 :len 4 c c)\n(rhythm1 kick :mode gate :gate 5t :len 4 c c)", to);
+    assert.doesNotMatch(g.text, /:mode gate/, `onto ${to}: ${g.text}`);
+    assert.deepEqual(compile(g.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "it compiles");
+  }
   // Of the lowest parts the bass is the one whose line stays low: a louder
   // part that starts there and climbs (Asuka 120%'s fm4 beside its fm7) is
   // not it.

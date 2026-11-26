@@ -2252,6 +2252,17 @@ class Porter {
       return DROP;
     }
     if (ctx.flatPitch && base === ":oct") return DROP;
+    // Rows made :prio layers of one channel share its one pan: a hat's
+    // panned hits would leave the kick and snare where the hat last went
+    // (Star Cruiser's drums onto the PC Engine's DDA, on one side). They
+    // play at the channel's center.
+    if (base === ":pan" && ctx.head && [...this.layerPrio.keys()].some((k) => k.startsWith(`${ctx.head}|`))) {
+      if (!this.saidLayerPan?.has(ctx.dest)) {
+        (this.saidLayerPan ??= new Set()).add(ctx.dest);
+        this.say(`:pan on ${ctx.dest}'s :prio layers: they share the channel's one pan; taken out (the center)`);
+      }
+      return DROP;
+    }
     if (ctx.drumNoise && [":oct", ":oct+", ":pitch", ":semi", ":mode", ":gate", ":gate-", ":gate*"].includes(base)) return DROP;
     if ((base === ":pitch" || base === ":semi") && (ctx.noBend || ctx.flatPitch)) {
       this.say(`${kw} on ${this.nameOf(ctx.head)}: the ${ctx.destPart.label} cannot bend a sample; taken out`);
@@ -2442,6 +2453,13 @@ class Porter {
       const own = [...parts.flatMap((p) => Object.keys(p.modes ?? {})), ...Object.values(this.to.channels).flatMap((c) => Object.keys(c.modes ?? {}))];
       if (syms.every((m) => own.includes(m))) return KEEP;
       this.say(`:mode ${syms.join(" ")} in a def: no channel of the ${this.to.system} has it; taken out`);
+      return DROP;
+    }
+    // The FM-PAC's rhythm releases at its gate (its sound decays from
+    // there); a sample's :mode gate is cut there: onto samples its hits
+    // are shots, played out (a snare's short gate choked it).
+    if (ctx.srcPart?.name === "opll-rhythm" && ctx.destPart?.kind === "sample" && ctx.destPart !== ctx.srcPart && val.kind === "atom" && val.value === "gate") {
+      if (!this.saidRelease) { this.saidRelease = true; this.say(`the FM-PAC's rhythm releases at its gate: onto ${this.to.system} samples its hits play out as shots (:mode gate taken out)`); }
       return DROP;
     }
     if (ctx.srcPart?.kind === "sample" && ctx.destPart?.kind === "sample") return KEEP;
