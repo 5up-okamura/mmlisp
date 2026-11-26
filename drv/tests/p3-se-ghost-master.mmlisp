@@ -1,0 +1,11 @@
+; A DISPLACED PART'S :master IS THE SONG'S (driver.md §2.5): the effect takes
+; fm1 at f40 for a half note, and fm1's part, playing on unheard, writes
+; :master 20 at its third note (f60 NTSC, f50 PAL). The effect follows the
+; song's fader at once, as it does when a part it did not displace writes it:
+; p3-se-ghost-master-twin, where fm2's part (track 0 there, so each frame's
+; writes keep their order) writes the same :master at the same time.
+(def-fm v :alg 7 :fb 0 :ar1 31 :tl1 127 :ml1 1 :ar2 31 :tl2 127 :ml2 1 :ar3 31 :tl3 127 :ml3 1 :ar4 31 :tl4 0 :ml4 1)
+(fm1 :tempo 120 v :oct 4 :vel 12 :len 4 c d :master 20 e f g a)   ; track 0
+(fm2 v :oct 3 :vel 12 :len 4 c c c c c c)                        ; track 1
+(def-se hit :prio 5
+  (fm1 v :oct 6 :len 2 :vel 15 g))                               ; track 2

@@ -815,11 +815,19 @@ static void recompose_carriers(MMLSeq *s, int ch) {
  */
 static void pcm_restart(MMLSeq *s, int vi);
 
+static void ghost_swap(MMLSeq *s, int ch);
+
 static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
   /* A macro (force) writes eighths, a host or relative write whole steps. */
   if (target == T_VEL && !force) value *= VEL_FINE;
   if (target == T_MASTER) {
     s->master = (uint8_t)clampi(value, 0, 31);
+    /* Every channel takes it now, an effect's too: written by a part an
+     * effect displaced, its ghost is swapped out for the recompose, so the
+     * effect follows the song's fader as it does when any other part writes
+     * it; the ghost's levels take it at the restore (§2.5). */
+    const int ghost = s->ghost_on ? s->ghost_on - 1 : -1;
+    if (ghost >= 0) ghost_swap(s, ghost);
     for (int c = 0; c < 6; c++) recompose_carriers(s, c);
     for (int p = 0; p < 4; p++) {
       if (!s->psg[p].sounding) continue;
@@ -830,6 +838,7 @@ static void param_set_ex(MMLSeq *s, int ch, int target, int value, int force) {
      * in that order (the mute reads the new master shift). */
     pcm_compose_master(s);
     for (int vi = 0; vi < MML_PCM_VOICES; vi++) pcm_compose_shift(s, vi);
+    if (ghost >= 0) ghost_swap(s, ghost);
     return;
   }
   if (T_IS_VAL(target)) {

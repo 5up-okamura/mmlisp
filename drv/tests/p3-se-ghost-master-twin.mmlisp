@@ -1,0 +1,7 @@
+; p3-se-ghost-master's twin: the same :master written by fm2's part, which the
+; effect does not displace — track 0 here, as fm1's part is there.
+(def-fm v :alg 7 :fb 0 :ar1 31 :tl1 127 :ml1 1 :ar2 31 :tl2 127 :ml2 1 :ar3 31 :tl3 127 :ml3 1 :ar4 31 :tl4 0 :ml4 1)
+(fm2 :tempo 120 v :oct 3 :vel 12 :len 4 c c :master 20 c c c c)  ; track 0
+(fm1 v :oct 4 :vel 12 :len 4 c d e f g a)                        ; track 1
+(def-se hit :prio 5
+  (fm1 v :oct 6 :len 2 :vel 15 g))                               ; track 2

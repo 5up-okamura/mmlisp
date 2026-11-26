@@ -755,6 +755,18 @@
     "compileErrors": 0,
     "digest": "811c9dc5"
   },
+  "p3-se-ghost-master-twin.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "p3-se-ghost-master.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
   "p3-se-ghost-twin.mmlisp": {
     "ok": true,
     "mismatches": 0,
@@ -792,6 +804,18 @@
     "digest": "811c9dc5"
   },
   "p3-se-pcm-macro.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "p3-se-pcm-master-twin.mmlisp": {
+    "ok": true,
+    "mismatches": 0,
+    "compileErrors": 0,
+    "digest": "811c9dc5"
+  },
+  "p3-se-pcm-master.mmlisp": {
     "ok": true,
     "mismatches": 0,
     "compileErrors": 0,

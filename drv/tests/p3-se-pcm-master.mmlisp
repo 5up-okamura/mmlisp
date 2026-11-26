@@ -1,0 +1,13 @@
+; A DISPLACED PCM PART'S :master IS THE SONG'S (driver.md §2.5), on a voice:
+; the effect takes pcm1 at f40 for a half note, and pcm1's part, playing on
+; unheard, writes :master 0 at its third note (f60 NTSC, f50 PAL) — the hard
+; mute, which each voice's level decides. The effect's voice is muted at once,
+; as when a part it did not displace writes it: p3-se-pcm-master-twin, where
+; fm1's part (track 0 there) writes the same :master at the same time.
+(def-score :pcm-voices 2)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm blip :file "blip.wav")
+(def-fm v :alg 7 :fb 0 :ar1 31 :tl1 127 :ml1 1 :ar2 31 :tl2 127 :ml2 1 :ar3 31 :tl3 127 :ml3 1 :ar4 31 :tl4 0 :ml4 1)
+(pcm1 pad :tempo 120 :mode loop :oct 4 :len 4 c c :master 0 c c c c)   ; track 0
+(fm1 v :oct 3 :vel 12 :len 4 c c c c c c)                             ; track 1
+(def-se hit (pcm1 blip :mode loop :oct 5 :len 2 c))                    ; track 2

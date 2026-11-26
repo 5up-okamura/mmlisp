@@ -77,6 +77,16 @@ const CASES = [
     what: "a displaced part plays on unheard: from its next note after the effect, the song as if it never fired",
   },
   {
+    score: "p3-se-ghost-master",
+    from: 41, to: 90,   // the effect's half note: to f90 on PAL, f100 on NTSC
+    what: "a displaced part's :master is the song's: the effect follows it as when another part writes it",
+  },
+  {
+    score: "p3-se-pcm-master",
+    from: 41, to: 90,
+    what: "a displaced PCM part's :master is the song's: the effect's voice follows it (the hard mute) as when another part writes it",
+  },
+  {
     score: "p3-se-pcm-macro",
     from: 101, to: 140, // after the part's first note past the effect (f60 NTSC, f100 PAL)
     what: "a PCM effect hands its voice back as any channel: from the part's next note, the song as if it never fired",
@@ -121,7 +131,7 @@ function slots(stem) {
 const INVARIANT_SCORES = [
   "m3-se", "m3-se-prio", "p3-se-strand", "p3-se-fade", "p3-se-stopped",
   "p3-se-overlap", "p3-se-pcm-macro", "p3-se-def", "p3-se-patch", "p3-se-noise",
-  "p3-claim-se-in", "p3-claim-se-out", "p3-se-ghost",
+  "p3-claim-se-in", "p3-claim-se-out", "p3-se-ghost", "p3-se-ghost-master", "p3-se-pcm-master",
 ];
 
 function checkInvariant(stem) {

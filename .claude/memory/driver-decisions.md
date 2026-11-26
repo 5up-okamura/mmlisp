@@ -87,7 +87,11 @@ Superseded engines: tags `archive/all-z80`, `archive/ring-engine`,
 - **`def-se` is the one way**: one effects file injected into every song,
   several parts per effect, a default priority the host may override.
 - The displaced part plays on as a ghost (catching up at SE-end rejected).
-  Open: a `:master` written by a ghost's stream.
+- **`:master` is the mix's fader, an effect's too** (the user, 2026-11-27):
+  a ghost's `:master` moves the effect on its channel at once, as any other
+  part's does. Not "the song's alone": PCM folds the master into the sum
+  once, so keeping effects out would mean a per-voice fold; a game fades the
+  music alone with `MMLisp_fadeTrack`.
 - Re-keying a part at SE-end was rejected (2026-11); SMPS and Echo do not
   either.
 - FM effects belong on free channels (priming); LEAD 1, an SE lane two

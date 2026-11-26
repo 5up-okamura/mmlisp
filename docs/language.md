@@ -1252,7 +1252,10 @@ A game's sound effects are written once, as defs, and every song carries them.
   game's fader, the chip's one LFO, the score's values — so an effect does not
   write them (`E_SE_PART`), nor `:lfo-sync`, which restarts that LFO: an
   effect taking a channel takes it without the part's `:lfo-sync`, and its
-  key-ons leave the LFO as it runs.
+  key-ons leave the LFO as it runs. The song's `:master` reaches the effect
+  as it does every channel, whichever part writes it (the one the effect
+  displaced too): a fade written in the score fades an effect playing then.
+  To fade the music alone, the game fades its tracks (`MMLisp_fadeTrack`).
 - **Not on CH3.** `fm3`, `fm3-1`…`fm3-4`, `fm3-csm` and `fm3-csm-rate` take
   no effect part (`E_SE_PART`): CH3's operator mode and CSM are chip-wide,
   so a song part there could not play on under an effect. Put an FM effect

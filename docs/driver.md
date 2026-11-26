@@ -179,7 +179,10 @@ the ghost. The ghost and the live channel trade places only around what the
 part does to its channel (a dispatch, a gate's key-off, a sweep step, a fade
 step), and while they are traded every write addressed to that channel — its
 `$30`-`$B6` registers, its `$28` key edges, its PSG latch and data bytes — is
-dropped; the song-wide registers and the other channels' go out. A ghost runs
+dropped; the song-wide registers and the other channels' go out. A
+`:master` it writes is the song's as any part's is: every channel takes it at
+once, the effect on its own channel too (the ghost is traded back for the
+recompose), and the ghost's levels at the restore. A ghost runs
 no macros: its binds are kept, and the restore re-instantiates them. So a
 part's loop, its tempo changes and its `$slot` reads land when the song has
 them, and after the effect it is in time with the rest of the song.
@@ -236,7 +239,9 @@ in a def-se (`E_SE_PART`).
 Gates `tests/m3-se.mmlisp` (FM, PSG and PCM steals) and `m3-se-prio.mmlisp`
 (steal, preempt, drop, restore after the last) pin the lifecycle, the
 `p3-claim-*` pairs pin the modulator rule (§12.2a), `p3-se-ghost` the part
-that plays on under an effect, and `p3-se-def` pins def-se: by number, two
+that plays on under an effect, `p3-se-ghost-master` and `p3-se-pcm-master`
+its `:master` (the effect follows it as it does another part's, a PCM voice's
+hard mute too), and `p3-se-def` pins def-se: by number, two
 parts under one, its own tempo, stopped early.
 `drv/sgdk/example` plays all three kinds from a pad.
 

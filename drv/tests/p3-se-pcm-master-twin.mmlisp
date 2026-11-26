@@ -1,0 +1,9 @@
+; p3-se-pcm-master's twin: the same :master written by fm1's part, which the
+; effect does not displace — track 0 here, as pcm1's part is there.
+(def-score :pcm-voices 2)
+(def-pcm pad :file "pad.wav" :loop-start 9ms :loop-end 36ms)
+(def-pcm blip :file "blip.wav")
+(def-fm v :alg 7 :fb 0 :ar1 31 :tl1 127 :ml1 1 :ar2 31 :tl2 127 :ml2 1 :ar3 31 :tl3 127 :ml3 1 :ar4 31 :tl4 0 :ml4 1)
+(fm1 :tempo 120 v :oct 3 :vel 12 :len 4 c c :master 0 c c c c)         ; track 0
+(pcm1 pad :mode loop :oct 4 :len 4 c c c c c c)                        ; track 1
+(def-se hit (pcm1 blip :mode loop :oct 5 :len 2 c))                    ; track 2

@@ -1705,6 +1705,13 @@ export class DrvPlayer {
     // Global targets first.
     if (target === TARGET_ID.MASTER) {
       this._master = value < 0 ? 0 : value > 31 ? 31 : value;
+      // Every channel takes it now, an effect's too: written by a part an
+      // effect displaced, its ghost is swapped out for the recompose, so the
+      // effect follows the song's fader as it does when any other part
+      // writes it; the ghost's levels take it at the restore (driver.md §2.5).
+      // mmlispseq.c param_set_ex.
+      const ghost = this._ghostCh;
+      if (ghost >= 0) this._ghostSwap(ghost);
       // Re-apply carrier TL on all FM channels; PSG att on sounding channels.
       for (let ch = 0; ch < 6; ch++) this._recomposeCarriers(ch);
       for (let p = 0; p < 4; p++) {
@@ -1713,6 +1720,7 @@ export class DrvPlayer {
       }
       // PCM: master rides the SUM (pcm-voices.js setMaster).
       this._pcm.setMaster(this._master);
+      if (ghost >= 0) this._ghostSwap(ghost);
       return;
     }
     if (VAL_TARGET_IDS.has(target)) {
