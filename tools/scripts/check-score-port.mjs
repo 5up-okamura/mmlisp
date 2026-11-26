@@ -231,7 +231,7 @@ const port = (src, to, rows, options) => {
 {
   // The ADPCM-B loops a sample's whole range: the loop is made the range.
   const r = port("(def-pcm pad :file \"pad.wav\" :loop-start 9ms :loop-end 36ms)\n(pcm1 :mode loop pad :len 2 c)", "pc88");
-  assert.match(r.text, /\(def-pcm pad :file "pad\.wav" :pcm-start 9ms :pcm-end 36ms :fx \[\(normalize\)\]\)/);
+  assert.match(r.text, /\(def-pcm pad :file "pad\.wav" :pcm-start 9ms :pcm-end 36ms\)/);
 }
 {
   // A sound effect is the Mega Drive driver's.
@@ -426,7 +426,8 @@ const port = (src, to, rows, options) => {
   assert.ok(!to("msx", { scc: false, fmpac: false }).fm1.choices.some((h) => /^(wave|fm)/.test(h)), "the PSG alone");
   // The PC-8801 without its board: three FM channels and the SSG.
   const opn = to("pc88", { sb2: false });
-  assert.deepEqual(["fm1", "fm2", "fm3", "fm4"].map((k) => opn[k].to), ["fm1", "fm2", "fm3", "drop"]);
+  // (Parts alike: the later channel goes.)
+  assert.deepEqual(["fm1", "fm2", "fm3", "fm4", "fm6"].map((k) => opn[k].to), ["fm1", "fm2", "fm3", "sqr1", "drop"]);
   assert.ok(!opn.fm1.choices.includes("fm4"));
   // ... its drums then on the SSG's noise, as the Game Boy's; the X68000
   // without PCM8 one ADPCM voice, the drums :prio layers on it.
@@ -638,38 +639,51 @@ const port = (src, to, rows, options) => {
   assert.doesNotMatch(toKitByEar.text, /def-pcm/, "the samples' defs go with their names");
   // …and with nothing heard, a sample of a name that says nothing has no role there.
   assert.equal(portScore(`(def-score :target x68k)\n(def-pcm smp-a :file "a.wav")\n(pcm1 smp-a :len 8 c c)`, "msx").map.pcm1, "drop");
-  // The samples beside the melody as on the source, as near as the machine
-  // allows without the song playing quieter (part-levels.js): onto the Mega
-  // Drive, whose DAC sits far lower over its FM than the X68000's ADPCM, the
-  // FM comes down — no further than the Mega Drive plays it louder — and
-  // the samples are limited; a sample's own headroom takes some of it back;
-  // onto a machine whose samples sit higher, the samples come down instead.
+  // The levels a conversion sets are by ear, and only where needed: the
+  // score's own samples carried over take the machine's gain where its DAC
+  // is weak (md 6, pce 9), the PC Engine's waves beside them :vel+ -4, and
+  // a square playing an FM part :vel+ -4 (md, pc88). presets/rx5's kit
+  // standing in for a rhythm is loud enough: nothing beside it.
   const mixSrc = `(def-score :target x68k)
 (def-fm lead init-fm :alg 7 :tl1 0 :tl2 127 :tl3 127 :tl4 127)
 (def-pcm smp-k :file "a.wav")
 (fm1 lead :len 4 c e g c)
 (pcm1 smp-k :len 4 c c c c)`;
-  const LV = (await import("../../live/src/machine/part-levels.js")).PART_LEVELS;
-  const want = (to, room = 0) => (LV.x68k.fm - LV.x68k.sample - room) - (LV[to].fm - LV[to].sample);
-  const louder = (to) => Math.max(0, LV[to].fm - LV.x68k.fm);
-  assert.ok(want("md") < -louder("md"), "the Mega Drive cannot reach the balance by lowering alone");
-  const drum = new Map([["smp-k", "kick"]]);
-  const mdMix = portScore(mixSrc, "md", { heard: drum });
-  const mdSteps = Math.round(Math.max(want("md") + 3, -louder("md")) / 2);
-  assert.match(mdMix.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${mdSteps}\\)`), mdMix.text);
-  assert.match(mdMix.text, /:fx \[\(normalize\) \(gain 6\) \(limit\)\]/, "the samples limited");
-  assert.match(portScore(mixSrc, "md").text, /:fx \[\(normalize\)\]/, "a sample not known as a drum is not limited (a pad would be squashed)");
-  assert.ok(mdSteps >= -Math.round(louder("md") / 2) - 0, "no further down than the Mega Drive plays it louder");
-  const mdRoom = portScore(mixSrc, "md", { heard: drum, peaks: new Map([["smp-k", -12]]) });
-  const roomSteps = Math.round(Math.max(want("md", -12) + (want("md", -12) < -louder("md") ? 3 : 0), -louder("md")) / 2);
-  assert.ok(roomSteps > mdSteps, "less, by the sample's headroom");
-  assert.match(mdRoom.text, new RegExp(`\\(def-mod :ch fm1 :vel\\+ ${roomSteps}\\)`), mdRoom.text);
-  const pcMix = portScore(mixSrc, "pc88", { peaks: new Map([["smp-k", -12]]) });
-  assert.ok(want("pc88", -12) > 2, "the PC-8801's ADPCM-B is the louder: the melody would have to go up");
-  assert.match(pcMix.text, new RegExp(`\\(def-mod :voice smp-k :vel\\+ ${-Math.round(want("pc88", -12) / 2)}\\)`), pcMix.text);
-  assert.match(pcMix.text, /:fx \[\(normalize\)\]/, "the samples' def as written, but for the normalize");
-  assert.doesNotMatch(pcMix.text, /def-mod :ch|limit/, "the melody as it was, the samples not limited");
+  const mdMix = portScore(mixSrc, "md");
+  assert.match(mdMix.text, /\(def-pcm smp-k :file "a\.wav" :fx \[\(gain 6\)\]\)/, "the samples take the Mega Drive's gain");
+  assert.doesNotMatch(mdMix.text, /def-mod/, "the Mega Drive's FM as it was");
+  const eight = mixSrc.replace("(pcm1", [2, 3, 4, 5, 6, 7, 8].map((n) => `(fm${n} :len 4 c e g c)\n`).join("") + "(pcm1");
+  const mdEight = portScore(eight, "md");
+  const squares = Object.values(mdEight.map).filter((h) => /^sqr/.test(h)).sort();
+  assert.ok(squares.length > 0, JSON.stringify(mdEight.map));
+  assert.match(mdEight.text, new RegExp(`\\(def-mod :ch ${squares.length > 1 ? `\\[${squares.join(" ")}\\]` : squares[0]} :vel\\+ -4\\)`), mdEight.text);
+  assert.doesNotMatch(portScore("(fm1 :len 4 c e g c)\n(sqr1 :len 4 c e g c)", "md").text, /def-mod/, "a square of the score's own as it was");
+  const pceMix = portScore(mixSrc, "pce");
+  assert.match(pceMix.text, new RegExp(`\\(def-mod :ch ${pceMix.map.fm1} :vel\\+ -4\\)`), pceMix.text);
+  assert.match(pceMix.text, /:fx \[\(gain 9\)\]/, "the PC Engine's gain");
+  const kit = portScore("(def-score :target msx)\n(fm1 :len 4 c e g c)\n(rhythm1 kick :len 4 c c)\n(rhythm2 snare :len 4 _ c)", "pce");
+  assert.match(kit.text, /\(import "presets\/rx5\/set\.mmlisp"\)/, kit.text);
+  assert.doesNotMatch(kit.text, /def-mod|:fx/, "beside presets/rx5's kit: nothing");
+  for (const to of ["pc88", "x68k", "fc"]) assert.doesNotMatch(portScore(mixSrc, to).text, /def-mod|\(gain/, `onto ${to}: nothing`);
+  // The PC-8801's SSG as the Mega Drive's squares: one playing an FM part -4.
+  const pcSquares = Object.values(portScore(eight, "pc88").map).filter((h) => /^sqr/.test(h)).sort();
+  assert.ok(pcSquares.length > 0);
+  assert.match(portScore(eight, "pc88").text, new RegExp(`\\(def-mod :ch ${pcSquares.length > 1 ? `\\[${pcSquares.join(" ")}\\]` : pcSquares[0]} :vel\\+ -4\\)`));
+  const msx = portScore("(def-score :target msx)\n(fm1 :len 4 c e g c)\n(rhythm1 kick :len 4 c c)\n(rhythm2 snare :len 4 _ c)\n(noise :len 8 c c c c)", "x68k");
+  assert.doesNotMatch(msx.text, /def-mod|:fx/, msx.text);
+  assert.deepEqual(compile(msx.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "it compiles");
   assert.doesNotMatch(portScore(mixSrc.replace(/\n\(pcm1[^\n]*/, ""), "md").text, /def-mod/, "no samples, no balance to keep");
+  // Of the lowest parts the bass is the one whose line stays low: a louder
+  // part that starts there and climbs (Asuka 120%'s fm4 beside its fm7) is
+  // not it.
+  const climb = portScore(`(def-score :target x68k)
+(def-pcm smp-k :file "a.wav")
+(fm1 :oct 5 :len 8 c d e f g a b > c d e)
+(fm2 :oct 5 :len 8 e f g a b > c d e f g)
+(fm4 :vel 15 :oct 3 :len 8 e e e e e e > > b > c d e)
+(fm5 :vel 12 :oct 3 :len 8 d d d d d d d d d d)
+(pcm1 smp-k :len 4 c c c c)`, "pce");
+  assert.ok(climb.said.some((w) => /^fm5 is the bass/.test(w)), climb.said.join("\n"));
   // The score's bass — the melodic part sitting a fifth or more under the
   // rest — is kept before busier parts, and on a machine with a bass channel
   // (the 2A03's triangle, the Game Boy's wave) plays there.
@@ -769,18 +783,19 @@ const port = (src, to, rows, options) => {
 (pcm1 :len 4 custom-lead c bottom-bass c chat-voice c kick2 c)`, "gb");
   const nz = notDrums.text.slice(notDrums.text.indexOf("(noise"));
   assert.match(nz, /\(noise :len 4 _ _ _ noise-kick :oct 4 :gate 5f a\)/, `only kick2 a drum: ${nz}`);
-  // A sample onto another machine plays at its peak: its own :fx chain
-  // ends in (normalize), a variant takes its base's, an existing one stays.
+  // A sample onto a machine whose samples sit low takes its gain, one for
+  // every sample (their balance kept): its own :fx chain ends in (gain N),
+  // a variant takes its base's.
   const loud = port(`(def-pcm kick :file "a.wav")
 (def-pcm snare :file "b.wav" :fx [(gain 3) (hpf 100)])
 (def-pcm kick-hot kick :fx [(gain 6)])
 (def-pcm hat :file "c.wav" :fx [(normalize :peak -3)])
 (pcm1 kick :len 4 c snare c kick-hot c hat c)`, "pce");
-  assert.match(loud.text, /\(def-pcm kick :file "a\.wav" :fx \[\(normalize\)\]\)/);
-  assert.match(loud.text, /\(def-pcm snare :file "b\.wav" :fx \[\(gain 3\) \(hpf 100\) \(normalize\)\]\)/);
-  assert.match(loud.text, /\(def-pcm kick-hot kick :fx \[\(gain 6\) \(normalize\)\]\)/, "a variant with an :fx of its own (which replaces its base's) is normalized too");
+  assert.match(loud.text, /\(def-pcm kick :file "a\.wav" :fx \[\(gain 9\)\]\)/);
+  assert.match(loud.text, /\(def-pcm snare :file "b\.wav" :fx \[\(gain 3\) \(hpf 100\) \(gain 9\)\]\)/);
+  assert.match(loud.text, /\(def-pcm kick-hot kick :fx \[\(gain 6\) \(gain 9\)\]\)/, "a variant with an :fx of its own (which replaces its base's) takes it too");
   assert.match(port(`(def-pcm kick :file "a.wav")\n(def-pcm kick-soft kick)\n(pcm1 kick-soft :len 4 c)`, "pce").text, /\(def-pcm kick-soft kick\)/, "a variant without takes its base's");
-  assert.match(loud.text, /\(def-pcm hat :file "c\.wav" :fx \[\(normalize :peak -3\)\]\)/, "a normalize of its own stays");
+  assert.match(loud.text, /\(def-pcm hat :file "c\.wav" :fx \[\(normalize :peak -3\) \(gain 9\)\]\)/, "after a chain's own normalize");
   // The PC Engine's drivers stream samples on one channel: a score's drum
   // rows are :prio layers on it, the kick and snare over the hats, each
   // hit its own sample; the wave channels stay the melody's.

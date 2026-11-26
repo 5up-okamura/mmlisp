@@ -42,7 +42,6 @@ import { opllRomVoices, romVoicesAs4op, opllWordsAs4op } from "../machine/chips/
 import * as fcApu from "../machine/chips/rp2a03.js";
 import * as gbApu from "../machine/chips/lr35902.js";
 import * as pcePsg from "../machine/chips/huc6280.js";
-import { PART_LEVELS } from "../machine/part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "../ir/pitch.js";
 import { expandLoops } from "../ir/timing.js";
@@ -272,11 +271,17 @@ function drumRank(h, heard = null) {
   return ranks.length ? Math.min(...ranks) : 4;
 }
 
-// A sample limited where a machine's samples come up short: driven into a
-// limiter by LIMIT_DRIVE_DB, drums come out ~LIMIT_LIFT_DB louder at the
-// same peak (measured on an MDX's PDX; more drive gains little).
-const LIMIT_DRIVE_DB = 6;
-const LIMIT_LIFT_DB = 3;
+// The levels a conversion sets, by ear, only where a machine needs them.
+// SAMPLE_GAIN_DB: the score's own samples, carried over, are too quiet on a
+// machine whose DAC is weak — one gain (dB) on every one, so they keep their
+// balance with each other (what overshoots clips at the bake); presets/rx5's
+// kit, standing in for a rhythm, is loud enough as it is. BESIDE_PCM_VEL:
+// the channels too loud beside those samples, a def-mod :vel+ (the PC
+// Engine's waves). SQUARE_FOR_FM_VEL: a square playing an FM part, loud
+// beside the FM (the Mega Drive's PSG, the PC-8801's SSG).
+const SAMPLE_GAIN_DB = { md: 6, pce: 9 };
+const BESIDE_PCM_VEL = { pce: { wave: -4 } };
+const SQUARE_FOR_FM_VEL = { md: -4, pc88: -4 };
 
 // A song's bass line: the melodic part sitting this far (semitones) under
 // the next lowest, by the median note (import-to-midi.js LOW_APART).
@@ -502,7 +507,8 @@ function planRows(s, from, to, loopOf = () => null) {
   const statsOf = () => {
     if (stats) return stats;
     stats = new Map();
-    const middle = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const at = (xs, q) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length * q)];
+    const middle = (xs) => at(xs, 0.5);
     // A channel's tracks (its :prio layers) together; a def-se's are the
     // game's effects, not the song.
     const raw = new Map();
@@ -527,13 +533,16 @@ function planRows(s, from, to, loopOf = () => null) {
         for (const m of r.keys) count.set(m, (count.get(m) ?? 0) + 1);
         // `one`: the share of its notes on its commonest pitch (a drum on FM
         // hits one: Actraiser's FM6 kick, every note at c1).
-        stats.set(k, { notes: r.keys.length, mid: middle(r.keys), len: middle(r.lens), level: middle(r.levels), sounds: r.lens.reduce((a, x) => a + x, 0), one: Math.max(...count.values()) / r.keys.length });
+        stats.set(k, { notes: r.keys.length, mid: middle(r.keys), high: at(r.keys, 0.9), len: middle(r.lens), level: middle(r.levels), sounds: r.lens.reduce((a, x) => a + x, 0), one: Math.max(...count.values()) / r.keys.length });
       }
     return stats;
   };
   // The bass: the lowest parts — those within BASS_TOGETHER of the lowest,
   // a bass line doubled (an MSX song's FM bass and its SCC copy) — sitting
-  // BASS_APART under every other; of them the loudest, then the busiest.
+  // BASS_APART under every other; of them the one whose line stays lowest
+  // (its `high`, the top of its notes: a part that only starts low and climbs
+  // is no bass — Asuka 120%'s fm4 beside its fm7), then the loudest, then
+  // the busiest. A copy is a part whose top is the bass's too.
   s.bassGroup = [];
   const bassRow = () => {
     if (s.bass !== null) return s.bass || null;
@@ -547,8 +556,8 @@ function planRows(s, from, to, loopOf = () => null) {
     const group = mids.filter(([m]) => m - mids[0][0] <= BASS_TOGETHER);
     const next = mids[group.length];
     if (!next || next[0] - mids[0][0] < BASS_APART || mids[0][0] >= BASS_UNDER) return null;
-    s.bassGroup = group.map(([, k]) => k);
-    s.bass = [...s.bassGroup].sort((a, b) => st.get(b).level - st.get(a).level || st.get(b).notes - st.get(a).notes)[0];
+    s.bass = group.map(([, k]) => k).sort((a, b) => st.get(a).high - st.get(b).high || st.get(b).level - st.get(a).level || st.get(b).notes - st.get(a).notes)[0];
+    s.bassGroup = group.map(([, k]) => k).filter((k) => st.get(k).high - st.get(s.bass).high <= BASS_TOGETHER);
     return s.bass;
   };
   // The song's melody: of the parts that move in a tune's note lengths (a
@@ -657,8 +666,8 @@ function planRows(s, from, to, loopOf = () => null) {
     const own = (g) => ownRows.has(g);
     // A row with no notes (a form of words and rests) goes before any that
     // sounds: a channel of the machine's own kind is no reason to keep it.
-    // Among samples, the drums' order.
-    const order = (a, b) => ((notes(a) > 0) - (notes(b) > 0)) || (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : own(a) - own(b)) || (notes(a) - notes(b));
+    // Among samples, the drums' order; parts alike, the later channel.
+    const order = (a, b) => ((notes(a) > 0) - (notes(b) > 0)) || (isCopy(b) - isCopy(a)) || (isBass(a) - isBass(b)) || (isMelody(a) - isMelody(b)) || (samples(a) && samples(b) ? rankOf(b) - rankOf(a) : own(a) - own(b)) || (notes(a) - notes(b)) || (keys.indexOf(b[0]) - keys.indexOf(a[0]));
     for (const g of [...groups.values()].sort(order).slice(0, groups.size - Math.max(0, room)))
       for (const k of g) dest[k] = (samples(g) || noises(g)) && room > 0 ? "layer" : "drop";
   }
@@ -810,9 +819,8 @@ function planRows(s, from, to, loopOf = () => null) {
  *   options: the machine as it is had (portRows)
  * @returns {{text: string, map: Record<string,string>, said: string[]} | {error: string}}
  */
-export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null, peaks = null, options = {} } = {}) {
+export function portScore(text, toName, { rows = {}, imports = null, header = true, names = {}, heard = null, options = {} } = {}) {
   const plan = planFor(text, toName, imports, heard, options);
-  if (plan.s) plan.s.peaks = peaks ?? new Map();
   if (plan.error) return { error: plan.error };
   const from = TARGETS[plan.from];
   const to = plan.target;
@@ -916,7 +924,7 @@ class Porter {
     this.setupLfo();
     this.userVoice = this.pickUserVoice();
     this.layerPrio = this.placeLayers();
-    this.mix = this.mixBalance();
+    this.mix = this.mixLevels();
     // Drums onto a ROM kit the user brings (the PC-8801's rhythm): without
     // the ROM the score's samples under the roles' names stand in, so a
     // score with none for the roles it plays takes presets/rx5's, as a
@@ -1025,7 +1033,7 @@ class Porter {
       else if (head === "def-score") replace(n, this.defScore(n));
       else if (head === "def-fm") replace(n, this.defFm(n));
       else if (head === "def-wave") replace(n, this.defWave(n));
-      else if (head === "def-pcm") replace(n, this.louder(n, this.defPcm(n)));
+      else if (head === "def-pcm") replace(n, this.sampleGain(n, this.defPcm(n)));
       else if (head === "def-mod") replace(n, this.defMod(n));
       else if (head === "def-se") {
         this.say(`def-se ${n.items[1]?.value ?? ""}: a sound effect is the Mega Drive driver's; taken out`);
@@ -1198,9 +1206,8 @@ class Porter {
     if (this.needsWaves && !imported(WAVETABLE_SET)) lines.push(`(import "${WAVETABLE_SET}")`);
     lines.push(...this.envDefs.values());
     lines.push(...opDefs);
-    // The mix kept (mixBalance): a channel's notes moved by a def-mod.
-    for (const [n, hs] of this.mix?.steps ?? []) lines.push(`(def-mod :ch ${hs.length > 1 ? `[${hs.join(" ")}]` : hs[0]} :vel+ ${n}) ; beside the samples, as on the ${this.from.system}`);
-    if (this.mix?.gain) lines.push(`(def-mod :voice ${this.mix.samples.length > 1 ? `[${this.mix.samples.join(" ")}]` : this.mix.samples[0]} :vel+ ${-this.mix.gain}) ; the samples beside the melody, as on the ${this.from.system}`);
+    // The levels by ear (mixLevels): a channel's notes moved by a def-mod.
+    for (const [n, hs] of this.mix ?? []) lines.push(`(def-mod :ch ${hs.length > 1 ? `[${hs.join(" ")}]` : hs[0]} :vel+ ${n}) ; as heard on the ${this.to.system}`);
     if (!this.s.roots.some((n) => isList(n, "def-score"))) lines.unshift(`(def-score :target ${this.to.name}${this.pcmVoices() ? ` :pcm-voices ${this.pcmVoices()}` : ""})`);
     let head = "";
     let body = out;
@@ -1400,77 +1407,17 @@ class Porter {
     return this.renderList(n, outs);
   }
 
-  // The score's samples beside its melody, as near as the machine allows
-  // without the song playing quieter than it did: each machine's parts at
-  // full level (part-levels.js) differ — the X68000's ADPCM 17 dB over its
-  // FM, the Mega Drive's DAC one FM channel's — so where the samples come
-  // up short they are limited (louder in loudness at the same peak, ~3 dB
-  // on drums: LIMIT_LIFT_DB) and a melodic track comes down — but only as
-  // far as the machine plays it louder than the source did, never under
-  // the level it had. A track that would have to go up takes the rest down
-  // instead, the samples too. Every move is a `def-mod … :vel+ N` line (2
-  // dB a step), one a step — the tracks' by :ch, the samples' by :voice —
-  // so the score's own notes and defs stay as written. `peaks`: the
-  // samples' own headroom, which the normalize lifts them by.
-  mixBalance() {
-    const L = (t, kind) => PART_LEVELS[t]?.[kind === "noise" ? "tone" : kind];
-    const from = this.from.name, to = this.to.name;
-    const sampleRows = this.onto("sample", { kit: false }).filter(([k]) => this.from.partOf(splitHead(k))?.kind === "sample");
-    if (!sampleRows.length || L(from, "sample") == null || L(to, "sample") == null) return null;
-    const played = [...new Set(sampleRows.flatMap(([k]) => [...(this.s.heads.get(splitHead(k))?.samples ?? [])]))];
-    const known = played.map((n) => this.s.peaks?.get(n)).filter((x) => x != null).sort((a, b) => a - b);
-    const room = known.length ? Math.min(0, known[Math.floor(known.length / 2)]) : 0;
-    // Each melodic track: where it must go to sit over the samples as at
-    // the source (+ up, − down), and how much louder the machine plays it.
-    const want = new Map(), louder = new Map();
-    for (const [k, h] of Object.entries(this.map)) {
-      if (h === "drop") continue;
-      const sk = isSplit(k) ? "noise" : this.from.partOf(k)?.kind, dk = this.to.partOf(h)?.kind;
-      if (!["fm", "tone", "wave", "noise"].includes(sk) || !["fm", "tone", "wave", "noise"].includes(dk)) continue;
-      const a = L(from, sk), b = L(to, dk);
-      if (a == null || b == null) continue;
-      want.set(h, a - L(from, "sample") - room - (b - L(to, "sample")));
-      louder.set(h, Math.max(0, b - a));
-    }
-    if (!want.size) return null;
-    // Short: a track that cannot come down far enough for the balance
-    // (further than the machine plays it louder): the samples are limited.
-    const limit = [...want].some(([h, d]) => d < -louder.get(h));
-    const move = new Map([...want].map(([h, d]) => [h, Math.max(d + (limit ? LIMIT_LIFT_DB : 0), -louder.get(h))]));
-    const up = Math.max(0, ...move.values());
-    const steps = new Map();
-    for (const [h, d] of move) {
-      const n = Math.round((d - up) / VEL_DB_PER_STEP);
-      if (n) steps.set(n, [...(steps.get(n) ?? []), h]);
-    }
-    // The samples' own move, in :vel steps too (a def-mod on their names).
-    const gain = Math.round(up / VEL_DB_PER_STEP);
-    const samples = gain ? played : [];
-    if (!steps.size && !gain && !limit) return null;
-    const left = Math.max(0, ...[...want].map(([h, d]) => -(d + (limit ? LIMIT_LIFT_DB : 0)) - louder.get(h)));
-    this.say(`the samples beside the melody as on the ${this.from.system}: the ${this.to.system}'s parts play at other levels (part-levels.js)${limit ? "; the samples limited (louder, the same peak)" : ""}${steps.size ? `; ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod, no further than the ${this.to.system} plays them louder)` : ""}${gain ? `; the samples :vel+ ${-gain}` : ""}${left > 1 ? `; still ${Math.round(left)} dB under, the song not made quieter for it` : ""}`);
-    return { steps, gain, samples, limit };
-  }
-
-  // A sample onto another machine plays at its peak (`:fx` … (normalize)):
-  // the machine's sample output is its own — the Mega Drive's DAC one FM
-  // channel's level, the PC Engine's DDA 5 bits — and a sample left at the
-  // level it had beside the other's chips sinks under them (an MDX's drums
-  // on the Mega Drive: the kick alone was heard). One of its own :file only;
-  // a variant of it takes its base's.
-  louder(n, text) {
+  // A sample onto a machine whose DAC is weak takes its gain (`:fx` …
+  // (gain N), SAMPLE_GAIN_DB): one of its own :file, or a variant with an
+  // :fx of its own (which replaces its base's chain); one without takes its
+  // base's.
+  sampleGain(n, text) {
+    const db = SAMPLE_GAIN_DB[this.to.name];
     const onSamples = this.onto("sample", { kit: false }).length > 0;
-    // A def of its own :file, or a variant with an :fx of its own (which
-    // replaces its base's chain, normalize and all); one without takes its
-    // base's. Limited only where it is a drum (a name or a sound that says
-    // so): a pad driven into a limiter is squashed, and the lift was
-    // measured on hits.
     const own = n.items.some((x) => x.value === ":file") || n.items.some((x) => x.value === ":fx");
-    if (!onSamples || !own || /\(normalize\b/.test(text)) return text;
-    const name = n.items[1]?.value;
-    const drum = rankOfName(name) != null || this.s.heard?.has(name);
-    const tail = ` (normalize)${this.mix?.limit && drum ? ` (gain ${LIMIT_DRIVE_DB}) (limit)` : ""}`;
-    if (!this.saidLouder) { this.saidLouder = true; this.say(`the samples play at their peak on the ${this.to.system} (:fx … (normalize)): its sample output is its own, not the ${this.from.system}'s`); }
+    if (!db || !onSamples || !own) return text;
+    const tail = ` (gain ${db})`;
+    if (!this.saidGain) { this.saidGain = true; this.say(`the samples ${db} dB louder on the ${this.to.system} (:fx … (gain ${db})): its DAC is weak`); }
     const fx = text.match(/:fx\s*\[/);
     if (fx) {
       // The chain's closing bracket: the first ] past :fx [ at its depth.
@@ -1482,6 +1429,30 @@ class Porter {
       return text;
     }
     return text.replace(/\)\s*$/, ` :fx [${tail.trim()}])`);
+  }
+
+  // The levels by ear: a square playing an FM part (SQUARE_FOR_FM_VEL), and
+  // the channels beside the score's own samples carried over
+  // (BESIDE_PCM_VEL) — not beside presets/rx5's kit, loud enough as it is.
+  mixLevels() {
+    const to = this.to.name;
+    const kindOf = (h) => this.to.partOf(h)?.kind;
+    const srcKind = (k) => (isSplit(k) ? "noise" : this.from.partOf(splitHead(k))?.kind);
+    const rows = Object.entries(this.map).filter(([, h]) => h !== "drop" && kindOf(h));
+    const carried = rows.some(([k, h]) => kindOf(h) === "sample" && [...(this.s.heads.get(splitHead(k))?.samples ?? [])].some((n) => this.s.ownSamples.has(n)));
+    const melodic = ["fm", "tone", "wave", "noise"];
+    const vel = new Map();
+    for (const [k, h] of rows) {
+      if (!melodic.includes(srcKind(k)) || !melodic.includes(kindOf(h))) continue;
+      const kind = kindOf(h) === "noise" ? (this.to.parts.some((p) => p.kind === "wave") ? "wave" : "tone") : kindOf(h);
+      const n = (srcKind(k) === "fm" && kindOf(h) === "tone" ? SQUARE_FOR_FM_VEL[to] : undefined) ?? (carried ? BESIDE_PCM_VEL[to]?.[kind] : undefined);
+      if (n) vel.set(h, n);
+    }
+    if (!vel.size) return null;
+    const steps = new Map();
+    for (const [h, n] of vel) steps.set(n, [...(steps.get(n) ?? []), h]);
+    this.say(`levels by ear on the ${this.to.system}: ${[...steps].map(([n, hs]) => `${hs.join(" ")} :vel+ ${n}`).join(", ")} (def-mod)`);
+    return steps;
   }
 
   // `:ch` names channels: the ones the rows moved, the dropped ones out.

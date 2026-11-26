@@ -1153,7 +1153,7 @@
     import { renderModel, RATE as FM_MODEL_RATE } from './src/machine/chips/fm-model.js';
     import { analyzeTracker, defaultTrackerOptions, trackerToMmlisp, trackerDests } from './src/import/import-tracker.js';
     import { parseMidi, analyzeMidi, defaultMidiOptions, midiToMmlisp, midiDests, GRIDS } from './src/import/import-midi.js';
-    import { chipScoreToMidi, heardRoles, samplePeaks } from './src/import/import-to-midi.js';
+    import { chipScoreToMidi, heardRoles } from './src/import/import-to-midi.js';
     import { VOL_UNITY, levelGain } from './src/ir/levels.js';
 import { pitchToMidi } from './src/ir/pitch.js';
 import { macroFrames } from './src/ir/timing.js';
@@ -2725,7 +2725,7 @@ import { channelForms } from './src/lang/score-text.js';
     // whose name says nothing — which keeps a channel when they are short.
     async function portImported(res, target, { fileName, rows = undefined, names = undefined, header = false }) {
       const imports = await readImportSources(res.source, mmlispName(fileName));
-      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), peaks: samplePeaks(res.pcm), options: machineOptionsOf(target) });
+      const out = portScore(res.source, target, { rows, imports, header, names, heard: heardRoles(res.pcm), options: machineOptionsOf(target) });
       if (out.error) throw new Error(out.error);
       return out;
     }
@@ -3584,8 +3584,8 @@ import { channelForms } from './src/lang/score-text.js';
       const choices = withMidi(near, from);
       const imports = _importSources;
       // The score's samples by their sound, as the import heard them.
-      let heard = null, peaks = null;
-      try { const pcm = await scorePcm(_lastGoodIR); heard = heardRoles(pcm); peaks = samplePeaks(pcm); } catch { /* by their names alone */ }
+      let heard = null;
+      try { const pcm = await scorePcm(_lastGoodIR); heard = heardRoles(pcm); } catch { /* by their names alone */ }
       const rowsFor = (target) => (target === from ? [] : conversionRows(text, target, { imports, heard }));
       const got = await showImportDialog({
         title: 'Convert to Machine',
@@ -3608,7 +3608,7 @@ import { channelForms } from './src/lang/score-text.js';
           out = res.source.replace(/^; Imported from [^\n]*/, `; Converted from :target ${from}, through its MIDI`);
           said = res.warnings;
         } else {
-          const res = portScore(text, to, { rows: got.rows, imports, heard, peaks, options: machineOptionsOf(to) });
+          const res = portScore(text, to, { rows: got.rows, imports, heard, options: machineOptionsOf(to) });
           if (res.error) throw new Error(res.error);
           out = res.text;
           said = res.said;

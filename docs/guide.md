@@ -2721,15 +2721,17 @@ machine's channels or dropped:
   longest part plays once (a bar of drums under a melody of many bars). A square is a square on every machine, so onto a machine of
   squares (the Famicom, the Game Boy) a song's squares and its FM parts
   count their notes alike. The song's bass — the part whose
-  notes sit a fifth or more under every other's (a line doubled at the
-  bottom counts as one: the louder part is the bass, its copy the first to
-  go) — is kept before them all,
+  notes sit a fifth or more under every other's (of the parts down there,
+  the one whose line stays lowest: a part that starts low and climbs is
+  not it; a line doubled at the bottom counts as one, the louder part the
+  bass, its copy the first to go) — is kept before them all,
   and on a machine with a channel for a bass line (the Famicom's triangle,
   the Game Boy's wave) plays there. Then the melody — of the parts moving
   in a tune's note lengths (not a run of 32nds), the loudest, or of the
   loudest the one clearly highest — before every other part, even one of
   the machine's own kind (an MSX song's FM lead onto the PC Engine, before
-  its SCC parts). Parts alike name no melody. The log names both.
+  its SCC parts). Parts alike name no melody. The log names both. Of
+  parts with as many notes, the later channel goes first.
 - Drums and samples past a machine's sample channels are not dropped: the
   beat's (the kick, the snare) keep a channel each, and the rest share one
   as `:prio` layers in the drums' order — a snare is kept before the hats
@@ -2753,18 +2755,16 @@ machine's channels or dropped:
   plays a drum track on it: each sample as the kit's role it is named or
   sounds as (an MDX's samples by their sound: kick, snare, tom, top
   cymbal, hat).
-- A score's samples sit beside its melody as near to the source's balance
-  as the machine allows without the song playing quieter: each machine's
-  parts play at their own levels (the X68000's ADPCM far over its FM, the
-  Mega Drive's DAC one FM channel's). Where the samples come up short they
-  are limited (`(gain 6) (limit)` after their normalize: louder, the same
-  peak) and the melodic channels come down by `def-mod :ch […] :vel+ N`
-  lines — but no further than the machine plays them louder than the
-  source did; the log says what is still missing. Where the melody would
-  have to go up, the samples come down instead, by a `def-mod :voice […]
-  :vel+ N` line. The score's own notes and defs stay as written (the
-  normalize and the limiter are the samples' `:fx`); delete the lines to
-  undo it.
+- A conversion sets levels only where a machine needs them, by ear. The
+  score's own samples, carried over, are too quiet on a machine whose DAC
+  is weak: every one takes one gain, so they keep their balance with each
+  other — `:fx […(gain 6)]` on `md`, `(gain 9)` on `pce` (what overshoots
+  clips) — and the PC Engine's waves, loud beside them, come down by a
+  `def-mod :ch […] :vel+ -4` line. A square playing an FM part (the Mega
+  Drive's PSG, the PC-8801's SSG) comes down `-4` too. presets/rx5's kit, standing in for a rhythm, is
+  loud enough: nothing changes beside it, and onto another machine nothing
+  does. The score's own notes and defs stay as written; delete the lines
+  to undo it.
 - The PC Engine's drivers stream samples on one channel, so a score's drum
   and sample parts all go onto one DDA channel as `:prio` layers (§ Channel
   forms, language.md §1), a `:prio` each: the kick and snare first, then
