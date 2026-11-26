@@ -78,10 +78,6 @@ Open:
   floor (said; split per octave if a score needs it).
 - On pce / gb a wave row beats a noise row in three surveyed songs.
 - Noise layers onto x68k give W_SONG_WRITE_RACE (one AY noise rate).
-- The conversions' voices and drums are chosen, not tuned by ear; a stand-in
-  beside a song's own FM on x68k keeps the preset's level.
-- The song-import dialogs' machine boxes not checked in a browser (Convert
-  to Machine was).
 
 Test material (outside the repo): the user's Dropbox GameDev/VGM/Downloads
 (VGM, MDX, MGS, mucom88, MIDI, NSF, .dmf); DTWNB MDX set; BF_4TH.MGS;
@@ -114,23 +110,16 @@ pcmt13.muc; Koshiro's sampl1–3.muc (onitama/mucom88 `package/`, CC BY-NC-SA).
 
 ## Open per machine
 
-- **pce**: Bad Dudes since the `:wave` macro not heard in Live; its channel 6
-  differs by its duty flicker (roadmap).
-- **fc**: no VGM player has checked the 0xB4 output; every render starts
-  with a click (likely the DMC's $4011 init); Kirby 03 SQ1 holds a staccato
-  note 50 frames long; Kirby's DPCM not A/B'd. Furnace NES demos, module
-  DPCM, fixed arps and the level line not heard against Furnace. The curve
-  option `:duty` is 1–255 while the track word is sixteenths (raise if it
+- **pce**: Bad Dudes' channel 6 differs by its duty flicker (roadmap).
+- **fc**: every render starts with a click (likely the DMC's $4011 init);
+  Kirby 03 SQ1 holds a staccato note 50 frames long. The curve option
+  `:duty` is 1–255 while the track word is sixteenths (raise if it
   confuses).
-- **fc expansions**: only the VRC6 and the FDS heard in Live; their levels
-  against the 2A03 are choices; every chip at once clips.
+- **fc expansions**: every chip at once clips.
 - **NSF**: the 6502's cycles are not bus-exact; $4015 and the FDS's other
   registers read back 0; VRC6 / N163 notes are keyed by level; $9003's
   shift is not followed; Parodius #03's DMC is 92 frames short.
-- **msx**: a live edit or key preview over a song channel (`opllHoldBus`)
-  checked in node only, not by ear.
-- **gb**: the VGM not run on libvgm's sameboy_apu.c / gb_mame.c;
-  `MASTER_OUTPUT_GAIN` a choice; an old-INST .fur (< 127) loses its
+- **gb**: an old-INST .fur (< 127) loses its
   envelope sequence; Furnace demos Pleasure_of_Tension, spreadtro, lagtrain,
   freedom differ in pitch, not looked into.
 - **Layering pass leftovers**: the IR player's sample voices still branch by

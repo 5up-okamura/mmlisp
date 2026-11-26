@@ -1126,8 +1126,8 @@ at the rate your `pcm-voices` picks, with the same 6 dB level steps and the
 same loop rounding. A sample that sounds dull or stepped in the editor will
 sound that way on the Mega Drive, and the other way round.
 
-**Drag a `.wav` onto the live editor** and its `def` is written for you at the
-cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
+**Drag a `.wav` onto the live editor** (or pick it with `File > Import >
+Instruments…`) and its `def` is written for you at the cursor. Drag it out of the folder you opened with `File > Open Folder…` and the
 `:file` path is the right relative one; drag it from anywhere else and the def
 gets the bare file name — it plays straight away from memory, but only survives
 a reload once the wav actually sits next to the score.
@@ -1667,11 +1667,15 @@ names, or open the score's folder with `File > Open Folder…`.
 
 ## 23. Dragging files into the live app
 
-Drop files anywhere on the window. They are routed by extension — the same
-formats `File > Open…` and `File > Import` accept: a song opens as a new
-document, and `Instruments…` inserts voices and drum kits at the cursor (not on a
-`:target midi` score, whose instruments are its `:prog` programs; a voice or
-a sample dropped on one is turned away):
+Drop files anywhere on the window. Each kind of file does what it does from
+the menus: what `File > Open…` takes opens as the document — a score, an
+`.mmb`, a song, an archive — and what `File > Import > Instruments…` takes
+goes in at the cursor. Dropped together, the one document opens first, with
+what a song takes beside it (an `.mdx`'s `.pdx`, a `.muc`'s `.dat` /
+`.bin`), and the rest goes in at its cursor; a second document is left out
+(a second score goes in as an `(import "…")` line). A `:target midi` score
+takes no instruments — its are its `:prog` programs — so a voice or a sample
+dropped on one is turned away:
 
 | Dropped                            | Result                                                    |
 | ---------------------------------- | --------------------------------------------------------- |
@@ -1682,15 +1686,15 @@ a sample dropped on one is turned away):
 | `.wav`                             | inserts a sample def (§19)                                 |
 | `.dmp` `.fui` `.tfi` `.vgi` `.opni` | inserts the FM voice def                                  |
 | `.opm`                            | inserts a VOPM / MiOPMdrv bank's named voices, DT2 as `:dt2-N` (an `x68k` score's) |
-| `.muc` / `.mml`                    | mucom88 import — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
-| `.dat` / `.bin` alone              | inserts a mucom88 voice bank / PCM bank's defs             |
+| `.muc` / `.mml`                    | opens a mucom88 song — drop its `.dat` / `.bin` alongside to get voices and drums in one go |
+| `.dat` / `.bin` without a `.muc`   | inserts a mucom88 voice bank / PCM bank's defs             |
 | `.sf2`                             | inserts a SoundFont's drum kit as sample defs (below)      |
-| `.mid`                             | MIDI import, through the import dialog (below)             |
-| `.dmf` / `.fur`                    | DefleMask / Furnace module import, through the import dialog (below) |
-| `.vgm` / `.vgz`                    | VGM import, through the import dialog (below)              |
-| `.nsf` / `.nsfe`                   | NSF import (an `fc` score by default), through the import dialog (below) |
-| `.mdx` (+ `.pdx`)                  | MDX import as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
-| `.mgs`                             | MGS import as an `msx` score (below)                        |
+| `.mid`                             | opens it converted, through its dialog (below)             |
+| `.dmf` / `.fur`                    | opens a DefleMask / Furnace module converted, through its dialog (below) |
+| `.vgm` / `.vgz`                    | opens a VGM converted, through its dialog (below)          |
+| `.nsf` / `.nsfe`                   | opens an NSF converted (an `fc` score by default), through its dialog (below) |
+| `.mdx` (+ `.pdx`)                  | opens an MDX as an `x68k` score — drop its `.pdx` alongside for the ADPCM (below) |
+| `.mgs`                             | opens an MGS as an `msx` score (below)                      |
 
 A mucom88 PCM bank decodes to one wav that every drum def slices. It plays
 from memory until it is saved: **Save** asks for it right after the score, in

@@ -115,22 +115,19 @@ where the driver steps frames and puts every word through one `_paramSet`):
 
 A new word or way goes into `check:words`' tables first.
 
-Open, in the order worth taking:
+Open:
 
-1. **Not yet listened to**: the frame-order change moved the other seven
-   machines' register logs (48 scores) with no oracle; Mega Drive A/B was
-   no worse (118 of 134 clean then).
-2. **Tone encoders' other calls** (pitch sweeps, the encoders' own queues)
+1. **Tone encoders' other calls** (pitch sweeps, the encoders' own queues)
    are made at dispatch: the Game Boy's, the 2A03's and the PC Engine's
-   encoders order and drop writes by the calls they have seen. Listen to
-   those first.
-3. Bounds of the lookahead, left by choice: a held note let go releases
+   encoders order and drop writes by the calls they have seen — the place
+   to look if one of those machines is reported off.
+2. Bounds of the lookahead, left by choice: a held note let go releases
    where the sent writes end (~the lookahead late; undoing sent writes needs
    a per-channel retraction in the worklet for all eight machines); a score
    event's gate is judged at dispatch, so a hand let go less than the
    lookahead before a score write misses it; a hot-swap keeps the outgoing
    score's writes ahead; a seek drops a running sweep's remainder.
-4. The parts are mixins, not components — they call into each other and
+3. The parts are mixins, not components — they call into each other and
    share the core's state freely (samples: 31 calls, 27 fields, measured
    with a script) — to draw when a part next has to change.
 
@@ -164,15 +161,3 @@ voice-specific copy of any of these; extend the adapter instead:
   kind there, not a branch in a dispatcher.
 - `tools npm run check:note-path` holds all of it on every channel of every
   machine, sample ones included (closes, retriggers, mutes): 107 channels.
-
-## To hear on a device
-
-- The user checks on their phone: :target midi playback, mute / solo switching, the DMC's :keyon, the
-  GM note-off fix (cce183d); a stop on an external MIDI port (each key
-  gets its own off now); a :noise-rate / :env-rate / :lfo-rate sweep with
-  no :from, and their `+` (from the value now).
-  A Mega Drive pcm track's `:pan` (fm6's L / R, every voice's): heard
-  in the preview, not yet on hardware. Sound effects over a song
-  (Tools > MMLispDRV Backend, the panel's Sound Effects): a part comes
-  back at its next note, not mid-note, on FM, PSG and PCM alike; a PCM
-  SE's own pan; a VGM's / DefleMask module's DAC pan on a real file.

@@ -54,8 +54,8 @@
        File names are unreadable until the drop, so the text stays generic and
        only tracks the Shift state. -->
   <div id="dropOverlay" hidden aria-hidden="true">
-    <div class="drop-open">Drop to open — or import by extension<br>
-      <span class="drop-hint">.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .muc .mml .dat .bin .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .nsf .nsfe — or a folder, .zip, .lzh</span>
+    <div class="drop-open">Drop to open — or import by kind<br>
+      <span class="drop-hint" id="dropHint"></span>
     </div>
     <div class="drop-import">⇧ Shift — insert <code>(import "…")</code> instead of opening</div>
   </div>
@@ -276,7 +276,7 @@
           <!-- what goes in at the cursor; a song opens with File > Open…, which replaces the document -->
           <div class="menu-dropdown submenu-dropdown">
             <button class="menu-item" data-needs="sound" onclick="importInstrumentsMenu();closeMenus()"
-                    title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>Instruments…</span></button>
+                    title="Instruments at the cursor: FM voices (.dmp .fui .tfi .vgi .opni), OPM voice banks (.opm), mucom88 voice / PCM banks (.dat .bin), SoundFont drums (.sf2), samples (.wav)"><svg class="menu-icon" aria-hidden="true"><use href="#mi-piano"/></svg><span>Instruments…</span></button>
             <div class="menu-sep"></div>
             <div class="menu-label">Resynthesis</div>
             <button class="menu-item" data-needs="formants" onclick="importResynth();closeMenus()"><svg class="menu-icon" aria-hidden="true"><use href="#mi-record_voice_over"/></svg><span>Audio as Formants…</span></button>
@@ -1163,7 +1163,7 @@ import { collectImports } from './src/lang/compile/imports.js';
     import { parse } from './src/lang/mmlisp-parser.js';
     import { SAMPLE_EFFECTS, applySampleEffects } from './src/audio/sample-fx.js';
     import { decodeWav } from './src/audio/wav-decode.js';
-    import { ARCHIVE_EXT, readArchive, writeZip, zipWriter } from './src/app/archive.js';
+    import { readArchive, writeZip, zipWriter } from './src/app/archive.js';
     import { shareBundle, carriedWav, wavBytes } from './src/app/share-files.js';
     import { folderFromHandle, folderFromArchive, folderOfFile } from './src/app/source-folder.js';
     import { formatMMLisp } from './src/lang/mmlisp-formatter.js';
@@ -2451,16 +2451,53 @@ import { channelForms } from './src/lang/score-text.js';
     function songImporterFor(name) {
       return Object.values(SONG_IMPORTERS).find((imp) => imp.re.test(name)) || null;
     }
-    // What File > Open… and a folder open as a song: a .pdx only comes with its MDX.
-    const SONG_OPEN_EXTS = [...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts).filter((e) => e !== '.pdx'), '.muc', '.mml'];
-    // What Open takes with a song, or a mucom88 bank alone for the last one.
-    const SONG_BANK_EXTS = ['.dat', '.bin', '.pdx'];
-    const isSongBank = (name) => /\.(dat|bin|pdx)$/i.test(name);
-    const isSongFile = (name) => /\.(muc|mml)$/i.test(name) || Boolean(songImporterFor(name));
+    // Every file the app takes, by what it does (its `role`): File > Open…,
+    // File > Import > Instruments… and a drop all read this table, and so do
+    // their pickers, hints and errors.
+    //   open    replaces the document (Open…, a drop; a song converted);
+    //   import  goes in at the cursor (Import > Instruments…, a drop);
+    //   with    only comes beside a song (`withs`: what each song takes).
+    const FILE_KINDS = {
+      score: { role: 'open', exts: ['.mmlisp'], open: (e) => openScore(e) },
+      mmb: { role: 'open', exts: ['.mmb'], open: (e) => openScore(e) },
+      song: { role: 'open', exts: [...Object.values(SONG_IMPORTERS).flatMap((imp) => imp.exts).filter((e) => e !== '.pdx'), '.muc', '.mml'],
+        open: async (e, withs) => openSong(e.file, { withs: withs.map((w) => w.file), folder: await folderHolding(e.handle) }) },
+      archive: { role: 'open', exts: ['.zip', '.lzh', '.lha'], open: (e) => openArchive(e.file, e.handle?.kind === 'file' ? e.handle : null) },
+      'fm-voice': { role: 'import', exts: Object.values(FM_IMPORT_FORMATS).flatMap((f) => f.extensions),
+        insert: (e) => importFmVoiceFromFile(e.file, detectFmImportFormatKey(e.file.name)) },
+      'opm-voices': { role: 'import', exts: ['.opm'], insert: (e) => importOpmBankFromFile(e.file) },
+      'mucom-voices': { role: 'import', exts: ['.dat'], insert: (e) => importMucomVoiceBankFromFile(e.file) },
+      'mucom-pcm': { role: 'import', exts: ['.bin'], insert: (e) => importMucomPcmBankFromFile(e.file) },
+      sf2: { role: 'import', exts: ['.sf2'], insert: (e) => importSf2FromFile(e.file) },
+      sample: { role: 'import', exts: ['.wav'], insert: (e) => insertSampleDefFromFile(e) },
+      pdx: { role: 'with', exts: ['.pdx'] },
+    };
+    // What a song takes beside it: an MDX its PDX, a mucom88 song its banks.
+    const SONG_WITHS = { '.mdx': ['.pdx'], '.muc': ['.dat', '.bin'], '.mml': ['.dat', '.bin'] };
+    const extOf = (name) => (/\.[^./]+$/.exec(name)?.[0] ?? '').toLowerCase();
+    function fileKind(name) {
+      const ext = extOf(name);
+      return Object.keys(FILE_KINDS).find((k) => FILE_KINDS[k].exts.includes(ext)) ?? null;
+    }
+    const roleOf = (name) => FILE_KINDS[fileKind(name)]?.role ?? null;
+    const extsOf = (...roles) => Object.values(FILE_KINDS).filter((k) => roles.includes(k.role)).flatMap((k) => k.exts);
+    // `file` comes with `song`: one of the files that song takes.
+    const goesWith = (song, file) => (SONG_WITHS[extOf(song.name)] ?? []).includes(extOf(file.name));
+    const SONG_WITH_EXTS = [...new Set(Object.values(SONG_WITHS).flat())];
+    // The songs that take a file of this name beside them.
+    const songsTaking = (name) => Object.keys(SONG_WITHS).filter((s) => SONG_WITHS[s].includes(extOf(name)));
 
-    // Instruments… inserts at the cursor; a song opens with Open…, which
-    // replaces the document.
-    const INSTRUMENT_EXTS = [...Object.values(FM_IMPORT_FORMATS).flatMap((f) => f.extensions), '.opm', '.dat', '.bin', '.sf2'];
+    // Files picked or dropped together: the one document among them (a
+    // score — Shift on a drop makes every score an (import …) line — an
+    // .mmb, a song, an archive) and what goes with it. Null: none there.
+    function documentIn(entries, { asImport = false } = {}) {
+      const doc = entries.find((e) => roleOf(e.file.name) === 'open' && !(asImport && fileKind(e.file.name) === 'score'));
+      return doc ? { doc, withs: entries.filter((e) => e !== doc && goesWith(doc.file, e.file)) } : null;
+    }
+    // Opens it by its kind. False: nothing opened (declined, cancelled, failed).
+    async function openDocument({ doc, withs }) {
+      return (await FILE_KINDS[fileKind(doc.file.name)].open(doc, withs)) !== false;
+    }
 
     // A mucom88 .dat / .bin opened alone: the bank of the last mucom88 song,
     // which is converted again with it — picked after the song, since each
@@ -2479,24 +2516,33 @@ import { channelForms } from './src/lang/score-text.js';
     async function importInstrumentsMenu() {
       let picked;
       try {
-        picked = await pickFileWithInput(INSTRUMENT_EXTS, { multiple: true });
+        picked = await pickFileWithInput(extsOf('import'), { multiple: true });
       } catch (e) {
         if (e && e.name === 'AbortError') return;
         log(`Instrument import failed: ${e?.message || e}`, 'err');
         return;
       }
-      for (const f of picked) {
-        // One bad file must not abort the rest of the selection.
+      await insertFiles(picked.map((file) => ({ file, handle: null })));
+    }
+
+    // Files that go in at the cursor (role `import`), each by its kind; one
+    // bad file must not abort the rest. A `:target midi` score has none.
+    async function insertFiles(entries) {
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      for (const entry of entries) {
+        const kind = FILE_KINDS[fileKind(entry.file.name)];
+        if (kind?.role !== 'import') {
+          log(`${entry.file.name}: ${kind ? `not an instrument — ${kind.role === 'open' ? 'File > Open… opens it' : 'it comes with its song'}` : 'not a file this app reads'} (Import takes ${extsOf('import').join(' ')})`, 'err');
+          continue;
+        }
+        if (machine.sound === 'midi') {
+          log(`${entry.file.name}: a ${machine.system} score has no voices or samples of its own — an instrument is :prog N, or a GM name (gm-piano, flute …)`, 'warn');
+          continue;
+        }
         try {
-          const fmKey = detectFmImportFormatKey(f.name);
-          if (fmKey) await importFmVoiceFromFile(f, fmKey);
-          else if (/\.opm$/i.test(f.name)) await importOpmBankFromFile(f);
-          else if (/\.dat$/i.test(f.name)) await importMucomVoiceBankFromFile(f);
-          else if (/\.bin$/i.test(f.name)) await importMucomPcmBankFromFile(f);
-          else if (/\.sf2$/i.test(f.name)) await importSf2FromFile(f);
-          else log(`${f.name}: not an instrument file (${INSTRUMENT_EXTS.join(' ')})`, 'err');
+          await kind.insert(entry);
         } catch (e) {
-          log(`${f.name}: ${e?.message || e}`, 'err');
+          log(`${entry.file.name}: ${e?.message || e}`, 'err');
         }
       }
     }
@@ -2518,12 +2564,14 @@ import { channelForms } from './src/lang/score-text.js';
           }
         }
         const res = await imp.run(bytes, name, { pdx: pdx ? new Uint8Array(await pdx.arrayBuffer()) : null, song });
-        if (!res) return; // cancelled in the dialog
+        if (!res) return false; // cancelled in the dialog
         const opened = await loadImportedSource(res.source, res.warnings, name,
-          `Imported ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder, timingSong: res.timingSong && { ...res.timingSong, name } });
+          `Opened ${name}${pdx ? ` with ${pdx.name}` : ''} (${imp.tag}) — review and Build`, { tag: imp.tag, pcm: res.pcm ?? null, folder, timingSong: res.timingSong && { ...res.timingSong, name } });
         if (opened !== false && res.timingSong) log(`${name}: Edit > Tap Tempo puts it on a beat you tap`, 'info');
+        return opened !== false;
       } catch (e) {
-        log(`${imp.tag} import failed: ${e?.message || e}`, 'err');
+        log(`Opening ${name} (${imp.tag}) failed: ${e?.message || e}`, 'err');
+        return false;
       }
     }
 
@@ -2564,13 +2612,13 @@ import { channelForms } from './src/lang/score-text.js';
       fields.push({ key: 'loop', label: a.loop ? 'Loop (from the file’s loop point)' : 'Loop the whole song', type: 'checkbox', value: as ? !!a.loop : def.loop });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
-        title: as?.title ?? `Import ${fileName}`,
+        title: as?.title ?? `Open ${fileName}`,
+        okLabel: as?.okLabel ?? 'Open',
         summary: (as?.summary ?? '') + `${a.notes.length} notes on ${new Set(a.lanes.map((l) => l.ch)).size} channels. ` +
           'A channel that plays chords is split into lanes, one a track; what does not fit is dropped.',
         fields,
         rows: rowsFor(target),
         rowsFor,
-        ...(as?.okLabel ? { okLabel: as.okLabel } : {}),
       });
       if (!got) return null;
       const bpm = Number(got.fields.bpm);
@@ -2632,7 +2680,8 @@ import { channelForms } from './src/lang/score-text.js';
         { key: 'phrases', label: 'One def per pattern (the tracks lay them out in order)', type: 'checkbox', value: def.phrases },
       );
       const got = await showImportDialog({
-        title: `Import ${fileName}`,
+        title: `Open ${fileName}`,
+        okLabel: 'Open',
         summary: `${t.format} · ${t.system} · ${a.seq.length} orders of ${t.patLen} rows` +
           (a.loopIndex > 0 ? `, looping from order ${a.seq[a.loopIndex].order}` : '') + '. ' +
           'A channel with no notes is left out.',
@@ -2681,7 +2730,8 @@ import { channelForms } from './src/lang/score-text.js';
           onlyFor: (t) => t === a.target && targetProfile(t).hasPart('dac') });
       fields.push(STRUCTURE_FIELD);
       const got = await showImportDialog({
-        title: `Import ${fileName}`,
+        title: `Open ${fileName}`,
+        okLabel: 'Open',
         summary: `${parsed.chips.join(' + ')} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
           `${parsed.title ? ' · ' + parsed.title : ''}. Notes are rebuilt from the register writes, at the times they were written (150 BPM, a tick 1/240 s); one row per chip channel that plays.`,
         fields,
@@ -2758,7 +2808,8 @@ import { channelForms } from './src/lang/score-text.js';
       const heard = heardRoles(res.pcm);
       const rowsFor = (target) => (target === own ? [] : conversionRows(res.source, target, { imports, heard, name }));
       const got = await showImportDialog({
-        title: `Import ${fileName}`,
+        title: `Open ${fileName}`,
+        okLabel: 'Open',
         summary,
         fields: [{ key: 'target', label: 'Target', type: 'select', value: own, rebuildsRows: true, machine: true, own,
           choices: withMidi(targets, own), hint }],
@@ -2849,7 +2900,8 @@ import { channelForms } from './src/lang/score-text.js';
       fields.push(STRUCTURE_FIELD);
       const chips = ['2A03', ...NSF_CHIPS.filter(([k]) => nsf.chips[k]).map(([, name]) => name)].join(' + ');
       const got = await showImportDialog({
-        title: `Import ${fileName}`,
+        title: `Open ${fileName}`,
+        okLabel: 'Open',
         summary: `${[nsf.name, nsf.artist].filter(Boolean).join(' · ') || 'NSF'} · ${chips} · ${(parsed.totalSamples / 44100).toFixed(1)} s` +
           `${a.fileLoop ? `, looping from ${(parsed.loopSample / 44100).toFixed(1)} s` : ''}. ` +
           `The song is run on its own driver and its notes rebuilt from what it writes, at the times it wrote them (150 BPM, a tick 1/240 s), up to its loop — or ${NSF_MAX_SECONDS / 60} min.`,
@@ -3357,20 +3409,21 @@ import { channelForms } from './src/lang/score-text.js';
       const file = byExt(/\.(muc|mml)$/i);
       if (!file) {
         log('mucom88: no .muc/.mml in the selection — pick the song (and optionally its .dat / .bin) together', 'err');
-        return;
+        return false;
       }
       const datPick = byExt(/\.dat$/i);
       const pcmPick = byExt(/\.bin$/i);
       // The machine it is written for: the song's own chip, or the Mega Drive.
       const got = await showImportDialog({
-        title: `Import ${file.name}`,
+        title: `Open ${file.name}`,
+        okLabel: 'Open',
         summary: 'A MUCOM88 song, written for the YM2608. ' +
           (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
         fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0], machine: true, own: 'pc88',
           choices: withMidi(MUCOM_TARGETS, 'pc88'),
           hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive (the SSG’s envelope a level macro, the PCM fitted to the driver’s bank); any other machine takes the pc88 score as Edit > Convert to Machine… does; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
       });
-      if (!got) return;
+      if (!got) return false;
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         _mucomSong = {
@@ -3384,7 +3437,7 @@ import { channelForms } from './src/lang/score-text.js';
         const res = await convertMucom(_mucomSong, _mucomSong.datBytes, _mucomSong.pcmBytes);
         const withs = [datPick && `voices ${datPick.name}`, pcmPick && `PCM ${pcmPick.name}`].filter(Boolean);
         await loadMucomSource(res.source, res.warnings, file.name,
-          `Imported ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
+          `Opened ${file.name}${withs.length ? ' with ' + withs.join(' + ') : ''} (mucom88) — review and Build`,
           res.pcm);
 
         // Point at whatever the song wants but wasn't handed to us. Applying a
@@ -3397,16 +3450,17 @@ import { channelForms } from './src/lang/score-text.js';
         } catch { /* detection is best-effort */ }
         if (voiceFile && !datPick) {
           log(folder
-            ? `mucom88: ${file.name} uses external voices "${voiceFile}", which is not in ${folder.name} — imported without them: its FM parts play the chip's bare voice`
-            : `mucom88: ${file.name} uses external voices "${voiceFile}" — imported without them: its FM parts play the chip's bare voice. Open the .dat with File ▸ Open… to apply it, or re-import selecting the .muc and .dat together`, 'warn');
+            ? `mucom88: ${file.name} uses external voices "${voiceFile}", which is not in ${folder.name} — opened without them: its FM parts play the chip's bare voice`
+            : `mucom88: ${file.name} uses external voices "${voiceFile}" — opened without them: its FM parts play the chip's bare voice. Open the .dat with File ▸ Open… to apply it, or open the .muc and .dat together`, 'warn');
         }
         if (pcmFile && !pcmPick) {
           log(folder
-            ? `mucom88: ${file.name} plays drums from "${pcmFile}" (part K), which is not in ${folder.name} — imported without them`
-            : `mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — imported without them. Open the .bin with File ▸ Open… to apply it, or re-import selecting the .muc and .bin together`, 'info');
+            ? `mucom88: ${file.name} plays drums from "${pcmFile}" (part K), which is not in ${folder.name} — opened without them`
+            : `mucom88: ${file.name} plays drums from "${pcmFile}" (part K) — opened without them. Open the .bin with File ▸ Open… to apply it, or open the .muc and .bin together`, 'info');
         }
       } catch (e) {
-        log(`mucom88 import failed: ${e?.message || e}`, 'err');
+        log(`Opening ${file.name} (mucom88) failed: ${e?.message || e}`, 'err');
+        return false;
       }
     }
 
@@ -3563,7 +3617,7 @@ import { channelForms } from './src/lang/score-text.js';
           if (errors.length) throw new Error(`the score does not compile: ${errors[0].message}`);
           res = await importMidiBytes(exportMidi(ir).bytes, _lastFileName, {
             title: 'Convert to Machine', okLabel: 'Convert', not: ['midi'],
-            summary: 'The score is General MIDI’s (:target midi): it is read as its MIDI, as File > Import > MIDI reads a file. ',
+            summary: 'The score is General MIDI’s (:target midi): it is read as its MIDI, as File > Open reads a MIDI file. ',
           });
         } catch (e) {
           log(`Convert to Machine: ${e?.message || e}`, 'err');
@@ -4680,16 +4734,14 @@ import { channelForms } from './src/lang/score-text.js';
 
     // File > Open's picker types; Save As writes only the score's own type.
     const MMLISP_FILE_TYPE = { description: 'MMLisp source', accept: { 'text/plain': ['.mmlisp'] } };
-    const SOURCE_FILE_EXT = /\.(mmlisp|mmb|dmp|fui|tfi|vgi|opni)$/i;
     // The picker starts on its first type, so that one is everything Open
     // takes — a downloaded .zip must not come up greyed out.
     const OPEN_TYPES = [
       MMLISP_FILE_TYPE,
-      { description: 'Song (opens converted)', accept: { 'application/octet-stream': SONG_OPEN_EXTS } },
-      { description: 'A song\'s banks (mucom88 .dat / .bin, MDX .pdx)', accept: { 'application/octet-stream': SONG_BANK_EXTS } },
+      { description: 'Song (opens converted)', accept: { 'application/octet-stream': FILE_KINDS.song.exts } },
+      { description: 'What a song takes (mucom88 .dat / .bin, MDX .pdx)', accept: { 'application/octet-stream': SONG_WITH_EXTS } },
       { description: 'Archive (opens as a folder)', accept: { 'application/zip': ['.zip'], 'application/x-lzh-compressed': ['.lzh', '.lha'] } },
-      { description: 'MMLisp binary', accept: { 'application/octet-stream': ['.mmb'] } },
-      { description: 'FM voice import', accept: { 'application/octet-stream': ['.dmp', '.fui', '.tfi', '.vgi', '.opni'] } },
+      { description: 'MMLisp binary', accept: { 'application/octet-stream': FILE_KINDS.mmb.exts } },
     ];
     const SOURCE_FILE_TYPES = [
       { description: 'Everything Open takes', accept: OPEN_TYPES.reduce((all, t) => {
@@ -5262,14 +5314,9 @@ import { channelForms } from './src/lang/score-text.js';
       return readSourceFile(await handle.getFile(), handle);
     }
 
-    // The extension triage every entry point shares (Open…, Files in Folder,
-    // drag & drop). `handle` is optional so a dropped File still loads.
+    // A score or an .mmb read into the editor (Open…, Files in Folder, a
+    // drop). `handle` is optional so a dropped File still loads.
     async function readSourceFile(file, handle = null) {
-      const fmImportKey = detectFmImportFormatKey(file.name);
-      if (fmImportKey) {
-        await importFmVoiceFromFile(file, fmImportKey);
-        return;
-      }
       // Read first: a file that cannot be read replaces nothing.
       const isMmb = /\.mmb(?:$|\?)/i.test(file.name);
       const src = isMmb ? null : await file.text();
@@ -5297,13 +5344,7 @@ import { channelForms } from './src/lang/score-text.js';
           // File and no handle — Save then asks where. Unfiltered, since iOS
           // greys out what it has no type for (.mmlisp); checked here instead.
           const files = await pickFileWithInput(null, { multiple: true });
-          if (files.length > 1 || isSongBank(files[0].name)) { await openPickedSet(files); return; }
-          const [file] = files;
-          if (!SOURCE_FILE_EXT.test(file.name) && !isSongFile(file.name) && !ARCHIVE_EXT.test(file.name)) {
-            log(`${file.name}: Open takes .mmlisp, .mmb, songs (${SONG_OPEN_EXTS.join(' ')}) with their banks (${SONG_BANK_EXTS.join(' ')}), archives (.zip .lzh) and FM voices (.dmp .fui .tfi .vgi .opni) — samples are under File > Import`, 'err');
-            return;
-          }
-          await openPickedFile(file);
+          await openPicked(files.map((file) => ({ file, handle: null })));
           return;
         }
         const handles = await window.showOpenFilePicker({
@@ -5314,33 +5355,30 @@ import { channelForms } from './src/lang/score-text.js';
           // picker was left.
           ...(_sourceDir?.handle || _sourceDir?.archive?.handle ? { startIn: _sourceDir.handle ?? _sourceDir.archive.handle } : {}),
         });
-        if (handles.length > 1 || isSongBank(handles[0].name)) { await openPickedSet(await Promise.all(handles.map((h) => h.getFile()))); return; }
-        await openPickedFile(await handles[0].getFile(), handles[0]);
+        await openPicked(await Promise.all(handles.map(async (handle) => ({ file: await handle.getFile(), handle }))));
       } catch (e) {
         if (e?.name !== 'AbortError') log('Open failed: ' + e.message, 'err');
       }
     }
 
-    // Several files picked in Open: a song with the banks it names — a mucom88
-    // .muc with its .dat / .bin, an MDX with its PDX — which is how a phone,
-    // with no folder to open, hands them over together; or a mucom88 bank
-    // alone, for the song opened last. A score is one file.
-    async function openPickedSet(files) {
-      const names = files.map((f) => f.name).join(', ');
-      if (files.every((f) => /\.(dat|bin)$/i.test(f.name))) return applyMucomBanks(files);
-      if (files.some((f) => /\.(muc|mml)$/i.test(f.name))) {
-        const other = files.find((f) => !/\.(muc|mml|dat|bin)$/i.test(f.name));
-        if (other) log(`${other.name} ignored — a mucom88 song opens with its .dat / .bin only`, 'info');
-        return keepingPlayback(() => importMucom88FromFiles(files));
-      }
-      const mdx = files.find((f) => /\.mdx$/i.test(f.name));
-      const pdx = files.find((f) => /\.pdx$/i.test(f.name));
-      if (mdx && pdx && files.length === 2) return keepingPlayback(() => importSongFromFile(mdx, undefined, { pdx }));
-      if (files.length === 1 && /\.pdx$/i.test(files[0].name)) {
-        log('MDX: a .pdx is the samples of an MDX song — open it together with the .mdx', 'err');
+    // What Open… was handed: one document, a song with what it takes (a
+    // .muc with its .dat / .bin, an .mdx with its .pdx — how a phone, with no
+    // folder to open, hands them over together), or a mucom88 bank alone, for
+    // the song opened last.
+    async function openPicked(entries) {
+      const names = (list) => list.map((e) => e.file.name).join(', ');
+      const found = documentIn(entries);
+      if (!found) {
+        if (entries.every((e) => SONG_WITHS['.muc'].includes(extOf(e.file.name)))) return applyMucomBanks(entries.map((e) => e.file));
+        const withs = entries.filter((e) => roleOf(e.file.name) === 'with');
+        log(withs.length
+          ? `${names(withs)}: comes with its song (${songsTaking(withs[0].file.name).join(' ')}) — open them together`
+          : `${names(entries)}: Open takes ${extsOf('open').join(' ')}, a song with what it takes (${SONG_WITH_EXTS.join(' ')}); File > Import > Instruments… takes ${extsOf('import').join(' ')}`, 'err');
         return;
       }
-      log(`${names}: Open takes one file, or a song with its banks (a .muc with its .dat / .bin, an .mdx with its .pdx)`, 'err');
+      const rest = entries.filter((e) => e !== found.doc && !found.withs.includes(e));
+      if (rest.length) log(`${names(rest)} ignored — Open takes one document, or a song with what it takes`, 'info');
+      await keepingPlayback(() => openDocument(found));
     }
 
     // Opening a score from outside the folder leaves it stale — reset. A file
@@ -5354,17 +5392,13 @@ import { channelForms } from './src/lang/score-text.js';
       return readFileHandle(handle);
     }
 
-    // File > Open… by extension: an archive opens as a folder, a song as the
-    // score converted from it, the rest as a score does. `handle` is null from
-    // a plain file input (iOS, Firefox).
-    async function openPickedFile(file, handle = null) {
-      return keepingPlayback(async () => {
-        if (ARCHIVE_EXT.test(file.name)) return openArchive(file, handle);
-        if (isSongFile(file.name)) return openSong(file, { folder: await folderHolding(handle) });
-        if (handle) return openScoreHandle(handle);
-        clearSourceDir();
-        return readSourceFile(file);
-      });
+    // A score or an .mmb: one from outside the open folder leaves it (a
+    // plain file input's, with no handle, always does).
+    async function openScore({ file, handle }) {
+      if (!handle) clearSourceDir();
+      const opened = (await (handle ? openScoreHandle(handle) : readSourceFile(file))) !== false;
+      if (opened) log(`Opened ${file.name}`, 'info');
+      return opened;
     }
 
     // A song opened while one plays plays too; opened from silence, it stays
@@ -5410,32 +5444,35 @@ import { channelForms } from './src/lang/score-text.js';
     // An archive opens as the folder it holds (src/app/source-folder.js), read in
     // memory — so on every browser, a phone's too. `handle`, when there is one,
     // is what File > Open Recent brings it back by.
+    // False: nothing opened (declined or unreadable).
     async function openArchive(file, handle = null) {
-      if (!mayReplaceDoc(file.name)) return;
+      if (!mayReplaceDoc(file.name)) return false;
       let folder;
       try {
         folder = await folderFromArchive(file, { handle });
       } catch (e) {
         log(`${file.name}: ${e.message}`, 'err');
-        return;
+        return false;
       }
       await applySourceDir(folder);
     }
 
-    // A song opens as the score converted from it (Open… with several files
-    // picked does the same: openPickedSet). Opened from the folder it sits in, it
+    // A song opens as the score converted from it. Opened from the folder it sits in, it
     // keeps the folder: what the song names beside it — an MDX's PDX, a
     // mucom88 song's voices and drums — is read from there, and the rest of
-    // the folder stays one click away. `pdx` is one handed over with it (a drop).
-    // `song` and `name`: one song of an NSF's, as Files in Folder lists it.
-    async function openSong(file, { folder = null, pdx = null, song = null, name } = {}) {
-      if (!mayReplaceDoc(name ?? file.name)) return;
+    // the folder stays one click away.
+    // `withs`: the files it takes handed over with it (SONG_WITHS); what is
+    // not among them is looked for in its folder. `song` and `name`: one song
+    // of an NSF's, as Files in Folder lists it.
+    // False: nothing opened (declined, cancelled or failed).
+    async function openSong(file, { folder = null, withs = [], song = null, name } = {}) {
+      if (!mayReplaceDoc(name ?? file.name)) return false;
       if (/\.(muc|mml)$/i.test(file.name)) {
-        await importMucom88FromFiles([file, ...(folder ? await mucomBanksIn(folder, file) : [])], { folder });
-        return;
+        const inFolder = folder ? await mucomBanksIn(folder, file) : [];
+        return importMucom88FromFiles([file, ...withs, ...inFolder.filter((f) => !withs.some((w) => extOf(w.name) === extOf(f.name)))], { folder });
       }
-      if (!pdx && folder && /\.mdx$/i.test(file.name)) pdx = await pdxIn(folder, file);
-      await importSongFromFile(file, undefined, { pdx, folder, song, name });
+      const pdx = /\.mdx$/i.test(file.name) ? (withs.find((f) => /\.pdx$/i.test(f.name)) ?? (folder ? await pdxIn(folder, file) : null)) : null;
+      return importSongFromFile(file, undefined, { pdx, folder, song, name });
     }
 
     async function fileIn(folder, name) {
@@ -5883,30 +5920,14 @@ import { channelForms } from './src/lang/score-text.js';
     }
 
     // ---- Drag & drop ------------------------------------------------------
-    // Files dropped on the window are routed by extension, mirroring what
-    // File > Import already accepts; Shift turns a dropped score into an
-    // (import "…") line instead of opening it. Everything reuses the menu
-    // handlers, so there is one implementation per format.
+    // Files dropped on the window go by their kind (FILE_KINDS), as Open…
+    // and Import take them; Shift turns a dropped score into an
+    // (import "…") line instead of opening it.
 
     // Browser-decodable but not RIFF WAV: the live player would take these
     // happily, while the export side (drv/tools/wav.mjs, tools/scripts) reads
     // WAV only — so name them rather than let a score break at export time.
     const DROP_NON_WAV_AUDIO = /\.(aiff?|mp3|flac|ogg|oga|m4a|aac|opus|wma)$/i;
-
-    function classifyDroppedFile(name) {
-      if (/\.mmlisp$/i.test(name)) return 'score';
-      if (/\.mmb$/i.test(name)) return 'mmb';
-      if (detectFmImportFormatKey(name)) return 'fmvoice';
-      if (/\.wav$/i.test(name)) return 'sample';
-      if (/\.(muc|mml)$/i.test(name)) return 'mucom-song';
-      if (songImporterFor(name)) return 'song';
-      if (/\.opm$/i.test(name)) return 'opm-voices';
-      if (/\.dat$/i.test(name)) return 'mucom-voices';
-      if (/\.bin$/i.test(name)) return 'mucom-pcm';
-      if (/\.sf2$/i.test(name)) return 'sf2';
-      if (/\.pdx$/i.test(name)) return 'pdx';
-      return null;
-    }
 
     // The path an emitted `:file` / (import "…") should carry. A handle that
     // resolves inside the open source folder yields a folder-relative path —
@@ -5938,7 +5959,7 @@ import { channelForms } from './src/lang/score-text.js';
       // No :rate — the default is the wav's own rate, which is what we want.
       insertTextAtCursor(`(def-pcm ${name} :file ${JSON.stringify(path)})`);
       if (inFolder) {
-        log(`Dropped ${path} as (def-pcm ${name} …) — press Build to apply`, 'info');
+        log(`Imported ${path} as (def-pcm ${name} …) — press Build to apply`, 'info');
         return;
       }
       // Outside the folder the path resolves to nothing, so decode now and seed
@@ -5947,7 +5968,7 @@ import { channelForms } from './src/lang/score-text.js';
       // deal the mucom88 PCM bank gets in loadMucomSource.
       try {
         _pcmSampleCache.set(path, decodeWav(await entry.file.arrayBuffer()));
-        log(`Dropped ${path} as (def-pcm ${name} …) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
+        log(`Imported ${path} as (def-pcm ${name} …) — held in memory; put the wav next to the score and File > Open Folder… to keep it after a reload`, 'info');
       } catch (e) {
         log(`${path}: decode failed (${e?.message || e}) — the def was inserted but will not play until the wav is in the opened folder`, 'err');
       }
@@ -6000,78 +6021,31 @@ import { channelForms } from './src/lang/score-text.js';
       }
 
       const files = entries.filter((e) => e.kind === 'file');
-      if (!files.length) return;
-
-      // An archive opens as a folder does.
-      const archive = files.find((e) => ARCHIVE_EXT.test(e.file.name));
-      if (archive) {
-        if (entries.length > 1) log(`Dropped ${archive.file.name} — opening it as a folder; the other items were ignored`, 'info');
-        await openArchive(archive.file, archive.handle?.kind === 'file' ? archive.handle : null);
-        return;
-      }
-
-      // A mucom song wants its .dat/.bin siblings in the same call, exactly as
-      // the multi-select dialog hands them over.
-      if (files.some((e) => /\.(muc|mml)$/i.test(e.file.name))) {
-        await importMucom88FromFiles(files.map((e) => e.file));
-        return;
-      }
-
-      const kinds = files.map((e) => ({ entry: e, kind: classifyDroppedFile(e.file.name) }));
-      for (const { entry, kind } of kinds) {
-        if (kind) continue;
+      for (const { file } of files) {
+        if (fileKind(file.name)) continue;
         log(
-          DROP_NON_WAV_AUDIO.test(entry.file.name)
-            ? `${entry.file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio as Formants… or Audio as FM Voice… reads it as it is`
-            : `${entry.file.name}: not a droppable file (.mmlisp .mmb .wav .dmp .fui .tfi .vgi .opni .opm .muc .mml .dat .bin .sf2 .mid .midi .rmi .smf .dmf .fur .vgm .vgz .mdx .pdx .mgs .nsf .nsfe .zip .lzh)`,
+          DROP_NON_WAV_AUDIO.test(file.name)
+            ? `${file.name}: a sample is .wav only (the exporters read RIFF WAV); File > Import > Audio as Formants… or Audio as FM Voice… reads it as it is`
+            : `${file.name}: not a droppable file (${extsOf('open', 'import', 'with').join(' ')})`,
           'err',
         );
       }
+      const known = files.filter((e) => fileKind(e.file.name));
 
-      // Opening replaces the whole document, so it has to happen before any
-      // cursor insert — otherwise the inserts land in a doc that is about to be
-      // thrown away. Only one document can be open, so the rest of a multi-score
-      // drop become (import …) lines: a plain score has somewhere to go, a
-      // second .mmb has not.
-      const openable = kinds.filter((k) => (k.kind === 'score' && !asImport) || k.kind === 'mmb');
-      const opened = openable[0];
-      if (opened) {
-        const { entry } = opened;
-        const kept = await (entry.handle ? openScoreHandle(entry.handle) : readSourceFile(entry.file)) === false;
-        if (kept) return; // the rest would land in the score kept
-        log(`Opened ${entry.file.name}`, 'info');
+      // As Open… and Import: the one document opens first, with what it
+      // takes, and the rest goes in at its cursor — an (import …) line for a
+      // score, the kind's insert for an instrument. A second document has
+      // nowhere to go, nor does a song's file without its song.
+      const found = documentIn(known, { asImport });
+      if (found && !(await openDocument(found))) return; // the rest would land in the score kept
+      const rest = known.filter((e) => e !== found?.doc && !found?.withs.includes(e));
+      for (const entry of rest) {
+        const name = entry.file.name;
+        if (fileKind(name) === 'score') await insertImportLine(entry);
+        else if (roleOf(name) === 'open') log(`${name} ignored — only one document can be open at a time`, 'info');
+        else if (roleOf(name) === 'with') log(`${name}: comes with its song (${songsTaking(name).join(' ')}) — drop them together`, 'err');
       }
-
-      // A machine whose sound is a MIDI output's (`:target midi`) has no
-      // voices or samples to insert: its instruments are its programs (:prog).
-      const machine = targetProfile(_lastGoodIR?.metadata?.target);
-      for (const { entry, kind } of kinds) {
-        if (entry === opened?.entry) continue;
-        if (machine.sound === 'midi' && kind !== 'score') {
-          log(`${entry.file.name}: a ${machine.system} score has no voices or samples of its own — an instrument is :prog N, or a GM name (gm-piano, flute …)`, 'warn');
-          continue;
-        }
-        // One bad file must not abort the rest of the drop.
-        try {
-          if (kind === 'score') await insertImportLine(entry);
-          else if (kind === 'sample') await insertSampleDefFromFile(entry);
-          else if (kind === 'fmvoice') await importFmVoiceFromFile(entry.file, detectFmImportFormatKey(entry.file.name));
-          else if (kind === 'opm-voices') await importOpmBankFromFile(entry.file);
-          else if (kind === 'mucom-voices') await importMucomVoiceBankFromFile(entry.file);
-          else if (kind === 'mucom-pcm') await importMucomPcmBankFromFile(entry.file);
-          else if (kind === 'sf2') await importSf2FromFile(entry.file);
-          else if (kind === 'song') {
-            // An MDX dropped with its PDX takes it as its samples; one dropped
-            // out of the open folder finds it there.
-            const pdx = /\.mdx$/i.test(entry.file.name) ? kinds.find((k) => k.kind === 'pdx')?.entry.file ?? null : null;
-            await openSong(entry.file, { pdx, folder: await folderHolding(entry.handle) });
-          } else if (kind === 'pdx' && !kinds.some((k) => /\.mdx$/i.test(k.entry.file.name)))
-            log(`${entry.file.name}: a .pdx is the samples of an MDX song — drop it together with the .mdx`, 'err');
-          else if (kind === 'mmb') log(`${entry.file.name} ignored — only one document can be open at a time`, 'info');
-        } catch (e) {
-          log(`${entry.file.name}: ${e?.message || e}`, 'err');
-        }
-      }
+      await insertFiles(rest.filter((e) => roleOf(e.file.name) === 'import'));
     }
 
     // Overlay bookkeeping: dragenter/dragleave fire for every child element the
@@ -6093,6 +6067,8 @@ import { channelForms } from './src/lang/score-text.js';
     }
 
     function initFileDrop() {
+      document.getElementById('dropHint').textContent =
+        `opens ${extsOf('open').join(' ')} (a song with ${SONG_WITH_EXTS.join(' ')}) or a folder · imports ${extsOf('import').join(' ')}`;
       // Capture phase: CodeMirror installs its own drop handler that would paste
       // the file's text into the document. Non-file drags (text drag-select in
       // the editor, the Alt-drag value scrub) are left completely alone.

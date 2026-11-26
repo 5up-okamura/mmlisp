@@ -22,10 +22,11 @@ Rules:
   five driver files merged away on 2026-09-22.
 - If a file describes a build that no longer exists, say so in its first
   sentence or delete it.
-- **Record what is open, never that something was checked.** "Not yet
-  listened to / not run on hardware" is a reminder; once it is done, delete the
-  line — do not reword it into "the user listened and accepted it". A
-  listening verdict stays only as the reason for a decision.
+- **Record known faults and work, not checks.** No "not yet listened to /
+  not run on hardware" lines: the user listens to every machine and reports
+  what is off (2026-11-26), and a fine difference can only be judged on a
+  song that shows it. Nor "the user listened and accepted it". A listening
+  verdict stays only as the reason for a decision.
 
 ## Index
 
@@ -34,6 +35,6 @@ Rules:
 - [pcm.md](pcm.md) — PCM rulings and what is open. Read before touching PCM.
 - [language-open.md](language-open.md) — the language's rulings not to
   re-propose.
-- [live-app.md](live-app.md) — the live app: decided against, and lessons; how the players are built and what is open; the note path's design; how to work here; what is still to be heard on a device.
+- [live-app.md](live-app.md) — the live app: decided against, and lessons; how the players are built and what is open; the note path's design; how to work here.
 - [targets.md](targets.md) — machines beyond the Mega Drive, `:target midi`
   and the machine conversion: rulings, traps, what is open.
