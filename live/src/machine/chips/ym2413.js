@@ -678,9 +678,12 @@ export function opllEncoder({ rom = ROM, channels = CHANNELS, port = OPLL_PORT }
         return out;
       },
       flush(horizon) {
-        // In time order; at one time a hit first (it wins a tie: the FM's
-        // writes there find the channels the rhythm's).
-        const due = rq.filter((op) => op.t <= horizon + EPS).sort((a, b) => a.t - b.t || (b.k === "hit") - (a.k === "hit"));
+        // In time order; at one time a sound's key-off first (the last hit's,
+        // as the next one strikes: after it, it would take the new hit off
+        // at once — a snare's roll silent), then a hit (it wins a tie: the
+        // FM's writes there find the channels the rhythm's).
+        const rank = (op) => (op.k === "dump" ? 0 : op.k === "hit" ? 1 : 2);
+        const due = rq.filter((op) => op.t <= horizon + EPS).sort((a, b) => a.t - b.t || rank(a) - rank(b));
         if (!due.length) return [];
         rq = rq.filter((op) => op.t > horizon + EPS);
         const out = [];

@@ -2424,8 +2424,8 @@
  "tools/tests/msx/rhythm-levels.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "ef18a9383d8cd02c",
-  "regs": "40bffa69ff7b8dc8",
-  "vgm": "762d7f0ecd2e4313",
+  "regs": "c958a9286050729a",
+  "vgm": "f46ce91e6da2dda8",
   "mid": "a132e91750aa73d7"
  },
  "tools/tests/msx/rhythm-share.mmlisp": {
