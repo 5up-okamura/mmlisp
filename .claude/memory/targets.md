@@ -122,6 +122,3 @@ pcmt13.muc; Koshiro's sampl1–3.muc (onitama/mucom88 `package/`, CC BY-NC-SA).
 - **gb**: an old-INST .fur (< 127) loses its
   envelope sequence; Furnace demos Pleasure_of_Tension, spreadtro, lagtrain,
   freedom differ in pitch, not looked into.
-- **Layering pass leftovers**: the IR player's sample voices still branch by
-  part name (PCM8, ADPCM-B, DMC, DDA); the Library's sample preview plays on
-  the Mega Drive's engine whatever the machine.

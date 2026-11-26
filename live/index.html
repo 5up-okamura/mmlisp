@@ -9276,7 +9276,6 @@ import { channelForms } from './src/lang/score-text.js';
     const _librarySetCache = new Map();      // set path -> { path, text, defs }
     let _sideAudition = null;               // the sample preview playing beside the song (playAuditionBlob)
     let _libraryPreviewTimers = [];          // note on/off timers for the FM audition
-    let _libraryPcmSounding = false;         // the worklet holds a sample preview
 
     async function fetchText(path) {
       const res = await fetch(toFetchablePath(path));
@@ -9908,10 +9907,6 @@ import { channelForms } from './src/lang/score-text.js';
       _libraryPreviewTimers = [];
       previewNoteOff(CURSOR_DEF_PREVIEW_CH);
       _sideAudition?.stop();
-      if (_libraryPcmSounding) {
-        workletNode?.port.postMessage({ type: 'flush' });
-        _libraryPcmSounding = false;
-      }
     }
 
     // Same path the algorithm-diagram tap uses for the def under the cursor:
@@ -9935,46 +9930,35 @@ import { channelForms } from './src/lang/score-text.js';
       setLibraryNote(`${def.name} \u2014 c4${def.regs.key != null ? ` (:key ${def.regs.key})` : ''} on ${CURSOR_DEF_PREVIEW_CH.label}`);
     }
 
-    // A sample has no register form to push: it is bytes in a bank. So compile
-    // the score that plays it once at c4 — its own rate — and hand the worklet
-    // that bank: the export's own bake. The score's bank is displaced until the
-    // next Play or Build re-syncs it, which is why this waits for playback to
-    // stop. A score's own sample (no set path) plays among the score's defs
-    // and imports, under the score's name: its :file is the score folder's.
+    // A sample sounds on the open score's machine: a c4 on its sample part's
+    // first channel, as a one-note score on the Library's own player (as a
+    // macro's preview is); while the song plays, its bake on the side player
+    // beside it, as the keys' audition does. A machine with no sample part
+    // has none to sound it on.
     async function previewLibraryPcm(set, def) {
       if (!(await initAudio())) return;
       stopLibraryPreview();
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      const sp = machine.parts.find((p) => p.bank);
+      if (!sp) { setLibraryNote(`${def.name}: the ${machine.system} has no sample channel`); return; }
+      const head = machine.headsOf(sp.name)[0];
+      const defs = set.path ? `(import "${set.path}")` : scoreDefsText(set.text);
+      const text = `(def-score :target ${machine.name})\n${defs}\n(${head} :oct 4 :len 4 ${def.name} c)\n`;
+      const name = set.path ? 'library-preview.mmlisp' : _lastFileName;
+      const imports = set.path ? new Map([[set.path, set.text]]) : _importSources;
       try {
-        const track = `(pcm1 :oct 4 :len 4 ${def.name} c)`;
-        const { ir, diagnostics } = set.path
-          ? compileMMLisp(`(import "${set.path}")\n${track}\n`, 'library-preview.mmlisp', { imports: new Map([[set.path, set.text]]) })
-          : compileMMLisp(`${scoreDefsText(set.text)}\n${track}\n`, _lastFileName, { imports: _importSources });
-        const errors = diagnostics.filter((d) => d.severity === 'error');
-        if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
-        const samples = await pcmSampleBlobsForMmb(ir);
-        if (!samples) throw new Error('sample did not load');
-        // During playback the engine is the song's: the same bake plays on the
-        // side player beside it (playAuditionBlob), as the keys' audition does.
         if (_fmLiveRaf != null) {
+          const { ir, diagnostics } = compileMMLisp(text, name, { imports });
+          const errors = diagnostics.filter((d) => d.severity === 'error');
+          if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
+          const samples = await pcmSampleBlobsForMmb(ir);
+          if (!samples) throw new Error('sample did not load');
           const blob = bakeAuditionBlob(ir, samples, def.name, PREVIEW_MIDI);
           playAuditionBlob(blob, false, 15);
           setLibraryNote(`${def.name} \u2014 c4, ${blob.data.length} bytes baked`);
           return;
         }
-        const { sampleBank, pcmEntryIds } = encodeMmb(ir, { samples, dedup: false }); // the bank only
-        workletNode.port.postMessage({
-          type: 'pcm-set-bank',
-          bank: sampleBank ?? null,
-          pcmVoices: ir?.metadata?.pcmVoices ?? 1,
-          entryIds: pcmEntryIds ?? {},
-        });
-        workletNode.port.postMessage({
-          type: 'pcm-ev', when: audioCtx.currentTime + 0.05,
-          kind: 'on', voice: 0, track: 0, sample: def.name,
-          midi: PREVIEW_MIDI, mode: 'shot', vel: 15,
-        });
-        _libraryPcmSounding = true;
-        setLibraryNote(`${def.name} \u2014 c4, ${sampleBank ? bankBytesUsed(sampleBank) : 0} bytes baked`);
+        if (await playLibrarySource(text, name, 'pcm:' + def.name, imports)) setLibraryNote(`${def.name} \u2014 c4 on ${head}`);
       } catch (e) {
         log('Library: ' + e.message, 'err');
         setLibraryNote(String(e.message));
@@ -9982,13 +9966,19 @@ import { channelForms } from './src/lang/score-text.js';
     }
 
     // A macro shapes a note, so sound one: the def's own lines, then a half
-    // note on sqr1 \u2014 the channel with no voice of its own, which is what an
-    // envelope is for \u2014 and a rest, so a release section is heard too. It
-    // plays on the Library's own player, as a score does.
+    // note and a rest, so a release section is heard too, on the open score's
+    // machine \u2014 on its first square-like channel, which has no voice of
+    // its own (what an envelope is for), else a wave's, an FM one, a MIDI
+    // channel. It plays on the Library's own player, as a score does.
+    const MACRO_PREVIEW_KINDS = ['tone', 'wave', 'fm', 'midi'];
     async function previewLibraryMacro(set, def) {
-      const source = ownDefText(set.text, def.node, set.path) + `\n(sqr1 :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
+      const machine = targetProfile(_lastGoodIR?.metadata?.target);
+      const part = MACRO_PREVIEW_KINDS.map((k) => machine.parts.find((p) => p.kind === k)).find(Boolean);
+      const head = part && machine.headsOf(part.name)[0];
+      if (!head) { setLibraryNote(`${def.name}: the ${machine.system} has no channel to sound it on`); return; }
+      const source = `(def-score :target ${machine.name})\n` + ownDefText(set.text, def.node, set.path) + `\n(${head} :oct 4 :len 2 :vel 15 ${def.name} c _)\n`;
       if (await playLibrarySource(source, 'library-preview.mmlisp', 'macro:' + def.name))
-        setLibraryNote(`${def.name} \u2014 c4 on sqr1`);
+        setLibraryNote(`${def.name} \u2014 c4 on ${head}`);
     }
 
     // A SCORE PLAYS ON ITS OWN PLAYER, never through the editor's: the song
@@ -10011,13 +10001,14 @@ import { channelForms } from './src/lang/score-text.js';
     // Compile `text` under `name` and play it on the Library's player; `key` is
     // what a second \u25b6 on the same thing stops. Returns the IR, or null when
     // nothing played \u2014 the note then says why.
-    async function playLibrarySource(text, name, key) {
+    // `imports`: the sources it imports, when the caller has them.
+    async function playLibrarySource(text, name, key, imports = null) {
       if (!(await initAudio())) return null;
       stopLibraryPreview();
       cancelResume();
       if (player) onStop();
       try {
-        const imports = await readImportSources(text, name);
+        imports ??= await readImportSources(text, name);
         const { ir, diagnostics } = compileMMLisp(text, name, { imports });
         const errors = diagnostics.filter((d) => d.severity === 'error');
         if (errors.length > 0) throw new Error(`${errors[0].code} ${errors[0].message}`);
@@ -10046,12 +10037,6 @@ import { channelForms } from './src/lang/score-text.js';
       stopRun(_libraryScorePlayer);
       _libraryScorePlayer = null;
       _libraryScorePath = null;
-    }
-
-    function bankBytesUsed(bank) {
-      let last = 0;
-      for (let i = 0; i < bank.length; i++) if (bank[i] !== 0) last = i + 1;
-      return last;
     }
 
     // ---- insert / open ----------------------------------------------------
@@ -11874,8 +11859,10 @@ import { channelForms } from './src/lang/score-text.js';
       if (!name && !part) return;
       const seq = ++_pcmAuditionSeq;
       try {
+        // A Library sample sounds on the open score's machine, as it will
+        // there once the score imports it.
         const { ir, diagnostics } = libSample
-          ? compileMMLisp(`(import "${libSample.set.path}")\n`, 'library-preview.mmlisp',
+          ? compileMMLisp(`(def-score :target ${targetProfile(_lastGoodIR?.metadata?.target).name})\n(import "${libSample.set.path}")\n`, 'library-preview.mmlisp',
             { imports: new Map([[libSample.set.path, libSample.set.text]]) })
           : compileMMLisp(editorView.state.doc.toString(), _lastFileName, { imports: _importSources });
         if (part) {
@@ -11891,6 +11878,7 @@ import { channelForms } from './src/lang/score-text.js';
           throw new Error(err ? `${err.code} ${err.message}` : `"${name}" is not a sample`);
         }
         const machine = targetProfile(ir.metadata?.target);
+        if (!machine.parts.some((p) => p.bank)) throw new Error(`the ${machine.system} has no sample channel`);
         const one = { ...ir, metadata: { ...ir.metadata, pcmVoices: 1 } };
         // The picked strip's :vol and the master, as the panel shows them.
         const stripVol = part ? stripVolNow(part) : VOL_UNITY;

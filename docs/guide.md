@@ -3114,8 +3114,8 @@ alphabetical order of their directory names.
 | Row                | ▶                                       | Other actions |
 | ------------------ | --------------------------------------- | ------------- |
 | an FM voice (`fm`) | one `len 4` c4 on FM1 — a `:key` voice (an FM drum) at its key | **Insert** pastes the definition at the cursor, to edit as your own |
-| a sample (`pcm`)   | one c4, baked and played through the driver's own engine — what an export will sound like | **Insert** pastes the definition at the cursor, its `:file` written from the score |
-| a macro (`macro`)  | a half-note c4 on sqr1 shaped by it, then a rest for its release | **Insert** pastes the definition at the cursor |
+| a sample (`pcm`)   | one c4 on the score's machine, on its first sample channel — baked and played as that machine plays a sample (the Mega Drive's through the driver's own engine: what an export will sound like); none on a machine with no sample channel | **Insert** pastes the definition at the cursor, its `:file` written from the score |
+| a macro (`macro`)  | a half-note c4 shaped by it, then a rest for its release — on the score's machine, on its first square channel (a wave or FM channel where it has none) | **Insert** pastes the definition at the cursor |
 | a set (group)      | —                                       | **Import set** |
 | a Ref entry        | plays its example                       | **Insert** writes the form at the cursor |
 | a score            | plays it, without opening it            | **Open** puts it in the editor |
