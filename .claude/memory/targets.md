@@ -110,8 +110,7 @@ pcmt13.muc; Koshiro's sampl1–3.muc (onitama/mucom88 `package/`, CC BY-NC-SA).
 ## Open per machine
 
 - **pce**: Bad Dudes' channel 6 differs by its duty flicker (roadmap).
-- **fc**: every render starts with a click (likely the DMC's $4011 init);
-  Kirby 03 SQ1 holds a staccato note 50 frames long. The curve option
+- **fc**: Kirby 03 SQ1 holds a staccato note 50 frames long. The curve option
   `:duty` is 1–255 while the track word is sixteenths (raise if it
   confuses).
 - **fc expansions**: every chip at once clips.

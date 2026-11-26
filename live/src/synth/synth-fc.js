@@ -81,7 +81,7 @@
 
 import createAy8910Module from "../../ymfm-ay8910.js";
 import createYm2413Module from "../../ymfm-ym2413.js";
-import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS } from "../machine/chips/rp2a03.js";
+import { rp2a03, RAM_PORT, DMC_PERIODS, NOISE_PERIODS, DMC_START } from "../machine/chips/rp2a03.js";
 import { sunsoft5b } from "../machine/chips/sunsoft-5b.js";
 import { vrc7 } from "../machine/chips/vrc7.js";
 import { VRC7_ROM_BYTES, opllHoldBus } from "../machine/chips/ym2413.js";
@@ -187,7 +187,10 @@ class Apu {
     }));
     this.tri = { ctl: 0, period: 0, length: 0, seq: 0, timer: 1, linear: 0, reload: false };
     this.noise = { ctl: 0, mode: 0, period: NOISE_PERIODS[0], length: 0, timer: NOISE_PERIODS[0], lfsr: 1, env: envelope() };
-    this.dac = 0;
+    // The DMC's DAC rests where every hit starts, as the chip's init leaves
+    // it (rp2a03.js): the high-pass settles on it, so a run's start — that
+    // write — is no thump.
+    this.dac = DMC_START;
     // The CPU's memory from $8000 (the DMC's address wraps there) and its
     // writer's address.
     this.mem = new Uint8Array(0x8000);
