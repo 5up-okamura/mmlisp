@@ -2368,7 +2368,7 @@ import { channelForms } from './src/lang/score-text.js';
     // Remember the last imported mucom song so a bank can be applied afterwards.
     // A song's banks are best picked with it in one multi-select Open; a bank
     // opened alone is for when they weren't (applyMucomBanks).
-    let _mucomSong = null; // { bytes, fileName, target, datBytes, pcmBytes, folder }
+    let _mucomSong = null; // { bytes, fileName, target, rows, datBytes, pcmBytes, folder }
     let _mucomPcm = null; // last decoded PCM bank { wav, wavFile, mono, rate, entries }
     let _mucomPcmUnsaved = false; // the bank's wav exists only in memory
 
@@ -2376,13 +2376,29 @@ import { channelForms } from './src/lang/score-text.js';
     // through its MIDI (readViaMidi), with no samples of its own.
     // Another machine reads the PC-8801's score as Convert to Machine… would
     // (portImported); midi, through its MIDI (readViaMidi).
-    async function convertMucom(song, datBytes, pcmBytes) {
+    // `song.rows`: the dialog's channels (conversionRows). A bank applied
+    // later (`again`) can change what a row may take (part K's PCM); rows it
+    // no longer allows give way to the defaults, which the log says.
+    async function convertMucom(song, datBytes, pcmBytes, { again = false } = {}) {
       if (song.target === 'pc88') return importMucom(song.bytes, datBytes, pcmBytes);
       const res = importMucom(song.bytes, datBytes, pcmBytes);
       if (song.target === 'midi') return readViaMidi(res, { fileName: song.fileName, tag: 'mucom88', own: 'pc88' });
-      const out = await portImported(res, song.target, { fileName: song.fileName });
-      return { ...res, source: `; Imported as pc88, then onto ${song.target}\n${out.text}`, warnings: [...res.warnings, ...out.said] };
+      const at = { fileName: song.fileName, names: MUCOM_PART_OF };
+      let out, said = [];
+      try {
+        out = await portImported(res, song.target, { ...at, rows: song.rows });
+      } catch (e) {
+        if (!again || !song.rows || !Object.keys(song.rows).length) throw e;
+        out = await portImported(res, song.target, at);
+        said = [`the channels chosen at Open do not fit the song with this bank (${e?.message || e}): each part takes its default`];
+      }
+      return { ...res, source: `; Imported as pc88, then onto ${song.target}\n${out.text}`, warnings: [...res.warnings, ...said, ...out.said] };
     }
+    // A pc88 channel's mucom part, as the Open dialog's rows name it.
+    const MUCOM_PART_OF = {
+      fm1: 'A', fm2: 'B', fm3: 'C', fm4: 'H', fm5: 'I', fm6: 'J', sqr1: 'D', sqr2: 'E', sqr3: 'F', pcm1: 'K',
+      ...Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [`rhythm${n}`, 'G'])),
+    };
 
     function loadMucomSource(source, warnings, fileName, label, pcm = null) {
       const song = _mucomSong; // the new document is this song's: a bank applied later re-converts it
@@ -3413,25 +3429,43 @@ import { channelForms } from './src/lang/score-text.js';
       }
       const datPick = byExt(/\.dat$/i);
       const pcmPick = byExt(/\.bin$/i);
+      // The song read as the PC-8801's, for the dialog's rows: on another
+      // machine, the channels Convert to Machine… would give its parts.
+      let bytes, datBytes, pcmBytes, rowsFor;
+      try {
+        bytes = new Uint8Array(await file.arrayBuffer());
+        datBytes = datPick ? new Uint8Array(await datPick.arrayBuffer()) : null;
+        pcmBytes = pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null;
+        const base = importMucom(bytes, datBytes, pcmBytes);
+        const imports = await readImportSources(base.source, mmlispName(file.name));
+        const heard = heardRoles(base.pcm);
+        const name = (h) => (MUCOM_PART_OF[h] == null ? h : h.startsWith('rhythm') ? `${MUCOM_PART_OF[h]} (${h})` : MUCOM_PART_OF[h]);
+        rowsFor = (target) => (target === 'pc88' || target === 'midi' ? [] : conversionRows(base.source, target, { imports, heard, name }));
+      } catch (e) {
+        log(`Opening ${file.name} (mucom88) failed: ${e?.message || e}`, 'err');
+        return false;
+      }
       // The machine it is written for: the song's own chip, or the Mega Drive.
       const got = await showImportDialog({
         title: `Open ${file.name}`,
         okLabel: 'Open',
         summary: 'A MUCOM88 song, written for the YM2608. ' +
           (datPick || pcmPick ? `With ${[datPick?.name, pcmPick?.name].filter(Boolean).join(' and ')}.` : 'Its .dat / .bin, if it uses them, come in the same selection.'),
-        fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0], machine: true, own: 'pc88',
+        fields: [{ key: 'target', label: 'Target', type: 'select', value: MUCOM_TARGETS[0], rebuildsRows: true, machine: true, own: 'pc88',
           choices: withMidi(MUCOM_TARGETS, 'pc88'),
           hint: 'pc88 keeps the chip’s rhythm, SSG mixer and noise; md reads them for the Mega Drive (the SSG’s envelope a level macro, the PCM fitted to the driver’s bank); any other machine takes the pc88 score as Edit > Convert to Machine… does; General MIDI reads it as the PC-8801’s, then gives each channel a GM instrument and the rhythm and PCM kit roles' }],
+        rows: [],
+        rowsFor,
       });
       if (!got) return false;
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
         _mucomSong = {
           bytes,
           fileName: file.name,
           target: got.fields.target,
-          datBytes: datPick ? new Uint8Array(await datPick.arrayBuffer()) : null,
-          pcmBytes: pcmPick ? new Uint8Array(await pcmPick.arrayBuffer()) : null,
+          rows: got.rows,
+          datBytes,
+          pcmBytes,
           folder,
         };
         const res = await convertMucom(_mucomSong, _mucomSong.datBytes, _mucomSong.pcmBytes);
@@ -3480,7 +3514,7 @@ import { channelForms } from './src/lang/score-text.js';
         if (toSong && _mucomSong) {
           _mucomSong.datBytes = datBytes;
           // Keep any PCM bank already applied — re-converting must not lose it.
-          const res = await convertMucom(_mucomSong, datBytes, _mucomSong.pcmBytes);
+          const res = await convertMucom(_mucomSong, datBytes, _mucomSong.pcmBytes, { again: true });
           loadMucomSource(res.source, res.warnings, _mucomSong.fileName, `Reloaded ${_mucomSong.fileName} with voice bank ${datFile.name} (mucom88)`, res.pcm);
         } else {
           const { source, warnings } = voiceBankToMmlisp(datBytes);
@@ -3497,7 +3531,7 @@ import { channelForms } from './src/lang/score-text.js';
     async function applyMucomPcmBank(bankName) {
       const song = _mucomSong;
       if (!song) return;
-      const res = await convertMucom(song, song.datBytes, song.pcmBytes);
+      const res = await convertMucom(song, song.datBytes, song.pcmBytes, { again: true });
       const n = res.pcm?.entries.length ?? 0;
       loadMucomSource(res.source, res.warnings, song.fileName, `Reloaded ${song.fileName} with PCM bank ${bankName} (mucom88) — ${n} samples decoded`, res.pcm);
     }
