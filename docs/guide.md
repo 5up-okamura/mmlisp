@@ -2696,9 +2696,10 @@ machine's channels or dropped:
   With no square free, a row on `fm6` keeps `fm6` beside the PCM, the two
   taking it in turn.
 - Onto `md`, a sample longer than one 32 KB bank holds at the lowest note it
-  plays (the driver bakes each note's pitch at its engine's rate) has its
-  `:frames` cut to fit, as a VGM imported onto `md` does; the log names
-  them. Another machine plays it whole (the X68000's PCM8).
+  plays (the driver bakes each note's pitch at its engine's rate — the
+  multi-bank one, since a sample that long puts the bank past one: about
+  3.2 s at its own pitch with one PCM voice) has its `:frames` cut to fit,
+  as a VGM imported onto `md` does; the log names them. Another machine plays it whole (the X68000's PCM8).
 - A square goes to a free square, else to a free FM channel.
 - The noise stays the noise. Notes a channel plays as noise by its `:mode` —
   x68k `fm8`'s `:mode noise`, an SSG square's `:mode noise` / `both` (a PSG

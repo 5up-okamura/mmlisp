@@ -13,7 +13,7 @@
 //     one-operator voices, the ROM rhythm presets/rx5's samples and back,
 //     and what is dropped is said.
 import assert from "node:assert/strict";
-import { engineImage } from "../../live/src/driver/engine-images.js";
+import { bankedEngineImage } from "../../live/src/driver/engine-banked-images.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1035,11 +1035,14 @@ const port = (src, to, rows, options) => {
   // A sample the X68000 plays whole (Asuka 120%'s three-second phrases)
   // bakes on md at the engine's rate and each note's pitch, one blob a bank:
   // past that at its lowest note, its :frames are cut to fit; one that fits
-  // is left. (No range or loop point on the def to leave behind.)
-  const long = portScore("(def-score :target x68k)\n(def-pcm long :file \"long.wav\" :rate 15625 :offset 0 :frames 60000)\n(def-pcm short :file \"long.wav\" :rate 15625 :offset 0 :frames 9000)\n(fm1 :len 4 c d e f)\n(pcm1 :len 1 long :oct 4 c :oct 3 c short :oct 4 c)", "md", {});
+  // is left. (No range or loop point on the def to leave behind.) A blob past
+  // one bank means a library past one, baked multi-bank: the banked rate is
+  // the one it must fit at, so a 2.8 s phrase at its own pitch stays whole.
+  const long = portScore("(def-score :target x68k)\n(def-pcm long :file \"long.wav\" :rate 15625 :offset 0 :frames 60000)\n(def-pcm short :file \"long.wav\" :rate 15625 :offset 0 :frames 9000)\n(def-pcm phrase :file \"long.wav\" :rate 15626 :offset 0 :frames 44000)\n(fm1 :len 4 c d e f)\n(pcm1 :len 1 long :oct 4 c :oct 3 c short :oct 4 c phrase c)", "md", {});
   const framesOf = (n) => Number(long.text.match(new RegExp(`\\(def-pcm ${n} [^\\n]*:frames (\\d+)`))[1]);
-  assert.ok(framesOf("long") < 60000 && Math.ceil(framesOf("long") * 2 * engineImage(1).rateHz / 15625) <= 32512 - 16, `long cut to fit at its lowest note: ${framesOf("long")}`);
+  assert.equal(framesOf("long"), Math.floor(((32512 - 16) * 15625) / 2 / bankedEngineImage(1, 60).rateHz), `long cut to fit at its lowest note: ${framesOf("long")}`);
   assert.equal(framesOf("short"), 9000, "a sample that fits keeps its frames");
+  assert.equal(framesOf("phrase"), 44000, "a phrase that fits the banked rate keeps its frames");
   assert.ok(long.said.some((w) => /long cut to fit a 32 KB bank/.test(w)), long.said.join("\n"));
   assert.deepEqual(compile(j.text, join(repo, "tools/tests/t.mmlisp")).bad, [], "mucom88 onto md compiles clean");
 }

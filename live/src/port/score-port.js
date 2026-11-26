@@ -46,7 +46,6 @@ import { PART_LEVELS } from "../machine/part-levels.js";
 import { shapeOf, wave32, envelopeOf, WAVETABLE_SET, fdsAsPce, pceAsFds, pceFmsOf, fdsFreqAsPce, pceFreqAsFds, fdsCounter } from "./wave-port.js";
 import { pitchToMidi } from "../ir/pitch.js";
 import { expandLoops } from "../ir/timing.js";
-import { engineImage } from "../driver/engine-images.js";
 import { bankedEngineImage } from "../driver/engine-banked-images.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
 import { waveformOf, carrierOctave, carrierMultiple, soundOf, FM_ROLE_SOUND, opnAs2op, ROLES, ROM_OF_WAVE, voiceTable, onOpll, romOn4op, romForRole, roleOf, opllDefAs4op, FM_ROLES_SET, OPLL_VIB_FMS, OPLL_AM_AMS, OPLL_LFO_RATE } from "./voice-port.js";
@@ -862,7 +861,9 @@ function fitBank(out, imports) {
         lowest.set(e.args.sample, Math.min(lowest.get(e.args.sample) ?? Infinity, e.args.baseRate * (e.args.rate || 1)));
   if (!lowest.size) return out;
   const voices = Math.max(1, Math.min(3, Number(ir.metadata?.pcmVoices) || 1));
-  const engineHz = Math.max(engineImage(voices).rateHz, bankedEngineImage(voices, 60).rateHz);
+  // A blob past one bank means a library past one bank, which the export
+  // bakes multi-bank: the banked engine's rate is the one a blob must fit at.
+  const engineHz = bankedEngineImage(voices, 60).rateHz;
   const cut = [];
   // A def of its own :rate and :frames, on one line as the imports write
   // it, with no range or loop point the shorter frames could leave behind.

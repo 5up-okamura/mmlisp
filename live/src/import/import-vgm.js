@@ -90,7 +90,6 @@ import { encodeWav } from "../audio/wav-encode.js";
 import { decodeAdpcmB } from "../audio/mucom-pcm.js";
 import { OPLL_ROM, OPLL_ROM_NAMES, VRC7_ROM, opllVoiceDef, opllVoiceDef2op, romVoicesAs4op } from "../machine/chips/ym2413.js";
 import { VEL_DB_PER_STEP } from "../ir/levels.js";
-import { engineImage } from "../driver/engine-images.js";
 import { bankedEngineImage } from "../driver/engine-banked-images.js";
 import { decodeDpcm, decodeAdpcmA, decodeOki, decodeK053260, decodeC140, dcBlock } from "../audio/pcm-decode.js";
 import { apuChip, fdsChip, NES_RAM } from "./nes-chips.js";
@@ -2054,7 +2053,9 @@ function chipPcmTracks(parsed, keys, voices, tickOf, endTick, fileName, { bankFi
   if (bankFit) {
     // (`more`: voices the score plays beside these — the rhythm's kit.)
     const engineVoices = Math.min(3, V + more);
-    const engineHz = Math.max(engineImage(engineVoices).rateHz, bankedEngineImage(engineVoices, 60).rateHz);
+    // A blob past one bank means a library past one bank, which the export
+    // bakes multi-bank: the banked engine's rate is the one a blob must fit at.
+    const engineHz = bankedEngineImage(engineVoices, 60).rateHz;
     const lowest = new Map();
     for (const h of hits) lowest.set(h.sample, Math.min(lowest.get(h.sample) ?? Infinity, h.rate));
     const cut = [];
