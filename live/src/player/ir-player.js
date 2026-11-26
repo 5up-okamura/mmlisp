@@ -1336,7 +1336,13 @@ export class IRPlayer {
           const ev = track.events[track.flatIndex];
           // Read secsPerTick live: a TEMPO_SET dispatched earlier in this very
           // pass re-anchors audioTimeAtTick0 for the NEW tempo.
-          const evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+          let evTime = track.audioTimeAtTick0 + ev.tick * this._secsPerTick;
+          // A loop's seam: the pass's last event and the next pass's first
+          // are one instant on two anchors, and the sum can put the second
+          // an ulp before the first — the worklet orders by time, so a voice
+          // written at the pass's end would land after the next pass's level
+          // and win. A track's time never runs back.
+          if (evTime < track.lastTime && track.lastTime - evTime < 1e-9) evTime = track.lastTime;
           // Pending swap: stop the outgoing tracks at the swap boundary so they
           // never emit past it (the incoming IR takes over there).
           return evTime >= this._scheduleCapTime ? Infinity : evTime;
@@ -1385,6 +1391,7 @@ export class IRPlayer {
         // On a frame-clocked target an event happens on the frame its time
         // falls in, so a note's key-on and its macros' steps count from one
         // frame (_frameTime).
+      track.lastTime = evTime;
         const when = this._target.frameClock ? this._frameStart(evTime) : evTime;
         // The work of the frames before this event's runs first.
         const F = this._eventFrame(when);
@@ -1786,6 +1793,7 @@ export class IRPlayer {
   _setTempoAtTick(bpm, changeTick, changeWhen) {
     if (!Number.isFinite(bpm) || bpm <= 0) return;
     if (this._tracks.length === 0) {
+        lastTime: -Infinity, // the last event's time (_scheduleTracks)
       this._bpm = bpm;
       return;
     }

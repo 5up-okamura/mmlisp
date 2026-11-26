@@ -850,17 +850,17 @@
  "drv/tests/m3-voice-loop.mmlisp": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "b580da63d8b828c7",
-  "regs": "0e3b81c5f31a5de8",
+  "regs": "3095d00622b80914",
   "mmb": "d596cb4c8752f8a5",
-  "vgm": "339471dc9188dbf6",
+  "vgm": "0f46dccc2f96680c",
   "mid": "4427f3eccc8a8999"
  },
  "drv/tests/m3-voice-loop.mmlisp @pal": {
   "diagnostics": "e3b0c44298fc1c14",
   "ir": "adae245321a2c220",
-  "regs": "0e3b81c5f31a5de8",
+  "regs": "3095d00622b80914",
   "mmb": "f1e9859f176d93ae",
-  "vgm": "339471dc9188dbf6",
+  "vgm": "0f46dccc2f96680c",
   "mid": "4427f3eccc8a8999"
  },
  "drv/tests/m3-voice.mmlisp": {
@@ -2258,17 +2258,17 @@
  "drv/tests/stress-9ch.mmlisp": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "f5aef3b127972413",
-  "regs": "662143b475ede12a",
+  "regs": "a03473903dafda2c",
   "mmb": "338b6ea4090384ee",
-  "vgm": "bf57d679855253ab",
+  "vgm": "9d0ed055e5d5569e",
   "mid": "0f84f687cc0639e1"
  },
  "drv/tests/stress-9ch.mmlisp @pal": {
   "diagnostics": "ab77988e1a526bf3",
   "ir": "f3d59391af4221bd",
-  "regs": "662143b475ede12a",
+  "regs": "a03473903dafda2c",
   "mmb": "d85ac28b896f8ef3",
-  "vgm": "a6fd574d542f0245",
+  "vgm": "4fafb58fbf25b5e0",
   "mid": "0f84f687cc0639e1"
  },
  "drv/tests/stress-m1.mmlisp": {
