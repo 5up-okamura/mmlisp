@@ -2411,8 +2411,12 @@ class Porter {
       if (!this.saidLfo?.has(kw)) { (this.saidLfo ??= new Set()).add(kw); this.say(`${kw}: the ${this.from.system}'s FM LFO is not the ${this.to.system}'s; taken out`); }
       return DROP;
     }
+    // A split track's noise rate is its noise half's, which writes it as its
+    // notes sound (a song-wide value: written by both, the halves race); the
+    // tone half keeps it only where the machine has the word and no noise
+    // half plays.
+    if (w === "NOISE_RATE" && ctx.split === "tone" && !(this.toHas(w) && this.map[splitKey(ctx.head)] === "drop")) return DROP;
     if (this.toHas(w)) return KEEP;
-    if (w === "NOISE_RATE" && ctx.split === "tone") return DROP; // the noise half reads it
     const n = num(val);
     if (w === "LFO_FREQ" && this.toHas("LFO_RATE") && n != null) {
       const rate = nearestLfoRate(lfoHz(n));

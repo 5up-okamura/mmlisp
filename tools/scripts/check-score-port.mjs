@@ -395,6 +395,17 @@ const port = (src, to, rows, options) => {
   const gb = port(src, "gb", { sqr2: "drop" });
   assert.match(gb.text, /\(noise :tempo 140 :len 8 _ :mode white :oct \d [a-g]\+? [a-g]\+? [a-g]\+? _\)/, "the tone half dropped: the tempo with the noise");
   assert.equal(portRows(src, "pc88").rows.length, 1, "pc88's SSG plays its modes");
+  // The split's noise rate is its noise half's: onto a machine with a
+  // song-wide rate of its own (the OPM's) the tone half writes none, so the
+  // two halves do not race; with the noise half dropped the tone half keeps it.
+  const file = join(repo, "tools/tests/t.mmlisp");
+  const x68k = port(src, "x68k");
+  const race = compileMMLisp(x68k.text, file, { imports: readImportSources(file, x68k.text) }).diagnostics.filter((d) => d.code === "W_SONG_WRITE_RACE");
+  assert.deepEqual(race.map((d) => d.message), [], x68k.text);
+  const toneHalf = x68k.text.split("\n").find((l) => /^\(fm\d/.test(l) && /:tempo 140/.test(l));
+  assert.ok(toneHalf, x68k.text);
+  assert.doesNotMatch(toneHalf, /:noise-rate/, x68k.text);
+  assert.match(port(src, "x68k", { "sqr2/noise": "drop" }).text, /\(fm\d[^\n]*:noise-rate/, "the noise half dropped: the tone half keeps the rate");
 }
 {
   // A machine short of channels keeps the parts with the most notes.

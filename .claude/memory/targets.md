@@ -77,7 +77,6 @@ Open:
 - A phrase at several octaves takes its lowest play's lift under a tone's
   floor (said; split per octave if a score needs it).
 - On pce / gb a wave row beats a noise row in three surveyed songs.
-- Noise layers onto x68k give W_SONG_WRITE_RACE (one AY noise rate).
 
 Test material (outside the repo): the user's Dropbox GameDev/VGM/Downloads
 (VGM, MDX, MGS, mucom88, MIDI, NSF, .dmf); DTWNB MDX set; BF_4TH.MGS;
